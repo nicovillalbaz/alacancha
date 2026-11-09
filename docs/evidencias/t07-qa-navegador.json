@@ -1,0 +1,112 @@
+[
+  {
+    "name": "sesión de muestra",
+    "pass": true,
+    "detail": "200"
+  },
+  {
+    "name": "bandeja cargada",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "API privada de bandeja",
+    "pass": true,
+    "detail": "200"
+  },
+  {
+    "name": "bandeja 320px sin desborde",
+    "pass": true,
+    "detail": "{\"scroll\":320,\"client\":320}"
+  },
+  {
+    "name": "bandeja 320px controles de 44px",
+    "pass": true,
+    "detail": "[]"
+  },
+  {
+    "name": "bandeja 390px sin desborde",
+    "pass": true,
+    "detail": "{\"scroll\":390,\"client\":390}"
+  },
+  {
+    "name": "bandeja 390px controles de 44px",
+    "pass": true,
+    "detail": "[]"
+  },
+  {
+    "name": "bandeja 768px sin desborde",
+    "pass": true,
+    "detail": "{\"scroll\":768,\"client\":768}"
+  },
+  {
+    "name": "bandeja 768px controles de 44px",
+    "pass": true,
+    "detail": "[]"
+  },
+  {
+    "name": "bandeja 1280px sin desborde",
+    "pass": true,
+    "detail": "{\"scroll\":1280,\"client\":1280}"
+  },
+  {
+    "name": "bandeja 1280px controles de 44px",
+    "pass": true,
+    "detail": "[]"
+  },
+  {
+    "name": "acción por teclado",
+    "pass": true,
+    "detail": "#/buena-fe/72472d7c-d397-44d0-ab4d-f9ba549949f5"
+  },
+  {
+    "name": "vigencia de comisión visible",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "comisión 320px sin desborde",
+    "pass": true,
+    "detail": "{\"scroll\":320,\"client\":320}"
+  },
+  {
+    "name": "comisión 390px sin desborde",
+    "pass": true,
+    "detail": "{\"scroll\":390,\"client\":390}"
+  },
+  {
+    "name": "comisión 768px sin desborde",
+    "pass": true,
+    "detail": "{\"scroll\":768,\"client\":768}"
+  },
+  {
+    "name": "comisión 1280px sin desborde",
+    "pass": true,
+    "detail": "{\"scroll\":1280,\"client\":1280}"
+  },
+  {
+    "name": "vigencia editable por teclado",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "texto largo sin desborde",
+    "pass": true,
+    "detail": "{\"scroll\":390,\"client\":390}"
+  },
+  {
+    "name": "PDF disciplinario real",
+    "pass": true,
+    "detail": "200 · 1190 bytes"
+  },
+  {
+    "name": "aviso de red inestable",
+    "pass": true,
+    "detail": "Ir al contenido\nLiga de la Comunidad\nAna Martínez\nAM\nSin conexión. Tus cambios del formulario se conservan; guardá cuando vuelva la conexión.\nInicio\nBandeja de revisión\n\nAsuntos de Liga de la Comunidad que requieren una "
+  },
+  {
+    "name": "recuperación tras red",
+    "pass": true,
+    "detail": ""
+  }
+]

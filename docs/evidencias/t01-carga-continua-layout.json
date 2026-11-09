@@ -1,0 +1,102 @@
+{
+  "date": "2026-10-28",
+  "scope": "Prototipo con datos ficticios en memoria; sin API.",
+  "layouts": [
+    {
+      "overflow": false,
+      "route": "#/organizador/partido/evento/gol",
+      "selects": 0,
+      "smallTargets": 0,
+      "width": 320
+    },
+    {
+      "overflow": false,
+      "route": "#/organizador/partido/evento/amarilla",
+      "selects": 0,
+      "smallTargets": 0,
+      "width": 320
+    },
+    {
+      "overflow": false,
+      "route": "#/organizador/partido/evento/roja",
+      "selects": 0,
+      "smallTargets": 0,
+      "width": 320
+    },
+    {
+      "overflow": false,
+      "route": "#/organizador/partido/evento/gol",
+      "selects": 0,
+      "smallTargets": 0,
+      "width": 390
+    },
+    {
+      "overflow": false,
+      "route": "#/organizador/partido/evento/amarilla",
+      "selects": 0,
+      "smallTargets": 0,
+      "width": 390
+    },
+    {
+      "overflow": false,
+      "route": "#/organizador/partido/evento/roja",
+      "selects": 0,
+      "smallTargets": 0,
+      "width": 390
+    },
+    {
+      "overflow": false,
+      "route": "#/organizador/partido/evento/gol",
+      "selects": 0,
+      "smallTargets": 0,
+      "width": 768
+    },
+    {
+      "overflow": false,
+      "route": "#/organizador/partido/evento/amarilla",
+      "selects": 0,
+      "smallTargets": 0,
+      "width": 768
+    },
+    {
+      "overflow": false,
+      "route": "#/organizador/partido/evento/roja",
+      "selects": 0,
+      "smallTargets": 0,
+      "width": 768
+    },
+    {
+      "overflow": false,
+      "route": "#/organizador/partido/evento/gol",
+      "selects": 0,
+      "smallTargets": 0,
+      "width": 1280
+    },
+    {
+      "overflow": false,
+      "route": "#/organizador/partido/evento/amarilla",
+      "selects": 0,
+      "smallTargets": 0,
+      "width": 1280
+    },
+    {
+      "overflow": false,
+      "route": "#/organizador/partido/evento/roja",
+      "selects": 0,
+      "smallTargets": 0,
+      "width": 1280
+    }
+  ],
+  "checks": {
+    "consecutiveGoalsStayInView": true,
+    "teamAndPeriodKept": true,
+    "cardsAndTypesStayInView": true,
+    "undoStaysInView": true,
+    "accidentalDoubleClickAddsOne": true,
+    "laterIntentionalEntryAccepted": true,
+    "keyboardEnterAddsAndKeepsFocus": true,
+    "manualZeroAcceptedAndMinuteCleared": true,
+    "publicPrivateRouteUnavailable": true,
+    "consoleErrors": 0
+  }
+}

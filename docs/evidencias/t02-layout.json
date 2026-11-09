@@ -1,0 +1,194 @@
+[
+  {
+    "routeName": "torneo/5e2f9527-bef5-455c-a0b4-7fea7291ef64",
+    "h1": "Copa de prueba T02",
+    "scroll": 320,
+    "selects": 0,
+    "smallControls": [],
+    "width": 320
+  },
+  {
+    "routeName": "nueva-categoria/5e2f9527-bef5-455c-a0b4-7fea7291ef64",
+    "h1": "Agregar categoría",
+    "scroll": 305,
+    "selects": 0,
+    "smallControls": [],
+    "width": 320
+  },
+  {
+    "routeName": "equipos",
+    "h1": "Equipos",
+    "scroll": 320,
+    "selects": 0,
+    "smallControls": [],
+    "width": 320
+  },
+  {
+    "routeName": "nuevo-equipo",
+    "h1": "Crear equipo",
+    "scroll": 305,
+    "selects": 0,
+    "smallControls": [],
+    "width": 320
+  },
+  {
+    "routeName": "equipo/677604af-2192-40d8-84e3-ab891c9b1880",
+    "h1": "Deportivo Prueba T02",
+    "scroll": 305,
+    "selects": 0,
+    "smallControls": [],
+    "width": 320
+  },
+  {
+    "routeName": "publico/10000000-0000-4000-8000-000000000001",
+    "h1": "Liga de la Comunidad",
+    "scroll": 320,
+    "selects": 0,
+    "smallControls": [],
+    "width": 320
+  },
+  {
+    "routeName": "torneo/5e2f9527-bef5-455c-a0b4-7fea7291ef64",
+    "h1": "Copa de prueba T02",
+    "scroll": 390,
+    "selects": 0,
+    "smallControls": [],
+    "width": 390
+  },
+  {
+    "routeName": "nueva-categoria/5e2f9527-bef5-455c-a0b4-7fea7291ef64",
+    "h1": "Agregar categoría",
+    "scroll": 375,
+    "selects": 0,
+    "smallControls": [],
+    "width": 390
+  },
+  {
+    "routeName": "equipos",
+    "h1": "Equipos",
+    "scroll": 390,
+    "selects": 0,
+    "smallControls": [],
+    "width": 390
+  },
+  {
+    "routeName": "nuevo-equipo",
+    "h1": "Crear equipo",
+    "scroll": 375,
+    "selects": 0,
+    "smallControls": [],
+    "width": 390
+  },
+  {
+    "routeName": "equipo/677604af-2192-40d8-84e3-ab891c9b1880",
+    "h1": "Deportivo Prueba T02",
+    "scroll": 375,
+    "selects": 0,
+    "smallControls": [],
+    "width": 390
+  },
+  {
+    "routeName": "publico/10000000-0000-4000-8000-000000000001",
+    "h1": "Liga de la Comunidad",
+    "scroll": 390,
+    "selects": 0,
+    "smallControls": [],
+    "width": 390
+  },
+  {
+    "routeName": "torneo/5e2f9527-bef5-455c-a0b4-7fea7291ef64",
+    "h1": "Copa de prueba T02",
+    "scroll": 768,
+    "selects": 0,
+    "smallControls": [],
+    "width": 768
+  },
+  {
+    "routeName": "nueva-categoria/5e2f9527-bef5-455c-a0b4-7fea7291ef64",
+    "h1": "Agregar categoría",
+    "scroll": 753,
+    "selects": 0,
+    "smallControls": [],
+    "width": 768
+  },
+  {
+    "routeName": "equipos",
+    "h1": "Equipos",
+    "scroll": 768,
+    "selects": 0,
+    "smallControls": [],
+    "width": 768
+  },
+  {
+    "routeName": "nuevo-equipo",
+    "h1": "Crear equipo",
+    "scroll": 753,
+    "selects": 0,
+    "smallControls": [],
+    "width": 768
+  },
+  {
+    "routeName": "equipo/677604af-2192-40d8-84e3-ab891c9b1880",
+    "h1": "Deportivo Prueba T02",
+    "scroll": 753,
+    "selects": 0,
+    "smallControls": [],
+    "width": 768
+  },
+  {
+    "routeName": "publico/10000000-0000-4000-8000-000000000001",
+    "h1": "Liga de la Comunidad",
+    "scroll": 768,
+    "selects": 0,
+    "smallControls": [],
+    "width": 768
+  },
+  {
+    "routeName": "torneo/5e2f9527-bef5-455c-a0b4-7fea7291ef64",
+    "h1": "Copa de prueba T02",
+    "scroll": 1280,
+    "selects": 0,
+    "smallControls": [],
+    "width": 1280
+  },
+  {
+    "routeName": "nueva-categoria/5e2f9527-bef5-455c-a0b4-7fea7291ef64",
+    "h1": "Agregar categoría",
+    "scroll": 1265,
+    "selects": 0,
+    "smallControls": [],
+    "width": 1280
+  },
+  {
+    "routeName": "equipos",
+    "h1": "Equipos",
+    "scroll": 1280,
+    "selects": 0,
+    "smallControls": [],
+    "width": 1280
+  },
+  {
+    "routeName": "nuevo-equipo",
+    "h1": "Crear equipo",
+    "scroll": 1280,
+    "selects": 0,
+    "smallControls": [],
+    "width": 1280
+  },
+  {
+    "routeName": "equipo/677604af-2192-40d8-84e3-ab891c9b1880",
+    "h1": "Deportivo Prueba T02",
+    "scroll": 1265,
+    "selects": 0,
+    "smallControls": [],
+    "width": 1280
+  },
+  {
+    "routeName": "publico/10000000-0000-4000-8000-000000000001",
+    "h1": "Liga de la Comunidad",
+    "scroll": 1280,
+    "selects": 0,
+    "smallControls": [],
+    "width": 1280
+  }
+]

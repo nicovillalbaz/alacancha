@@ -1,0 +1,138 @@
+{
+  "checks": [
+    {
+      "name": "portal carga",
+      "pass": true,
+      "details": "Ir al contenido\nPanel de torneos\nLiga actualizada 561bcac3\n\nReglamentos y categorías publicados\n\nFechas y resultados\nCopa sintética 88400d · Temporada 2026 · Fecha 1\nCopa plan 0 561bcac3 vs Copa plan sexto 561bcac3\n\nLibre · 2026-11-14 10:00 · Sede plan 561bcac3 / Principal\n\nCopa plan 3 561bcac3 vs C"
+    },
+    {
+      "name": "portal sin datos civiles",
+      "pass": true
+    },
+    {
+      "name": "portal 320px sin desborde",
+      "pass": true,
+      "details": "{\"scroll\":320,\"client\":320}"
+    },
+    {
+      "name": "portal 390px sin desborde",
+      "pass": true,
+      "details": "{\"scroll\":390,\"client\":390}"
+    },
+    {
+      "name": "portal 768px sin desborde",
+      "pass": true,
+      "details": "{\"scroll\":768,\"client\":768}"
+    },
+    {
+      "name": "portal 1280px sin desborde",
+      "pass": true,
+      "details": "{\"scroll\":1280,\"client\":1280}"
+    },
+    {
+      "name": "sesión sintética",
+      "pass": true,
+      "details": "Ir al contenido\nLiga actualizada 561bcac3\nCuenta a sintética\nCA\nLiga actualizada 561bcac3\n\nAdministrador de torneo\n\nAcceso habilitado\nTu organización\n\nNombre, logo y datos de acceso.\n\nAbrir organización\nCambiar organización\nCuenta\n\nCuenta a sintética\n\na-561bcac3@ejemplo.test\n\nVer mi cuenta\nDesarrollo local · Datos de p"
+    },
+    {
+      "name": "disciplina del organizador",
+      "pass": true,
+      "details": "Ir al contenido\nLiga actualizada 561bcac3\nCuenta a sintética\nCA\nActa 0 f7e0c\nDisciplina\n\nLibre · Acta 0 f7e0c\n\nNotificaciones del equipo\nApelación resuelta\nMarcar leída\nNueva resolución\nMarcar leída\nActas y propuestas\n\nLas tarjetas e incidencias generan propuestas. Solo una resolución humana produce una suspensión o mu"
+    },
+    {
+      "name": "ajuste de puntos visible",
+      "pass": true
+    },
+    {
+      "name": "catálogo visible",
+      "pass": true
+    },
+    {
+      "name": "caso con resolución sintética",
+      "pass": true
+    },
+    {
+      "name": "PDF privado válido",
+      "pass": true,
+      "details": "estado 200 · 1656 bytes"
+    },
+    {
+      "name": "organizador 320px sin desborde",
+      "pass": true,
+      "details": "{\"scroll\":320,\"client\":320}"
+    },
+    {
+      "name": "organizador 320px controles >=44px",
+      "pass": true,
+      "details": "[]"
+    },
+    {
+      "name": "organizador 390px sin desborde",
+      "pass": true,
+      "details": "{\"scroll\":390,\"client\":390}"
+    },
+    {
+      "name": "organizador 390px controles >=44px",
+      "pass": true,
+      "details": "[]"
+    },
+    {
+      "name": "organizador 768px sin desborde",
+      "pass": true,
+      "details": "{\"scroll\":768,\"client\":768}"
+    },
+    {
+      "name": "organizador 768px controles >=44px",
+      "pass": true,
+      "details": "[]"
+    },
+    {
+      "name": "organizador 1280px sin desborde",
+      "pass": true,
+      "details": "{\"scroll\":1280,\"client\":1280}"
+    },
+    {
+      "name": "organizador 1280px controles >=44px",
+      "pass": true,
+      "details": "[]"
+    },
+    {
+      "name": "entrada por teclado",
+      "pass": true
+    },
+    {
+      "name": "foco visible",
+      "pass": true,
+      "details": "{\"tag\":\"TEXTAREA\",\"outline\":\"solid\",\"boxShadow\":\"none\"}"
+    },
+    {
+      "name": "texto largo sin desborde",
+      "pass": true,
+      "details": "{\"scroll\":390,\"client\":390}"
+    },
+    {
+      "name": "desempate reordena por teclado",
+      "pass": true,
+      "details": "{\"orderBefore\":[\"1. Acta 0 f7e0c\",\"2. Acta 1 7371a\"],\"orderAfter\":[\"1. Acta 1 7371a\",\"2. Acta 0 f7e0c\"]}"
+    },
+    {
+      "name": "desempate 390px sin desborde",
+      "pass": true,
+      "details": "{\"scroll\":390,\"client\":390}"
+    },
+    {
+      "name": "error sin red visible",
+      "pass": true,
+      "details": "Ir al contenido\nLiga actualizada 561bcac3\nCuenta a sintética\nCA\nSin conexión. Tus cambios del formulario se conservan; guardá cuando vuelva la conexión.\n\nNo hay respuesta del servidor. Tus datos siguen en el formulario; podés volver a intentar.\n\nEquipos\n\nLiga actualizada 561bcac3"
+    },
+    {
+      "name": "recuperación tras red",
+      "pass": true
+    }
+  ],
+  "screenshots": [
+    "C:\\Users\\info\\Documents\\nico\\alacancha\\docs\\evidencias\\t06-portal-publico-390.png",
+    "C:\\Users\\info\\Documents\\nico\\alacancha\\docs\\evidencias\\t06-organizador-ajustes-390.png",
+    "C:\\Users\\info\\Documents\\nico\\alacancha\\docs\\evidencias\\t06-organizador-desempate-390.png"
+  ]
+}

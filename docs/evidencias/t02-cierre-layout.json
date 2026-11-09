@@ -1,0 +1,30 @@
+{
+  "date": "2026-10-28",
+  "method": "navegador local, inspección DOM y visual con datos sintéticos",
+  "widths": [320, 390, 768, 1280],
+  "viewportHeight": 850,
+  "screens": [
+    {
+      "name": "editor de fase inicial",
+      "scrollWidths": [305, 375, 753, 1265],
+      "h1Count": [1, 1, 1, 1],
+      "visibleControlsBelow44px": [0, 0, 0, 0],
+      "horizontalOverflow": [false, false, false, false]
+    },
+    {
+      "name": "sedes y patrocinadores del torneo",
+      "scrollWidths": [305, 375, 753, 1265],
+      "h1Count": [1, 1, 1, 1],
+      "visibleControlsBelow44px": [0, 0, 0, 0],
+      "horizontalOverflow": [false, false, false, false]
+    },
+    {
+      "name": "administradores del equipo",
+      "scrollWidths": [305, 375, 753, 1265],
+      "h1Count": [1, 1, 1, 1],
+      "visibleControlsBelow44px": [0, 0, 0, 0],
+      "horizontalOverflow": [false, false, false, false],
+      "note": "Se excluye el input de archivo oculto 1×1; su etiqueta visible mide al menos 44 px."
+    }
+  ]
+}

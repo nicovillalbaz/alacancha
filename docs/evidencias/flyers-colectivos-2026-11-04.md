@@ -1,0 +1,8 @@
+# T08 — Flyers colectivos y lugar · 04/11/2026
+
+- **Datos:** sin migración. Se conserva el archivo versionado anterior; las piezas individuales de goleador siguen descargables en privado, sin nuevas publicaciones ni aparición pública.
+- **API y permisos:** la creación individual responde 400, su publicación 409 y la consulta pública la excluye. El flyer colectivo conserva los filtros de fuente visible y nombres autorizados. La suite incluyó acceso permitido y denegado entre organizaciones.
+- **UI:** Estadísticas → Goleadores muestra una acción Flyer de la tabla completa, sin botones por jugador. Fixture usa Lugar y Cancha opcional; vacío conserva la cancha técnica predeterminada para validar horarios.
+- **Plantilla:** escudo o iniciales por equipo en jornada, tablas y cuadro; pie breve con «Generado por NAVZ». Lugar y cancha distintos se muestran una sola vez. Las etiquetas genéricas «Libre» y «Cancha 1» se omiten cuando no aportan información.
+- **Error/vacío:** una tabla sin goleadores oficiales publicables informa que aún no hay datos; no genera un flyer vacío. Un escudo ausente tiene iniciales legibles.
+- **Verificación:** `npm run typecheck`, `npm run build` y `npm test` correctos (82/82). Render local con Chrome de SVG a PNG cuadrado e inspección visual de [clasificación](flyer-qa-standings-2026-11-04.png), [goleadores](flyer-qa-scorers-2026-11-04.png), [jornada](flyer-qa-matchday-2026-11-04.png) y [resultado](flyer-qa-result-2026-11-04.png). Datos sintéticos; los equipos de muestra no tienen escudo cargado y por eso aparecen iniciales. Pendiente aceptación en teléfono físico.

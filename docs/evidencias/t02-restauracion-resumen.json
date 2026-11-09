@@ -1,0 +1,19 @@
+{
+  "Date": "2026-10-28",
+  "Source": "torneos_test",
+  "Destination": "torneos_restore_20261028_564f53ce",
+  "Files": 12,
+  "SameRowsAndChecksums": true,
+  "DurationMs": 2624,
+  "TableCounts": {
+    "schema_migrations": 6,
+    "users": 83,
+    "organizations": 59,
+    "memberships": 93,
+    "sessions": 114,
+    "invitations": 82,
+    "access_grants": 0,
+    "audit_logs": 338,
+    "media": 12
+  }
+}

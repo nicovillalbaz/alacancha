@@ -1,0 +1,8 @@
+{
+  "revision": [
+    { "width": 320, "scroll": 305, "h1": 1, "small": [] },
+    { "width": 390, "scroll": 375, "h1": 1, "small": [] },
+    { "width": 768, "scroll": 753, "h1": 1, "small": [] },
+    { "width": 1280, "scroll": 1265, "h1": 1, "small": [] }
+  ]
+}

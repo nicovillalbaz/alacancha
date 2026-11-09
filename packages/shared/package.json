@@ -1,0 +1,4 @@
+{
+  "name": "@torneos/shared", "private": true, "type": "module", "version": "0.1.0",
+  "exports": { ".": "./src/index.ts" }, "dependencies": { "zod": "4.6.7" }
+}

@@ -1,0 +1,290 @@
+{
+  "date": "2026-10-28",
+  "scope": "Prototipo aislado con datos ficticios. Sin comprobación de permisos de servidor.",
+  "matrix": [
+    {
+      "document": 305,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/organizador/inicio",
+      "smallTargets": [],
+      "width": 320
+    },
+    {
+      "document": 305,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/equipo/buena-fe",
+      "smallTargets": [],
+      "width": 320
+    },
+    {
+      "document": 305,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/equipo/jugadores/nuevo/1",
+      "smallTargets": [],
+      "width": 320
+    },
+    {
+      "document": 305,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/organizador/fixture",
+      "smallTargets": [],
+      "width": 320
+    },
+    {
+      "document": 305,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/planillero/partido",
+      "smallTargets": [],
+      "width": 320
+    },
+    {
+      "document": 320,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/superadmin/administradores",
+      "smallTargets": [],
+      "width": 320
+    },
+    {
+      "document": 320,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/publico/tablas",
+      "smallTargets": [],
+      "width": 320
+    },
+    {
+      "document": 375,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/organizador/inicio",
+      "smallTargets": [],
+      "width": 390
+    },
+    {
+      "document": 375,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/equipo/buena-fe",
+      "smallTargets": [],
+      "width": 390
+    },
+    {
+      "document": 375,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/equipo/jugadores/nuevo/1",
+      "smallTargets": [],
+      "width": 390
+    },
+    {
+      "document": 375,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/organizador/fixture",
+      "smallTargets": [],
+      "width": 390
+    },
+    {
+      "document": 375,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/planillero/partido",
+      "smallTargets": [],
+      "width": 390
+    },
+    {
+      "document": 390,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/superadmin/administradores",
+      "smallTargets": [],
+      "width": 390
+    },
+    {
+      "document": 390,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/publico/tablas",
+      "smallTargets": [],
+      "width": 390
+    },
+    {
+      "document": 753,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/organizador/inicio",
+      "smallTargets": [],
+      "width": 768
+    },
+    {
+      "document": 753,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/equipo/buena-fe",
+      "smallTargets": [],
+      "width": 768
+    },
+    {
+      "document": 768,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/equipo/jugadores/nuevo/1",
+      "smallTargets": [],
+      "width": 768
+    },
+    {
+      "document": 753,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/organizador/fixture",
+      "smallTargets": [],
+      "width": 768
+    },
+    {
+      "document": 753,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/planillero/partido",
+      "smallTargets": [],
+      "width": 768
+    },
+    {
+      "document": 768,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/superadmin/administradores",
+      "smallTargets": [],
+      "width": 768
+    },
+    {
+      "document": 768,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/publico/tablas",
+      "smallTargets": [],
+      "width": 768
+    },
+    {
+      "document": 1265,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/organizador/inicio",
+      "smallTargets": [
+        {
+          "h": 21,
+          "text": "Panel de torneos",
+          "w": 189
+        }
+      ],
+      "width": 1280
+    },
+    {
+      "document": 1265,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/equipo/buena-fe",
+      "smallTargets": [
+        {
+          "h": 21,
+          "text": "Panel de torneos",
+          "w": 189
+        }
+      ],
+      "width": 1280
+    },
+    {
+      "document": 1280,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/equipo/jugadores/nuevo/1",
+      "smallTargets": [
+        {
+          "h": 21,
+          "text": "Panel de torneos",
+          "w": 189
+        }
+      ],
+      "width": 1280
+    },
+    {
+      "document": 1280,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/organizador/fixture",
+      "smallTargets": [
+        {
+          "h": 21,
+          "text": "Panel de torneos",
+          "w": 189
+        }
+      ],
+      "width": 1280
+    },
+    {
+      "document": 1265,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/planillero/partido",
+      "smallTargets": [
+        {
+          "h": 21,
+          "text": "Panel de torneos",
+          "w": 189
+        }
+      ],
+      "width": 1280
+    },
+    {
+      "document": 1280,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/superadmin/administradores",
+      "smallTargets": [
+        {
+          "h": 21,
+          "text": "Panel de torneos",
+          "w": 189
+        }
+      ],
+      "width": 1280
+    },
+    {
+      "document": 1280,
+      "h1": 1,
+      "overflow": false,
+      "route": "#/publico/tablas",
+      "smallTargets": [
+        {
+          "h": 21,
+          "text": "Panel de torneos",
+          "w": 189
+        }
+      ],
+      "width": 1280
+    }
+  ],
+  "finalCorrections": [
+    {
+      "scope": "Marca en sidebar de escritorio",
+      "height": 44,
+      "overflow": false
+    }
+  ],
+  "checks": [
+    "Alta con nombre largo y procedencia externa: borrador en lista",
+    "Búsqueda sin acentos y estado vacío",
+    "Gol: 2-1 a 3-1; deshacer: 2-1",
+    "Cambio simulado Activo a Bloqueado con motivo",
+    "Conflicto de hora idéntica rechazado; 16:30 aceptado",
+    "Búsqueda conservada al volver; motivo conservado tras error",
+    "Navegación con Tab: Cancelar con foco visible",
+    "Vista pública de jugador privado: vista no disponible",
+    "Consola sin errores ni advertencias en recorrido"
+  ]
+}

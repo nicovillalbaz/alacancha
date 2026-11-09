@@ -1,0 +1,15 @@
+# T04-07 — planificación de copa y cuadro por rondas
+
+**Fecha:** 29/10/2026. **Estado:** incremento local implementado y probado. Planificación persistente por categoría y versión de reglamento; avance deportivo oficial aún pendiente de T05/T06.
+
+| Aspecto | Evidencia |
+|---|---|
+| Datos | `competitionPlan` vive en el JSON versionado de `rule_versions`; no hubo migración. Las versiones anteriores sin este campo conservan su comportamiento y no se reescribieron. |
+| Contrato/API | Liga: puestos superiores. Grupos: clasificados por grupo más mejores restantes. Copa directa: participantes previstos. Tamaño potencia de dos, descansos limitados y política de cruce/ida-vuelta por ronda. Se rechazan planes incompatibles con la fase, el cupo de categoría y los equipos presentes al generar. |
+| Sorteo | La copa directa planificada sortea una vez con aleatoriedad del servidor; el orden queda en auditoría. Reintentar no sortea de nuevo. Si una ronda posterior exige otro sorteo, no se asignan rivales ni se crean llaves futuras hasta tener ganadores y ejecutar esa decisión. |
+| UI | El organizador configura el camino al título al crear/editar el reglamento. La vista previa nombra octavos, cuartos, semifinal y final, con botones de ronda siempre visibles en móvil; muestra plazas, descansos y ganadores pendientes. El cuadro real privado y el público usan el mismo componente. El borrador de reglas se conserva en la pestaña durante una recarga si la revisión del servidor no cambió. [Captura a 390 px](t04-cuadro-plan-390.png). |
+| Permisos y publicación | Solo el organizador puede guardar/publicar el reglamento y generar el fixture. Otra organización recibe 403. El cuadro público real requiere partidos iniciales publicados y equipos autorizados; la estructura futura del plan se añade sin datos privados. |
+| Vacío/error | Sin plan se conserva el flujo histórico. Si faltan equipos, el servidor bloquea la generación con mensaje específico. La vista previa no muestra un equipo clasificado ni ganador inexistente. |
+| Pruebas | `npm test`: 52/52. Incluye validación del plan, ocho grupos a octavos, copa directa con dos descansos y nuevo sorteo pendiente, reintento idempotente, auditoría, publicación pública y denegación entre organizaciones. `npm run build` y `npm run typecheck` aprobados. Navegador: 320, 390, 768 y 1280 px sin desbordamiento ni controles visibles menores de 32 px; un `h1`. Se comprobó selección con teclado, texto largo sin desbordamiento, recarga de borrador y guardado luego de interrumpir la red. |
+
+**Límite exacto:** los puestos de liga/grupos, mejores restantes y ganadores se resolverán desde actas y tablas oficiales en T05/T06. La ejecución de sorteos de rondas posteriores y creación de sus partidos requiere esa fuente; la configuración y el cuadro previsto ya están guardados. El orden de siembra por posiciones es un esquema previsto, no una clasificación calculada. La aceptación en teléfono físico, con teclado virtual, red inestable y por el propietario sigue pendiente; la prueba de red anterior fue en navegador de escritorio.

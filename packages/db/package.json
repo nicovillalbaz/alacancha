@@ -1,0 +1,4 @@
+{
+  "name": "@torneos/db", "private": true, "type": "module", "version": "0.1.0",
+  "exports": { ".": "./src/index.ts" }, "dependencies": { "pg": "8.23.1", "@node-rs/argon2": "2.2.2" }
+}

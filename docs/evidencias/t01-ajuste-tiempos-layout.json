@@ -1,0 +1,70 @@
+{
+  "date": "2026-10-28",
+  "layouts": [
+    {
+      "overflow": false,
+      "route": "#/organizador/inicio",
+      "statBlocks": 0,
+      "width": 320
+    },
+    {
+      "overflow": false,
+      "route": "#/organizador/partido/evento/gol",
+      "statBlocks": 0,
+      "width": 320
+    },
+    {
+      "overflow": false,
+      "route": "#/organizador/acta",
+      "statBlocks": 0,
+      "width": 320
+    },
+    {
+      "overflow": false,
+      "route": "#/organizador/inicio",
+      "statBlocks": 0,
+      "width": 390
+    },
+    {
+      "overflow": false,
+      "route": "#/organizador/partido/evento/gol",
+      "statBlocks": 0,
+      "width": 390
+    },
+    {
+      "overflow": false,
+      "route": "#/organizador/acta",
+      "statBlocks": 0,
+      "width": 390
+    },
+    {
+      "overflow": false,
+      "route": "#/organizador/inicio",
+      "statBlocks": 0,
+      "width": 1280
+    },
+    {
+      "overflow": false,
+      "route": "#/organizador/partido/evento/gol",
+      "statBlocks": 0,
+      "width": 1280
+    },
+    {
+      "overflow": false,
+      "route": "#/organizador/acta",
+      "statBlocks": 0,
+      "width": 1280
+    }
+  ],
+  "checks": {
+    "minuteInitiallyEmpty": true,
+    "minuteOptional": true,
+    "minuteInitiallyCollapsed": true,
+    "secondPeriodWithoutMinute": true,
+    "extraPeriodRetainedAfterTeamChange": true,
+    "unknownMomentDisplayedEmpty": true,
+    "explicitZeroDistinguishedFromEmpty": true,
+    "consoleErrors": 0
+  },
+  "scope": "Prototipo local sin API ni datos reales"
+}

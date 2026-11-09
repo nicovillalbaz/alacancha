@@ -1,0 +1,8 @@
+{
+  "compilerOptions": {
+    "target": "ES2022", "module": "NodeNext", "moduleResolution": "NodeNext",
+    "strict": true, "skipLibCheck": true, "esModuleInterop": true,
+    "allowImportingTsExtensions": true, "noEmit": true, "types": ["node"]
+  },
+  "include": ["apps/api/src/**/*.ts", "apps/worker/src/**/*.ts", "packages/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"]
+}

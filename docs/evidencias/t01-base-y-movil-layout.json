@@ -1,0 +1,416 @@
+{
+  "date": "2026-10-28",
+  "accounts": [
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/administradores",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 320
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/nueva-organizacion",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 320
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/organizaciones",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 320
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/organizacion/10000000-0000-4000-8000-000000000001",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 320
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/estado-organizacion/10000000-0000-4000-8000-000000000001",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 320
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/actividad",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 320
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/cuenta",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 320
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/acceso-administrador/0024ecc6-4347-46e6-8306-da4f0485c3a8",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 320
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/administradores",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 390
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/nueva-organizacion",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 390
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/organizaciones",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 390
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/organizacion/10000000-0000-4000-8000-000000000001",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 390
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/estado-organizacion/10000000-0000-4000-8000-000000000001",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 390
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/actividad",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 390
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/cuenta",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 390
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/acceso-administrador/0024ecc6-4347-46e6-8306-da4f0485c3a8",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 390
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/administradores",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 768
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/nueva-organizacion",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 768
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/organizaciones",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 768
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/organizacion/10000000-0000-4000-8000-000000000001",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 768
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/estado-organizacion/10000000-0000-4000-8000-000000000001",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 768
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/actividad",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 768
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/cuenta",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 768
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/acceso-administrador/0024ecc6-4347-46e6-8306-da4f0485c3a8",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 768
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/administradores",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 1280
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/nueva-organizacion",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 1280
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/organizaciones",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 1280
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/organizacion/10000000-0000-4000-8000-000000000001",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 1280
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/estado-organizacion/10000000-0000-4000-8000-000000000001",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 1280
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/actividad",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 1280
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/cuenta",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 1280
+    },
+    {
+      "h1": 1,
+      "overflow": false,
+      "path": "#/acceso-administrador/0024ecc6-4347-46e6-8306-da4f0485c3a8",
+      "selects": 0,
+      "smallTargets": [],
+      "width": 1280
+    }
+  ],
+  "prototype": [
+    {
+      "overflow": false,
+      "path": "#/acceso",
+      "selects": 0,
+      "width": 320
+    },
+    {
+      "overflow": false,
+      "path": "#/equipo/buena-fe",
+      "selects": 0,
+      "width": 320
+    },
+    {
+      "overflow": false,
+      "path": "#/equipo/jugadores/nuevo/1",
+      "selects": 0,
+      "width": 320
+    },
+    {
+      "overflow": false,
+      "path": "#/equipo/jugadores/nuevo/2",
+      "selects": 0,
+      "width": 320
+    },
+    {
+      "overflow": false,
+      "path": "#/organizador/fixture",
+      "selects": 0,
+      "width": 320
+    },
+    {
+      "overflow": false,
+      "path": "#/organizador/fixture/horario/1",
+      "selects": 0,
+      "width": 320
+    },
+    {
+      "overflow": false,
+      "path": "#/acceso",
+      "selects": 0,
+      "width": 390
+    },
+    {
+      "overflow": false,
+      "path": "#/equipo/buena-fe",
+      "selects": 0,
+      "width": 390
+    },
+    {
+      "overflow": false,
+      "path": "#/equipo/jugadores/nuevo/1",
+      "selects": 0,
+      "width": 390
+    },
+    {
+      "overflow": false,
+      "path": "#/equipo/jugadores/nuevo/2",
+      "selects": 0,
+      "width": 390
+    },
+    {
+      "overflow": false,
+      "path": "#/organizador/fixture",
+      "selects": 0,
+      "width": 390
+    },
+    {
+      "overflow": false,
+      "path": "#/organizador/fixture/horario/1",
+      "selects": 0,
+      "width": 390
+    },
+    {
+      "overflow": false,
+      "path": "#/acceso",
+      "selects": 0,
+      "width": 768
+    },
+    {
+      "overflow": false,
+      "path": "#/equipo/buena-fe",
+      "selects": 0,
+      "width": 768
+    },
+    {
+      "overflow": false,
+      "path": "#/equipo/jugadores/nuevo/1",
+      "selects": 0,
+      "width": 768
+    },
+    {
+      "overflow": false,
+      "path": "#/equipo/jugadores/nuevo/2",
+      "selects": 0,
+      "width": 768
+    },
+    {
+      "overflow": false,
+      "path": "#/organizador/fixture",
+      "selects": 0,
+      "width": 768
+    },
+    {
+      "overflow": false,
+      "path": "#/organizador/fixture/horario/1",
+      "selects": 0,
+      "width": 768
+    },
+    {
+      "overflow": false,
+      "path": "#/acceso",
+      "selects": 0,
+      "width": 1280
+    },
+    {
+      "overflow": false,
+      "path": "#/equipo/buena-fe",
+      "selects": 0,
+      "width": 1280
+    },
+    {
+      "overflow": false,
+      "path": "#/equipo/jugadores/nuevo/1",
+      "selects": 0,
+      "width": 1280
+    },
+    {
+      "overflow": false,
+      "path": "#/equipo/jugadores/nuevo/2",
+      "selects": 0,
+      "width": 1280
+    },
+    {
+      "overflow": false,
+      "path": "#/organizador/fixture",
+      "selects": 0,
+      "width": 1280
+    },
+    {
+      "overflow": false,
+      "path": "#/organizador/fixture/horario/1",
+      "selects": 0,
+      "width": 1280
+    }
+  ],
+  "checks": {
+    "accessDraftAndFilterRetained": true,
+    "organizationDraftRetained": true,
+    "readOnlyNetworkFailureRetainsDraft": true,
+    "reconnectionWorksAfterApiRestart": true,
+    "prototypePlayerBatchTwoSteps": true,
+    "internalOriginRequiresExplicitSelection": true,
+    "publicControlAndPrototypeSeparated": true
+  }
+}

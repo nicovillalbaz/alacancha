@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Campo de fútbol">
+  <rect width="512" height="512" rx="116" fill="#165d46"/>
+  <rect x="114" y="88" width="284" height="336" rx="15" fill="none" stroke="#fff" stroke-width="22"/>
+  <path d="M114 256h284M193 88v54h126V88M193 424v-54h126v54" fill="none" stroke="#fff" stroke-width="17"/>
+  <circle cx="256" cy="256" r="45" fill="none" stroke="#fff" stroke-width="17"/>
+</svg>
