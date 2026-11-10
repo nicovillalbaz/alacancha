@@ -8,8 +8,8 @@ export type FlyerSize = keyof typeof flyerSizes;
 export const flyerKinds = ['match','matchday','result','standings','scorers','scorer','defense','bracket','semifinal','final','champion','notice'] as const;
 export type FlyerKind = typeof flyerKinds[number];
 export const flyerTemplates = [
-  { key: 'forest', version: 1, label: 'Campo oscuro' },
-  { key: 'paper', version: 1, label: 'Pizarra clara' },
+  { key: 'forest', version: 2, label: 'Campo oscuro' },
+  { key: 'paper', version: 2, label: 'Pizarra clara' },
 ] as const;
 export type FlyerTemplateKey = typeof flyerTemplates[number]['key'];
 export type FlyerLine = { left:string; right?:string; sub?:string; side?:'home'|'away'; homeAssetId?:string|null; awayAssetId?:string|null; homeName?:string; awayName?:string };
@@ -22,6 +22,7 @@ export type FlyerSnapshot = {
   relatedMatchdayId?:string; relatedSourceRevision?:number; relatedApprovalId?:string;
   pageNo:number; totalPages:number;
   pageLabels?:string[];
+  brand?:{primaryColor:string;accentColor:string;cupAssetId:string|null;organizerAssetId:string|null;federationAssetId:string|null};
 };
 function esc(value:string){return String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&apos;');}
 function words(value:string,maxChars:number,maxLines:number){
@@ -36,12 +37,14 @@ function words(value:string,maxChars:number,maxLines:number){
   if(lines.length>maxLines){const visible=lines.slice(0,maxLines);visible[maxLines-1]=`${visible[maxLines-1].slice(0,maxChars-1)}…`;return visible;}
   return lines.length?lines:[''];
 }
-function text(value:string,x:number,y:number,size:number,color:string,weight=500,anchor:'start'|'middle'|'end'='start'){
-  return `<text x="${x}" y="${y}" fill="${color}" font-family="Arial, Segoe UI, sans-serif" font-size="${size}" font-weight="${weight}" text-anchor="${anchor}">${esc(value)}</text>`;
+function text(value:string,x:number,y:number,size:number,color:string,weight=500,anchor:'start'|'middle'|'end'='start',display=false){
+  return `<text x="${x}" y="${y}" fill="${color}" font-family="${display?'Impact, Bahnschrift Condensed, Arial Narrow, sans-serif':'Bahnschrift, Segoe UI, Arial, sans-serif'}" font-size="${size}" font-weight="${weight}" text-anchor="${anchor}">${esc(value)}</text>`;
 }
-function multi(value:string,x:number,y:number,size:number,color:string,maxChars:number,maxLines:number,anchor:'start'|'middle'|'end'='start',step=size*1.17,weight=600){
-  return words(value,maxChars,maxLines).map((row,index)=>text(row,x,y+index*step,size,color,weight,anchor)).join('');
+function multi(value:string,x:number,y:number,size:number,color:string,maxChars:number,maxLines:number,anchor:'start'|'middle'|'end'='start',step=size*1.17,weight=600,display=false){
+  return words(value,maxChars,maxLines).map((row,index)=>text(row,x,y+index*step,size,color,weight,anchor,display)).join('');
 }
+function luminance(hex:string){const rgb=[1,3,5].map(index=>parseInt(hex.slice(index,index+2),16)/255).map(value=>value<=.04045?value/12.92:((value+.055)/1.055)**2.4);return rgb[0]*.2126+rgb[1]*.7152+rgb[2]*.0722;}
+function contrast(a:string,b:string){const x=luminance(a),y=luminance(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05);}
 function imageOrMark(assetId:string|null|undefined,name:string,x:number,y:number,size:number,assets:Record<string,string>,dark:boolean){
   const source=assetId&&assets[assetId];
   const bg=dark?'#F3F7F4':'#E2EEE8',ink=dark?'#165D46':'#184534';
@@ -51,16 +54,24 @@ function imageOrMark(assetId:string|null|undefined,name:string,x:number,y:number
   return circle+text(initials,x+size/2,y+size*.62,Math.min(68,size*.36),ink,800,'middle');
 }
 export function renderFlyerSvg(snapshot:FlyerSnapshot,sizeCode:FlyerSize,templateKey:FlyerTemplateKey,assets:Record<string,string>={}){
-  const {width:w,height:h}=flyerSizes[sizeCode],dark=templateKey==='forest';
-  const bg=dark?'#102B2B':'#F5F7F3',ink=dark?'#F8FBF9':'#102B2B',muted=dark?'#BBD3C7':'#526760',accent=dark?'#A9E1B9':'#165D46',panel=dark?'#1A3B38':'#E5EEE7',line=dark?'#39615B':'#CBDAD0';
+  const {width:w,height:h}=flyerSizes[sizeCode],primary=snapshot.brand?.primaryColor||'#102B2B',rawAccent=snapshot.brand?.accentColor||'#A9E1B9',dark=templateKey==='forest';
+  const bg=dark?primary:'#F5F7F3',ink=contrast(bg,'#F8FBF9')>contrast(bg,'#102B2B')?'#F8FBF9':'#102B2B',muted=dark?(ink==='#F8FBF9'?'#D4E4DC':'#324C45'):'#526760',accent=contrast(bg,rawAccent)>=4.5?rawAccent:ink,panel=dark?(ink==='#F8FBF9'?'#1A3B38':'#E5EEE7'):'#E5EEE7',line=dark?(ink==='#F8FBF9'?'#39615B':'#B2C7BB'):'#CBDAD0';
   const b:string[]=[`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`,
     `<rect width="${w}" height="${h}" fill="${bg}"/>`,
-    `<rect x="0" y="0" width="${w}" height="16" fill="${accent}"/>`];
+    `<path d="M0 0 H${w} V${Math.round(h*.16)} L0 ${Math.round(h*.32)}Z" fill="${dark?rawAccent:primary}" opacity="${dark?.11:.08}"/>`,
+    `<path d="M0 ${Math.round(h*.82)} L${w} ${Math.round(h*.64)} V${h} H0Z" fill="${rawAccent}" opacity="${dark?.07:.12}"/>`,
+    `<circle cx="${w*.82}" cy="${h*.52}" r="${w*.44}" fill="none" stroke="${ink}" stroke-width="3" opacity=".055"/>`,
+    `<circle cx="${w*.82}" cy="${h*.52}" r="${w*.13}" fill="none" stroke="${ink}" stroke-width="3" opacity=".055"/>`,
+    `<path d="M${w*.82} ${h*.08}V${h*.96}M${w*.38} ${h*.52}H${w}" stroke="${ink}" stroke-width="3" opacity=".045"/>`,
+    `<rect x="0" y="0" width="${w}" height="12" fill="${rawAccent}"/>`];
   const top=76;
-  if(snapshot.orgAssetId) b.push(imageOrMark(snapshot.orgAssetId,snapshot.competition,62,top-33,70,assets,dark));
-  b.push(text(snapshot.competition,snapshot.orgAssetId?150:65,top+14,25,muted,700));
-  b.push(text(snapshot.kicker.toUpperCase(),65,156,25,accent,800));
-  b.push(multi(snapshot.title,65,215,Math.min(55,h*.048),ink,32,2,'start',60,800));
+  const logos=[snapshot.brand?.cupAssetId,snapshot.brand?.organizerAssetId,snapshot.brand?.federationAssetId].filter((id):id is string=>Boolean(id));
+  if(logos.length)logos.forEach((id,index)=>b.push(imageOrMark(id,'',w-92-(logos.length-1-index)*83,top-32,index===0?72:60,assets,dark)));
+  else if(snapshot.orgAssetId)b.push(imageOrMark(snapshot.orgAssetId,snapshot.competition,w-110,top-33,70,assets,dark));
+  b.push(multi(snapshot.competition,65,top+5,25,muted,Math.max(17,Math.floor((w-175-logos.length*80)/14)),2,'start',29,750));
+  b.push(`<path d="M65 130 H${Math.min(w-65,305)}" stroke="${rawAccent}" stroke-width="6"/>`);
+  b.push(text(snapshot.kicker.toUpperCase(),65,166,23,accent,800));
+  b.push(multi(snapshot.title,65,227,Math.min(62,h*.052),ink,29,2,'start',68,900,true));
   b.push(text('Generado por NAVZ',65,h-31,18,muted,700));
   if(snapshot.pageNo>1||snapshot.totalPages>1)b.push(text(`${snapshot.pageNo}/${snapshot.totalPages}`,w-65,h-31,20,muted,700,'end'));
   const hero=['match','result','champion'].includes(snapshot.kind);
@@ -72,7 +83,7 @@ export function renderFlyerSvg(snapshot:FlyerSnapshot,sizeCode:FlyerSize,templat
     if(snapshot.home)b.push(multi(snapshot.home.name,260,nameY,37,ink,20,3,'middle',43,800));
     if(snapshot.away)b.push(multi(snapshot.away.name,w-260,nameY,37,ink,20,3,'middle',43,800));
     const scoreY=logoY+logoSize*.54;
-    b.push(snapshot.score?text(`${snapshot.score.home} : ${snapshot.score.away}`,w/2,scoreY,76,accent,900,'middle'):text(snapshot.kind==='champion'?'★':'VS',w/2,scoreY,68,accent,900,'middle'));
+    b.push(snapshot.score?text(`${snapshot.score.home} : ${snapshot.score.away}`,w/2,scoreY,82,accent,900,'middle',true):text(snapshot.kind==='champion'?'★':'VS',w/2,scoreY,74,accent,900,'middle',true));
     if(snapshot.shootout)b.push(text(`Penales ${snapshot.shootout.home} : ${snapshot.shootout.away}`,w/2,scoreY+55,36,accent,800,'middle'));
     if(snapshot.kind==='result'){
       const detailY=Math.max(nameY+82,h*.65);
@@ -87,9 +98,9 @@ export function renderFlyerSvg(snapshot:FlyerSnapshot,sizeCode:FlyerSize,templat
       }
     }else{
       const detailY=Math.max(nameY+125,h*.69);
-      b.push(`<rect x="65" y="${detailY-48}" width="${w-130}" height="${Math.min(260,h-detailY-175)}" rx="28" fill="${panel}"/>`);
-      b.push(multi(snapshot.subline,w/2,detailY,30,ink,54,2,'middle',38,700));
       const lines=snapshot.lines.slice(0,4);
+      b.push(`<rect x="65" y="${detailY-48}" width="${w-130}" height="${Math.max(112,Math.min(100+lines.length*43,h-detailY-175))}" rx="22" fill="${panel}"/>`);
+      b.push(multi(snapshot.subline,w/2,detailY,30,ink,54,2,'middle',38,700));
       lines.forEach((row,index)=>b.push(multi([row.left,row.right].filter(Boolean).join(' · '),w/2,detailY+55+index*43,25,muted,65,1,'middle',30,500)));
     }
   }else if(snapshot.kind==='scorer'){
@@ -101,19 +112,29 @@ export function renderFlyerSvg(snapshot:FlyerSnapshot,sizeCode:FlyerSize,templat
     b.push(multi(snapshot.subline,110,390,34,ink,44,9,'start',49,600));
   }else{
     b.push(multi(snapshot.subline,65,275,28,muted,65,2,'start',36,500));
-    const rows=snapshot.lines,bottom=h-130,available=bottom-345,pair=['matchday','bracket','semifinal','final'].includes(snapshot.kind),slot=pair?Math.min(154,available/Math.max(rows.length,1)):available/Math.max(rows.length,1),topRows=pair?345+Math.max(0,(available-slot*rows.length)/2):345;
+    const rows=snapshot.lines,bottom=h-130,available=bottom-345,pair=['matchday','bracket','semifinal','final'].includes(snapshot.kind),slot=pair?Math.min(220,available/Math.max(rows.length,1)):available/Math.max(rows.length,1),topRows=pair?Math.max(340,345+Math.max(0,(available-slot*rows.length)/3)):345;
     rows.forEach((row,index)=>{
       const y=topRows+slot*index;
       b.push(`<line x1="65" y1="${y+slot-6}" x2="${w-65}" y2="${y+slot-6}" stroke="${line}" stroke-width="2"/>`);
       if(pair&&row.homeName&&row.awayName){
-        const logo=Math.max(30,Math.min(56,slot-25));
-        b.push(imageOrMark(row.homeAssetId||null,row.homeName,85,y+11,logo,assets,dark));
-        b.push(multi(row.homeName,85+logo+13,y+Math.min(46,slot*.43),Math.max(18,Math.min(27,slot*.25)),ink,18,1,'start',25,700));
-        b.push(text('VS',w*.47,y+Math.min(46,slot*.43),20,accent,800,'middle'));
-        b.push(imageOrMark(row.awayAssetId||null,row.awayName,w*.52,y+11,logo,assets,dark));
-        b.push(multi(row.awayName,w*.52+logo+13,y+Math.min(46,slot*.43),Math.max(18,Math.min(27,slot*.25)),ink,18,1,'start',25,700));
-        if(row.right)b.push(text(row.right,w-90,y+Math.min(46,slot*.43),22,accent,800,'end'));
-        if(row.sub&&slot>=85)b.push(multi(row.sub,85+logo+13,y+Math.min(79,slot*.72),18,muted,72,1,'start',20,500));
+        const spacious=slot>=155,logo=spacious?78:Math.max(34,Math.min(56,slot-25));
+        if(spacious){
+          if(row.right)b.push(text(row.right,w-88,y+35,29,accent,850,'end',true));
+          b.push(imageOrMark(row.homeAssetId||null,row.homeName,85,y+53,logo,assets,dark));
+          b.push(multi(row.homeName,85+logo+15,y+100,33,ink,18,2,'start',36,780));
+          b.push(text('VS',w/2,y+104,28,accent,900,'middle',true));
+          b.push(imageOrMark(row.awayAssetId||null,row.awayName,w*.55,y+53,logo,assets,dark));
+          b.push(multi(row.awayName,w*.55+logo+15,y+100,33,ink,18,2,'start',36,780));
+          if(row.sub)b.push(multi(row.sub,85+logo+15,y+170,21,muted,68,1,'start',22,600));
+        }else{
+          b.push(imageOrMark(row.homeAssetId||null,row.homeName,85,y+11,logo,assets,dark));
+          b.push(multi(row.homeName,85+logo+13,y+Math.min(46,slot*.43),Math.max(21,Math.min(28,slot*.25)),ink,18,1,'start',25,700));
+          b.push(text('VS',w*.47,y+Math.min(46,slot*.43),22,accent,800,'middle'));
+          b.push(imageOrMark(row.awayAssetId||null,row.awayName,w*.52,y+11,logo,assets,dark));
+          b.push(multi(row.awayName,w*.52+logo+13,y+Math.min(46,slot*.43),Math.max(21,Math.min(28,slot*.25)),ink,18,1,'start',25,700));
+          if(row.right)b.push(text(row.right,w-90,y+Math.min(46,slot*.43),22,accent,800,'end'));
+          if(row.sub&&slot>=85)b.push(multi(row.sub,85+logo+13,y+Math.min(79,slot*.72),18,muted,72,1,'start',20,500));
+        }
         return;
       }
       if(row.homeName)b.push(imageOrMark(row.homeAssetId,row.homeName,87,y+13,Math.min(50,slot-24),assets,dark));

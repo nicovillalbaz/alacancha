@@ -1,5 +1,6 @@
 import { z } from 'zod';
 export { rankStandings, type RankedMatch, type StandingTotals, type StandingGroup } from './standings.ts';
+export { derivePositionCompetition, type PositionCompetition, type PositionCompetitionView, type PositionGame, type PositionManualOrders, type PositionResult } from './position-competition.ts';
 export { roundRobin, drawGroups, knockoutBracket, type GeneratedRound, type FixturePair, type BracketSlotPlan } from './fixture.ts';
 export { knockoutRoundName, previewCompetitionBracket, type PlannedRound, type PlannedTie } from './competition.ts';
 export { projectMatchJournal, type MatchJournalEvent, type MatchEventKind } from './match.ts';
@@ -99,6 +100,32 @@ export const advancedRulesSchema = z.object({
   if (!walkover.enabled && [walkover.winnerGoals, walkover.loserGoals, walkover.winnerPoints, walkover.loserPoints].some((value) => value !== null)) issue('El walkover desactivado no lleva marcador ni puntos.');
   if (walkover.enabled && (walkover.winnerGoals === null || walkover.loserGoals === null || walkover.winnerGoals <= walkover.loserGoals)) issue('El marcador adjudicado debe tener más goles para el ganador.');
 });
+export const positionBlueprintSchema = z.object({
+  name: z.string().trim().min(3).max(120),
+  opening: z.object({ firstJornada: z.number().int().min(1).max(999), secondJornada: z.number().int().min(1).max(999), firstDate: calendarDateSchema, secondDate: calendarDateSchema }).strict(),
+  extraReservedDate: calendarDateSchema.nullable(),
+  games: z.array(z.object({
+    code: z.string().regex(/^(G\d{2}|MM[1-4]|Q[1-6])$/),
+    stage: z.enum(['groups','quarterfinal','quadrangular']),
+    sportingRound: z.string().trim().min(2).max(30),
+    jornadaNo: z.number().int().min(1).max(999).nullable(),
+    plannedDate: calendarDateSchema.nullable(),
+    homeRef: z.string().regex(/^([AB][1-5]|[1-4][AB]|S[1-4])$/),
+    awayRef: z.string().regex(/^([AB][1-5]|[1-4][AB]|S[1-4])$/),
+  }).strict()).min(1).max(200),
+}).strict().superRefine((plan, context) => {
+  const issue = (message: string) => context.addIssue({ code: 'custom', message });
+  if (plan.opening.firstJornada === plan.opening.secondJornada || plan.opening.firstDate >= plan.opening.secondDate) issue('Las dos jornadas de apertura deben ser distintas y estar en orden.');
+  if (new Set(plan.games.map(game => game.code)).size !== plan.games.length) issue('Cada partido del plan necesita un código único.');
+  if (plan.games.some(game => (game.jornadaNo === null) !== (game.plannedDate === null) || game.homeRef === game.awayRef)) issue('Revisá fecha, jornada y rivales de cada cruce.');
+});
+export type PositionBlueprintInput = z.infer<typeof positionBlueprintSchema>;
+export interface PositionBlueprintView {
+  blueprint: null | { id:string; name:string; revision:number; published_revision:number|null; opening_first_jornada:number; opening_second_jornada:number; opening_first_date:string; opening_second_date:string; extra_reserved_date:string|null };
+  slots: Array<{ slot_code:string; entry_id:string|null; team_name:string|null; color:string|null }>;
+  games: Array<{ code:string; stage:'groups'|'quarterfinal'|'quadrangular'; sporting_round:string; jornada_no:number|null; planned_date:string|null; home_ref:string; away_ref:string }>;
+}
+
 export const initialPhaseSchema = z.object({
   mode: z.enum(['league', 'groups', 'knockout']),
   legs: z.union([z.literal(1), z.literal(2)]),
@@ -177,9 +204,10 @@ export const categoryAddSchema = z.object({
   rules: ruleSchema,
 }).strict();
 export const ruleEditSchema = z.object({ rules: ruleSchema, expectedRevision: z.number().int().positive(), reason: z.string().trim().min(3).max(300) }).strict();
-export const publishSchema = z.object({ reason: z.string().trim().min(3).max(300), expectedRevision: z.number().int().positive() }).strict();
-export interface TournamentSummary { id: string; name: string; timezone: string; status: 'draft' | 'published'; edition_id: string; edition_name: string; category_id: string; category_name: string; preset: typeof rulePresets[number]; team_limit: number | null; rule_version: number; rule_revision: number; rule_status: 'draft' | 'published'; rules: RuleConfig }
+export const publishSchema = z.object({ reason: z.string().trim().min(3).max(300), expectedRevision: z.number().int().positive(), fixedFormatConfirmed:z.boolean().optional() }).strict();
+export interface TournamentSummary { id: string; name: string; timezone: string; status: 'draft' | 'published'; has_emblem: boolean; edition_id: string; edition_name: string; category_id: string; category_name: string; preset: typeof rulePresets[number]; team_limit: number | null; rule_version: number; rule_revision: number; rule_status: 'draft' | 'published'; rules: RuleConfig }
 export const teamCreateSchema = z.object({ requestId: z.uuid(), name: z.string().trim().min(2).max(120), color: z.string().regex(/^#[0-9a-fA-F]{6}$/), categoryId: z.uuid() }).strict();
+export const teamRenameSchema = z.object({ name: z.string().trim().min(2).max(120) }).strict();
 export const teamEntrySchema = z.object({ categoryId: z.uuid() }).strict();
 export const teamAdminSchema = z.object({ name: z.string().trim().min(2).max(120), username: z.string().trim().min(3).max(160) }).strict();
 export const venueCreateSchema = z.object({ name: z.string().trim().min(2).max(120), city: z.string().trim().max(120).nullable() }).strict();

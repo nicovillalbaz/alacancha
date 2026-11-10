@@ -9,7 +9,7 @@ import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { createPool, transaction, audit, type DatabasePool } from '@torneos/db';
-import { accessSchema, organizationSchema, loginSchema, brandSchema, tokenSchema, acceptSchema, passwordSchema, tournamentSetupSchema, categoryAddSchema, ruleSchema, ruleEditSchema, publishSchema, teamCreateSchema, teamEntrySchema, teamAdminSchema, teamPersonSchema, teamPublicationSchema, venueCreateSchema, sponsorCreateSchema, sponsorPublicationSchema, playerDraftSchema, goodFaithSubmitSchema, goodFaithReviewSchema, playerDocumentLabelSchema, playerEvidenceReviewSchema, movementDeclareSchema, restrictionCreateSchema, calendarDateSchema, draftMatchSchema, lineupSaveSchema, lineupTransitionSchema, lineupReviewSchema, playerImportPreviewSchema, playerImportCommitSchema, playerIdentityEditSchema, playerReuseSchema, matchdayCreateSchema, fixtureScheduleSchema, matchdayPublishSchema, matchEventSchema, matchEventVoidSchema, matchPeriodCodes, projectMatchJournal, roundRobin, drawGroups, knockoutBracket, previewCompetitionBracket, type PlayerDraftInput, type CurrentUser, type MatchCaptureView, type MatchJournalEvent } from '@torneos/shared';
+import { accessSchema, organizationSchema, loginSchema, brandSchema, tokenSchema, acceptSchema, passwordSchema, tournamentSetupSchema, categoryAddSchema, ruleSchema, ruleEditSchema, publishSchema, teamCreateSchema, teamRenameSchema, teamEntrySchema, teamAdminSchema, teamPersonSchema, teamPublicationSchema, venueCreateSchema, sponsorCreateSchema, sponsorPublicationSchema, playerDraftSchema, goodFaithSubmitSchema, goodFaithReviewSchema, playerDocumentLabelSchema, playerEvidenceReviewSchema, movementDeclareSchema, restrictionCreateSchema, calendarDateSchema, draftMatchSchema, lineupSaveSchema, lineupTransitionSchema, lineupReviewSchema, playerImportPreviewSchema, playerImportCommitSchema, playerIdentityEditSchema, playerReuseSchema, matchdayCreateSchema, fixtureScheduleSchema, matchdayPublishSchema, positionBlueprintSchema, matchEventSchema, matchEventVoidSchema, matchPeriodCodes, projectMatchJournal, roundRobin, drawGroups, knockoutBracket, previewCompetitionBracket, type PlayerDraftInput, type CurrentUser, type MatchCaptureView, type MatchJournalEvent } from '@torneos/shared';
 import { digest, opaqueToken, csrfFor, safeEquals, hashPassword, verifyPassword, documentFingerprint, encryptDocument, decryptDocument, normalizeDocument } from './security.ts';
 import type { Config } from './config.ts';
 import { approvedGoodFaithPdf } from './private-pdf.ts';
@@ -21,6 +21,7 @@ import { registerTournamentPaymentRoutes } from './tournament-payments.ts';
 import { registerFixtureProgressRoutes } from './fixture-progress-routes.ts';
 import { registerFixtureRefereeRoutes } from './fixture-referees-routes.ts';
 import { tieWinner, type ApprovedScore } from './fixture-progress.ts';
+import { positionCompetitionState, syncPositionMatches } from './position-competition.ts';
 
 interface Auth { session_id: string; user_id: string; organization_id: string | null; display_name: string; username: string; platform_admin: boolean; rawToken: string }
 declare module 'fastify' { interface FastifyRequest { auth: Auth | null } }
@@ -397,8 +398,21 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     if (!/^[0-9a-f-]+\.(png|jpg|webp)$/.test(media.filename)) fail(500, 'INVALID_FILE', 'No se pudo abrir el archivo.');
     return reply.type(media.content_type).send(await readFile(resolve(config.mediaDir, media.filename)));
   });
+  app.get('/api/v1/public/organizations/:id/logo', async (request, reply) => {
+    const organizationId = uuid((request.params as { id: string }).id);
+    const { rows: [media] } = await pool.query(`SELECT m.filename,m.content_type FROM organizations o
+      JOIN media m ON m.organization_id=o.id AND m.id=o.logo_id
+      WHERE o.id=$1 AND o.status='active' AND EXISTS (
+        SELECT 1 FROM tournaments t JOIN editions ed ON ed.organization_id=t.organization_id AND ed.tournament_id=t.id
+        JOIN categories c ON c.organization_id=ed.organization_id AND c.edition_id=ed.id
+        JOIN rule_versions r ON r.organization_id=c.organization_id AND r.category_id=c.id AND r.status='published'
+        WHERE t.organization_id=o.id AND t.status='published' AND ed.status='published' AND c.status='published')`, [organizationId]);
+    if (!media) fail(404, 'NOT_FOUND', 'No hay logo público para esta organización.');
+    if (!/^[0-9a-f-]+\.(png|jpg|webp)$/.test(media.filename)) fail(500, 'INVALID_FILE', 'No se pudo abrir el archivo.');
+    return reply.type(media.content_type).send(await readFile(resolve(config.mediaDir, media.filename)));
+  });
 
-  const tournamentRows = `SELECT t.id,t.name,t.timezone,t.status,e.id edition_id,e.name edition_name,c.id category_id,c.name category_name,c.preset,c.team_limit,r.version rule_version,r.revision rule_revision,r.status rule_status,r.rules || jsonb_build_object('maxBenchStaff',COALESCE(r.rules->'maxBenchStaff','0'::jsonb),'substitutions',COALESCE(r.rules->'substitutions','null'::jsonb),'eligibility',COALESCE(r.rules->'eligibility','null'::jsonb),'advanced',COALESCE(r.rules->'advanced','null'::jsonb),'initialPhase',COALESCE(r.rules->'initialPhase','null'::jsonb)) rules
+  const tournamentRows = `SELECT t.id,t.name,t.timezone,t.status,(t.emblem_id IS NOT NULL) has_emblem,e.id edition_id,e.name edition_name,c.id category_id,c.name category_name,c.preset,c.team_limit,r.version rule_version,r.revision rule_revision,r.status rule_status,r.rules || jsonb_build_object('maxBenchStaff',COALESCE(r.rules->'maxBenchStaff','0'::jsonb),'substitutions',COALESCE(r.rules->'substitutions','null'::jsonb),'eligibility',COALESCE(r.rules->'eligibility','null'::jsonb),'advanced',COALESCE(r.rules->'advanced','null'::jsonb),'initialPhase',COALESCE(r.rules->'initialPhase','null'::jsonb)) rules
     FROM tournaments t JOIN editions e ON e.organization_id=t.organization_id AND e.tournament_id=t.id
     JOIN categories c ON c.organization_id=e.organization_id AND c.edition_id=e.id
     JOIN LATERAL (SELECT version,revision,status,rules FROM rule_versions rv WHERE rv.organization_id=c.organization_id AND rv.category_id=c.id AND ($3::boolean=false OR rv.status='published') ORDER BY version DESC LIMIT 1) r ON true
@@ -415,6 +429,94 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const result = await pool.query(tournamentRows, [organizationId, uuid(tournamentId), false]);
     if (!result.rowCount) fail(404, 'NOT_FOUND', 'No se encontró el torneo en esta organización.');
     return result.rows;
+  });
+  app.post('/api/v1/organizations/:id/tournaments/:tournamentId/emblem', async (request, reply) => {
+    const { id, tournamentId } = request.params as { id: string; tournamentId: string };
+    const organizationId = uuid(id), tournament = uuid(tournamentId);
+    const actor = await organizationAccess(request, organizationId, true);
+    const { rows: [present] } = await pool.query('SELECT id FROM tournaments WHERE organization_id=$1 AND id=$2', [organizationId, tournament]);
+    if (!present) fail(404, 'NOT_FOUND', 'No se encontró el torneo en tu organización.');
+    const file = await request.file(); if (!file) fail(400, 'FILE_REQUIRED', 'Elegí una imagen PNG, JPG o WebP.');
+    const data = await file!.toBuffer(); const { contentType, extension } = imageFormat(data, file!.mimetype);
+    const mediaId = randomUUID(), filename = `${mediaId}.${extension}`;
+    await mkdir(config.mediaDir, { recursive: true }); await writeFile(resolve(config.mediaDir, filename), data, { flag: 'wx' });
+    try {
+      await transaction(pool, async (client) => {
+        await client.query('INSERT INTO media(id,organization_id,filename,content_type,byte_length,checksum,created_by) VALUES($1,$2,$3,$4,$5,$6,$7)', [mediaId, organizationId, filename, contentType, data.length, digest(data), actor.user_id]);
+        await client.query('UPDATE tournaments SET emblem_id=$1 WHERE organization_id=$2 AND id=$3', [mediaId, organizationId, tournament]);
+        await audit(client, actor.user_id, organizationId, 'tournament.emblem_changed', tournament, 'Emblema del torneo cargado', null, { mediaId });
+      });
+    } catch (error) { await unlink(resolve(config.mediaDir, filename)); throw error; }
+    return reply.code(201).send({ id: mediaId });
+  });
+  app.get('/api/v1/organizations/:id/tournaments/:tournamentId/emblem', async (request, reply) => {
+    const { id, tournamentId } = request.params as { id: string; tournamentId: string };
+    const organizationId = uuid(id), tournament = uuid(tournamentId);
+    await organizationAccess(request, organizationId);
+    const { rows: [media] } = await pool.query('SELECT m.filename,m.content_type FROM tournaments t JOIN media m ON m.organization_id=t.organization_id AND m.id=t.emblem_id WHERE t.organization_id=$1 AND t.id=$2', [organizationId, tournament]);
+    if (!media) fail(404, 'NOT_FOUND', 'Este torneo aún no tiene emblema.');
+    if (!/^[0-9a-f-]+\.(png|jpg|webp)$/.test(media.filename)) fail(500, 'INVALID_FILE', 'No se pudo abrir el archivo.');
+    return reply.type(media.content_type).send(await readFile(resolve(config.mediaDir, media.filename)));
+  });
+  const flyerSettingsSchema = z.object({ revision:z.number().int().nonnegative(), template:z.enum(['forest','paper']), size:z.enum(['square','portrait','story','print']), format:z.enum(['png','jpg','pdf']), primaryColor:z.string().regex(/^#[0-9a-fA-F]{6}$/), accentColor:z.string().regex(/^#[0-9a-fA-F]{6}$/) }).strict();
+  const flyerSettingsQuery = `SELECT t.id tournament_id,coalesce(s.template_key,'forest') template,coalesce(s.size_code,'square') size,coalesce(s.format,'png') format,
+    coalesce(s.primary_color,'#102B2B') primary_color,coalesce(s.accent_color,'#A9E1B9') accent_color,coalesce(s.revision,0) revision,
+    coalesce(s.cup_logo_id,t.emblem_id) cup_logo_id,coalesce(s.organizer_logo_id,o.logo_id) organizer_logo_id,s.federation_logo_id
+    FROM tournaments t JOIN organizations o ON o.id=t.organization_id LEFT JOIN tournament_flyer_settings s ON s.organization_id=t.organization_id AND s.tournament_id=t.id
+    WHERE t.organization_id=$1 AND t.id=$2`;
+  app.get('/api/v1/organizations/:id/tournaments/:tournamentId/flyer-settings', async (request) => {
+    const {id,tournamentId}=request.params as {id:string;tournamentId:string},org=uuid(id),tournament=uuid(tournamentId);await organizationAccess(request,org);
+    const {rows:[settings]}=await pool.query(flyerSettingsQuery,[org,tournament]);if(!settings)fail(404,'NOT_FOUND','No se encontró el torneo en tu organización.');return settings;
+  });
+  app.patch('/api/v1/organizations/:id/tournaments/:tournamentId/flyer-settings', async (request) => {
+    const {id,tournamentId}=request.params as {id:string;tournamentId:string},org=uuid(id),tournament=uuid(tournamentId),actor=await organizationAccess(request,org,true),input=flyerSettingsSchema.parse(request.body);
+    return transaction(pool,async(client)=>{
+      const {rows:[owner]}=await client.query('SELECT id FROM tournaments WHERE organization_id=$1 AND id=$2 FOR UPDATE',[org,tournament]);if(!owner)fail(404,'NOT_FOUND','No se encontró el torneo en tu organización.');
+      const {rows:[current]}=await client.query('SELECT revision FROM tournament_flyer_settings WHERE organization_id=$1 AND tournament_id=$2 FOR UPDATE',[org,tournament]);
+      if((current?.revision||0)!==input.revision)fail(409,'STALE_VERSION','El diseño cambió en otra pantalla. Actualizá antes de guardar.');
+      await client.query(`INSERT INTO tournament_flyer_settings(organization_id,tournament_id,template_key,size_code,format,primary_color,accent_color)
+        VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (organization_id,tournament_id) DO UPDATE SET template_key=EXCLUDED.template_key,size_code=EXCLUDED.size_code,format=EXCLUDED.format,
+        primary_color=EXCLUDED.primary_color,accent_color=EXCLUDED.accent_color,revision=tournament_flyer_settings.revision+1`,[org,tournament,input.template,input.size,input.format,input.primaryColor,input.accentColor]);
+      await audit(client,actor.user_id,org,'flyer.settings_changed',tournament,'Diseño de flyers actualizado',null,{template:input.template,size:input.size,format:input.format,primaryColor:input.primaryColor,accentColor:input.accentColor});
+      const {rows:[settings]}=await client.query(flyerSettingsQuery,[org,tournament]);return settings;
+    });
+  });
+  const flyerLogoColumn={cup:'cup_logo_id',organizer:'organizer_logo_id',federation:'federation_logo_id'} as const;
+  app.post('/api/v1/organizations/:id/tournaments/:tournamentId/flyer-settings/logos/:slot', async (request,reply) => {
+    const {id,tournamentId,slot}=request.params as {id:string;tournamentId:string;slot:string},org=uuid(id),tournament=uuid(tournamentId),actor=await organizationAccess(request,org,true);
+    if(!(slot in flyerLogoColumn))fail(400,'INVALID_SLOT','Logo desconocido.');const column=flyerLogoColumn[slot as keyof typeof flyerLogoColumn];
+    const {rowCount:present}=await pool.query('SELECT 1 FROM tournaments WHERE organization_id=$1 AND id=$2',[org,tournament]);if(!present)fail(404,'NOT_FOUND','No se encontró el torneo en tu organización.');
+    const file=await request.file();if(!file)fail(400,'FILE_REQUIRED','Elegí una imagen PNG, JPG o WebP.');const data=await file!.toBuffer(),{contentType,extension}=imageFormat(data,file!.mimetype);
+    const mediaId=randomUUID(),filename=`${mediaId}.${extension}`;await mkdir(config.mediaDir,{recursive:true});await writeFile(resolve(config.mediaDir,filename),data,{flag:'wx'});
+    try{await transaction(pool,async(client)=>{
+      await client.query('SELECT id FROM tournaments WHERE organization_id=$1 AND id=$2 FOR UPDATE',[org,tournament]);
+      await client.query('INSERT INTO media(id,organization_id,filename,content_type,byte_length,checksum,created_by) VALUES($1,$2,$3,$4,$5,$6,$7)',[mediaId,org,filename,contentType,data.length,digest(data),actor.user_id]);
+      await client.query(`INSERT INTO tournament_flyer_settings(organization_id,tournament_id,${column}) VALUES($1,$2,$3)
+        ON CONFLICT (organization_id,tournament_id) DO UPDATE SET ${column}=EXCLUDED.${column},revision=tournament_flyer_settings.revision+1`,[org,tournament,mediaId]);
+      await audit(client,actor.user_id,org,'flyer.logo_changed',tournament,'Logo de flyer cargado',null,{slot,mediaId});
+    });}catch(error){await unlink(resolve(config.mediaDir,filename));throw error;}
+    return reply.code(201).send({id:mediaId,slot});
+  });
+  app.get('/api/v1/organizations/:id/tournaments/:tournamentId/flyer-settings/logos/:slot', async (request,reply) => {
+    const {id,tournamentId,slot}=request.params as {id:string;tournamentId:string;slot:string},org=uuid(id),tournament=uuid(tournamentId);await organizationAccess(request,org);
+    if(!(slot in flyerLogoColumn))fail(400,'INVALID_SLOT','Logo desconocido.');const column=flyerLogoColumn[slot as keyof typeof flyerLogoColumn];
+    const {rows:[settings]}=await pool.query(flyerSettingsQuery,[org,tournament]);if(!settings)fail(404,'NOT_FOUND','No se encontró el torneo en tu organización.');const mediaId=settings[column];if(!mediaId)fail(404,'NOT_FOUND','Este logo aún no está cargado.');
+    const {rows:[media]}=await pool.query('SELECT filename,content_type FROM media WHERE organization_id=$1 AND id=$2',[org,mediaId]);if(!media||!/^[0-9a-f-]+\.(png|jpg|webp)$/.test(media.filename))fail(404,'NOT_FOUND','Este logo no está disponible.');
+    return reply.type(media.content_type).send(await readFile(resolve(config.mediaDir,media.filename)));
+  });
+  app.get('/api/v1/public/organizations/:id/tournaments/:tournamentId/emblem', async (request, reply) => {
+    const { id, tournamentId } = request.params as { id: string; tournamentId: string };
+    const organizationId = uuid(id), tournament = uuid(tournamentId);
+    const { rows: [media] } = await pool.query(`SELECT m.filename,m.content_type FROM tournaments t
+      JOIN organizations o ON o.id=t.organization_id AND o.status='active'
+      JOIN media m ON m.organization_id=t.organization_id AND m.id=t.emblem_id
+      WHERE t.organization_id=$1 AND t.id=$2 AND t.status='published'
+      AND EXISTS (SELECT 1 FROM editions ed JOIN categories c ON c.organization_id=ed.organization_id AND c.edition_id=ed.id
+        JOIN rule_versions r ON r.organization_id=c.organization_id AND r.category_id=c.id AND r.status='published'
+        WHERE ed.organization_id=t.organization_id AND ed.tournament_id=t.id AND ed.status='published' AND c.status='published')`, [organizationId, tournament]);
+    if (!media) fail(404, 'NOT_FOUND', 'No hay emblema público para este torneo.');
+    if (!/^[0-9a-f-]+\.(png|jpg|webp)$/.test(media.filename)) fail(500, 'INVALID_FILE', 'No se pudo abrir el archivo.');
+    return reply.type(media.content_type).send(await readFile(resolve(config.mediaDir, media.filename)));
   });
   app.post('/api/v1/organizations/:id/tournaments', async (request, reply) => {
     const organizationId = uuid((request.params as { id: string }).id);
@@ -478,6 +580,8 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     return transaction(pool, async (client) => {
       const { rows: [categoryRow] } = await client.query('SELECT id FROM categories WHERE organization_id=$1 AND id=$2 FOR UPDATE', [organizationId, category]);
       if (!categoryRow) fail(404, 'NOT_FOUND', 'No se encontró la categoría en esta organización.');
+      const { rowCount: fixedFormat }=await client.query('SELECT 1 FROM fixture_position_blueprints WHERE organization_id=$1 AND category_id=$2', [organizationId,category]);
+      if(fixedFormat && (input.rules.initialPhase!==null || input.rules.competitionPlan!==null)) fail(409,'FORMAT_LOCKED','El formato de esta Copa está fijado en su plan de posiciones. Podés editar las demás reglas.');
       const { rows: [latest] } = await client.query('SELECT id,version,revision,status FROM rule_versions WHERE organization_id=$1 AND category_id=$2 ORDER BY version DESC LIMIT 1 FOR UPDATE', [organizationId, category]);
       if (!latest || latest.revision !== input.expectedRevision) fail(409, 'STALE_VERSION', 'El reglamento cambió. Actualizá antes de guardar.');
       if (latest.status === 'draft') {
@@ -499,6 +603,8 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     return transaction(pool, async (client) => {
       const { rows: [categoryRow] } = await client.query('SELECT c.id,c.edition_id,c.team_limit,e.tournament_id FROM categories c JOIN editions e ON e.organization_id=c.organization_id AND e.id=c.edition_id WHERE c.organization_id=$1 AND c.id=$2 FOR UPDATE OF c', [organizationId, category]);
       if (!categoryRow) fail(404, 'NOT_FOUND', 'No se encontró la categoría en esta organización.');
+      const { rowCount: fixedFormat }=await client.query('SELECT 1 FROM fixture_position_blueprints WHERE organization_id=$1 AND category_id=$2', [organizationId,category]);
+      if(fixedFormat && !input.fixedFormatConfirmed) fail(409,'FORMAT_CONFIRMATION_REQUIRED','Revisá y confirmá los puntos y desempates de esta Copa antes de publicar su reglamento.');
       const { rows: [latest] } = await client.query('SELECT id,version,revision,status,rules FROM rule_versions WHERE organization_id=$1 AND category_id=$2 ORDER BY version DESC LIMIT 1 FOR UPDATE', [organizationId, category]);
       if (!latest || latest.status !== 'draft' || latest.revision !== input.expectedRevision) fail(409, 'STALE_VERSION', 'El borrador cambió o ya fue publicado. Actualizá antes de publicar.');
       const validated = ruleSchema.safeParse(latest.rules);
@@ -510,10 +616,10 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       if (age?.reference === 'fixed_date' && !age.fixedDate) fail(400, 'AGE_DATE_REQUIRED', 'Elegí una fecha de corte válida antes de publicar.');
       if (!validated.data?.advanced) fail(400, 'ADVANCED_RULES_REQUIRED', 'Definí tarjetas, walkover y desempates antes de publicar.');
       const phase = validated.data?.initialPhase;
-      if (!phase) fail(400, 'INITIAL_PHASE_REQUIRED', 'Elegí la fase inicial antes de publicar.');
-      if (phase?.mode === 'groups' && categoryRow.team_limit !== null && phase.groupCount! * 2 > categoryRow.team_limit) fail(400, 'GROUP_LIMIT', 'El límite de equipos no alcanza para dos equipos por grupo.');
+      if (!fixedFormat && !phase) fail(400, 'INITIAL_PHASE_REQUIRED', 'Elegí la fase inicial antes de publicar.');
+      if (!fixedFormat && phase?.mode === 'groups' && categoryRow.team_limit !== null && phase.groupCount! * 2 > categoryRow.team_limit) fail(400, 'GROUP_LIMIT', 'El límite de equipos no alcanza para dos equipos por grupo.');
       const qualification = validated.data?.competitionPlan?.qualification;
-      if (categoryRow.team_limit !== null && qualification) {
+      if (!fixedFormat && categoryRow.team_limit !== null && qualification) {
         const planned = qualification.from === 'direct' ? qualification.entrants : qualification.from === 'league' ? qualification.top : (phase?.groupCount ?? 0) * qualification.perGroup + qualification.bestRemaining;
         if (planned > categoryRow.team_limit) fail(400, 'QUALIFICATION_LIMIT', 'Los clasificados previstos superan el límite de equipos de la categoría.');
       }
@@ -521,7 +627,8 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       await client.query("UPDATE categories SET status='published' WHERE id=$1", [category]);
       await client.query("UPDATE editions SET status='published' WHERE id=$1", [categoryRow.edition_id]);
       await client.query("UPDATE tournaments SET status='published',published_at=COALESCE(published_at,now()) WHERE id=$1", [categoryRow.tournament_id]);
-      await audit(client, actor.user_id, organizationId, 'rules.published', latest.id, input.reason, null, { categoryId: category, version: latest.version });
+      const visibleTeams=await client.query("UPDATE team_entries SET public_visible=true WHERE organization_id=$1 AND category_id=$2 AND status='active'", [organizationId,category]);
+      await audit(client, actor.user_id, organizationId, 'rules.published', latest.id, input.reason, null, { categoryId: category, version: latest.version, visibleTeams: visibleTeams.rowCount, fixedFormatConfirmed:!!input.fixedFormatConfirmed });
       return published;
     });
   });
@@ -598,13 +705,13 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     });
   }
   app.get('/api/v1/public/organizations', async () => {
-    const { rows } = await pool.query(`SELECT o.id,o.name,o.public_slug,count(DISTINCT t.id)::int tournament_count
-      FROM organizations o JOIN tournaments t ON t.organization_id=o.id AND t.status='published'
+    const { rows } = await pool.query(`SELECT o.id,o.name,o.public_slug,(o.logo_id IS NOT NULL) has_logo,count(DISTINCT t.id)::int tournament_count
+      FROM organizations o JOIN tournaments t ON t.organization_id=o.id AND (t.status='published' OR EXISTS (SELECT 1 FROM editions pe JOIN categories pc ON pc.organization_id=pe.organization_id AND pc.edition_id=pe.id JOIN fixture_position_blueprints pb ON pb.organization_id=pc.organization_id AND pb.category_id=pc.id JOIN fixture_position_publications pp ON pp.organization_id=pb.organization_id AND pp.blueprint_id=pb.id WHERE pe.organization_id=t.organization_id AND pe.tournament_id=t.id))
       WHERE o.status='active' AND EXISTS (
         SELECT 1 FROM editions ed JOIN categories c ON c.organization_id=ed.organization_id AND c.edition_id=ed.id
         JOIN rule_versions r ON r.organization_id=c.organization_id AND r.category_id=c.id AND r.status='published'
         WHERE ed.organization_id=t.organization_id AND ed.tournament_id=t.id AND ed.status='published' AND c.status='published'
-      ) GROUP BY o.id ORDER BY o.name,o.id LIMIT 500`);
+      ) OR o.status='active' AND EXISTS (SELECT 1 FROM editions pe JOIN categories pc ON pc.organization_id=pe.organization_id AND pc.edition_id=pe.id JOIN fixture_position_blueprints pb ON pb.organization_id=pc.organization_id AND pb.category_id=pc.id JOIN fixture_position_publications pp ON pp.organization_id=pb.organization_id AND pp.blueprint_id=pb.id WHERE pe.organization_id=t.organization_id AND pe.tournament_id=t.id) GROUP BY o.id ORDER BY o.name,o.id LIMIT 500`);
     return rows;
   });
   app.get('/api/v1/public/tournaments', async (request) => {
@@ -612,11 +719,12 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const term = q.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
     const { rows } = await pool.query(`SELECT t.id,t.name,o.id organization_id,o.name organization_name,o.public_slug organization_slug
       FROM tournaments t JOIN organizations o ON o.id=t.organization_id
-      WHERE t.status='published' AND o.status='active'
+      WHERE o.status='active'
         AND ($1='' OR position($1 in translate(lower(t.name),'áéíóúüñ','aeiouun'))>0)
-        AND EXISTS (SELECT 1 FROM editions ed JOIN categories c ON c.organization_id=ed.organization_id AND c.edition_id=ed.id
+        AND ((t.status='published' AND EXISTS (SELECT 1 FROM editions ed JOIN categories c ON c.organization_id=ed.organization_id AND c.edition_id=ed.id
           JOIN rule_versions r ON r.organization_id=c.organization_id AND r.category_id=c.id AND r.status='published'
-          WHERE ed.organization_id=t.organization_id AND ed.tournament_id=t.id AND ed.status='published' AND c.status='published')
+          WHERE ed.organization_id=t.organization_id AND ed.tournament_id=t.id AND ed.status='published' AND c.status='published'))
+          OR EXISTS (SELECT 1 FROM editions pe JOIN categories pc ON pc.organization_id=pe.organization_id AND pc.edition_id=pe.id JOIN fixture_position_blueprints pb ON pb.organization_id=pc.organization_id AND pb.category_id=pc.id JOIN fixture_position_publications pp ON pp.organization_id=pb.organization_id AND pp.blueprint_id=pb.id WHERE pe.organization_id=t.organization_id AND pe.tournament_id=t.id))
       ORDER BY t.created_at DESC,t.id LIMIT 100`, [term]);
     return rows;
   });
@@ -628,6 +736,36 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const { rows: teams } = await pool.query(`SELECT t.id,t.name,t.color,(t.shield_id IS NOT NULL) has_shield,e.id entry_id,e.category_id FROM team_entries e JOIN teams t ON t.organization_id=e.organization_id AND t.id=e.team_id JOIN categories c ON c.organization_id=e.organization_id AND c.id=e.category_id JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id JOIN tournaments tr ON tr.organization_id=ed.organization_id AND tr.id=ed.tournament_id WHERE e.organization_id=$1 AND e.status='active' AND e.public_visible AND c.status='published' AND ed.status='published' AND tr.status='published' ORDER BY t.name LIMIT 200`, [organizationId]);
     const { rows: sponsors } = await pool.query(`SELECT ts.tournament_id,s.id,s.name FROM tournament_sponsors ts JOIN sponsors s ON s.organization_id=ts.organization_id AND s.id=ts.sponsor_id JOIN tournaments t ON t.organization_id=ts.organization_id AND t.id=ts.tournament_id WHERE ts.organization_id=$1 AND ts.archived_at IS NULL AND ts.public_visible AND t.status='published' ORDER BY s.name LIMIT 200`, [organizationId]);
     return { organization, tournaments: rows, teams, sponsors };
+  });
+  app.get('/api/v1/public/organizations/:id/draws', async (request) => {
+    const organizationId = uuid((request.params as { id: string }).id);
+    const { rows } = await pool.query(`SELECT DISTINCT ON (t.id) t.id tournament_id,t.name tournament_name,c.id category_id,c.name category_name,pp.revision,pp.snapshot,pp.published_at
+      FROM fixture_position_publications pp JOIN fixture_position_blueprints bp ON bp.organization_id=pp.organization_id AND bp.id=pp.blueprint_id
+      JOIN categories c ON c.organization_id=bp.organization_id AND c.id=bp.category_id JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id
+      JOIN tournaments t ON t.organization_id=ed.organization_id AND t.id=ed.tournament_id JOIN organizations o ON o.id=t.organization_id
+      WHERE pp.organization_id=$1 AND o.status='active' ORDER BY t.id,pp.published_at DESC`, [organizationId]);
+    return rows;
+  });
+  app.get('/api/v1/public/organizations/:id/draws/:categoryId/competition',async request=>{
+    const {id,categoryId}=request.params as {id:string;categoryId:string};
+    const organizationId=uuid(id),category=uuid(categoryId);
+    const {rowCount}=await pool.query(`SELECT 1 FROM fixture_position_blueprints b JOIN fixture_position_publications p ON p.organization_id=b.organization_id AND p.blueprint_id=b.id
+      JOIN organizations o ON o.id=b.organization_id AND o.status='active' WHERE b.organization_id=$1 AND b.category_id=$2 LIMIT 1`,[organizationId,category]);
+    if(!rowCount)fail(404,'DRAW_NOT_PUBLIC','No se encontró una Copa pública.');
+    const state=await positionCompetitionState(pool,organizationId,category,true);
+    if(!state?.rulesPublished||!state.preparedMatches)return {available:false};
+    const names=await playerStatNames(pool,organizationId,state.playerTotals.map(player=>player.registrationId));
+    return {available:true,competition:state.competition,results:state.results,matches:state.matches.filter(match=>match.day_status==='published'),players:state.playerTotals.filter(player=>names.get(player.registrationId)?.publicName).map(player=>({...player,name:names.get(player.registrationId)!.name})),defense:state.defense,titleTie:state.titleTie,titleExtra:state.titleExtra&&state.titleExtra.dayStatus==='published'?state.titleExtra:state.titleExtra?.decision==='no_extra'?state.titleExtra:null};
+  });
+  app.get('/api/v1/public/organizations/:id/draws/teams/:teamId/shield', async (request, reply) => {
+    const { id, teamId } = request.params as { id:string; teamId:string };
+    const organizationId=uuid(id),team=uuid(teamId);
+    const { rows:[media] }=await pool.query(`SELECT m.filename,m.content_type FROM teams t JOIN organizations o ON o.id=t.organization_id AND o.status='active'
+      JOIN media m ON m.organization_id=t.organization_id AND m.id=t.shield_id
+      WHERE t.organization_id=$1 AND t.id=$2 AND EXISTS (SELECT 1 FROM fixture_position_publications p WHERE p.organization_id=t.organization_id AND (p.snapshot->'slots' @> jsonb_build_array(jsonb_build_object('team_id',t.id)) OR p.snapshot->'teams' @> jsonb_build_array(jsonb_build_object('team_id',t.id))) LIMIT 1)`,[organizationId,team]);
+    if(!media)fail(404,'NOT_FOUND','No hay escudo público para este equipo.');
+    if(!/^[0-9a-f-]+\.(png|jpg|webp)$/.test(media.filename))fail(500,'INVALID_FILE','No se pudo abrir el archivo.');
+    return reply.type(media.content_type).send(await readFile(resolve(config.mediaDir,media.filename)));
   });
 
   app.get('/api/v1/organizations/:id/categories', async (request) => {
@@ -735,6 +873,22 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const { rows } = await pool.query(teamRows, [organizationId, uuid(teamId), scope.organizer, scope.membershipId]);
     if (!rows.length) fail(404, 'NOT_FOUND', 'No se encontró este equipo en tu ámbito.');
     return rows;
+  });
+  app.patch('/api/v1/organizations/:id/teams/:teamId', async (request) => {
+    const { id, teamId } = request.params as { id: string; teamId: string };
+    const organizationId = uuid(id), team = uuid(teamId);
+    const actor = await organizationAccess(request, organizationId, true);
+    const { name } = teamRenameSchema.parse(request.body);
+    return transaction(pool, async (client) => {
+      const { rows: [current] } = await client.query('SELECT name FROM teams WHERE organization_id=$1 AND id=$2 FOR UPDATE', [organizationId, team]);
+      if (!current) fail(404, 'NOT_FOUND', 'No se encontró este equipo en tu organización.');
+      if (current.name === name) return { id: team, name, reused: true };
+      const { rowCount } = await client.query('SELECT 1 FROM teams WHERE organization_id=$1 AND id<>$2 AND lower(name)=lower($3)', [organizationId, team, name]);
+      if (rowCount) fail(409, 'TEAM_NAME_EXISTS', 'Ya existe un equipo con ese nombre en esta organización.');
+      await client.query('UPDATE teams SET name=$1 WHERE organization_id=$2 AND id=$3', [name, organizationId, team]);
+      await audit(client, actor.user_id, organizationId, 'team.renamed', team, 'Nombre del equipo corregido', { name: current.name }, { name });
+      return { id: team, name, reused: false };
+    });
   });
   app.post('/api/v1/organizations/:id/teams', async (request, reply) => {
     const organizationId = uuid((request.params as { id: string }).id);
@@ -1366,6 +1520,211 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       LEFT JOIN team_entries a ON a.organization_id=s.organization_id AND a.id=coalesce(s.away_entry_id,sm.away_entry_id) LEFT JOIN teams away ON away.organization_id=a.organization_id AND away.id=a.team_id
       WHERE s.organization_id=$1 AND s.phase_id=$2 ORDER BY s.stage,s.slot`, [organizationId, phase.id]);
     return { phase, rounds: rounds.map((round) => ({ ...round, matches: matches.filter((match) => match.fixture_round_id === round.id), byes: byes.filter((bye) => bye.round_id === round.id) })), groups, bracket };
+  });
+  app.get('/api/v1/organizations/:id/categories/:categoryId/fixture/blueprint', async (request) => {
+    const { id, categoryId } = request.params as { id: string; categoryId: string };
+    const organizationId = uuid(id), category = uuid(categoryId);
+    await organizationAccess(request, organizationId);
+    const { rows: [found] } = await pool.query('SELECT 1 FROM categories WHERE organization_id=$1 AND id=$2', [organizationId, category]);
+    if (!found) fail(404, 'CATEGORY_NOT_FOUND', 'No se encontró la categoría.');
+    const { rows: [blueprint] } = await pool.query(`SELECT b.id,b.name,b.revision,b.opening_first_jornada,b.opening_second_jornada,to_char(b.opening_first_date,'YYYY-MM-DD') opening_first_date,to_char(b.opening_second_date,'YYYY-MM-DD') opening_second_date,to_char(b.extra_reserved_date,'YYYY-MM-DD') extra_reserved_date,
+      (SELECT max(p.revision) FROM fixture_position_publications p WHERE p.organization_id=b.organization_id AND p.blueprint_id=b.id) published_revision
+      FROM fixture_position_blueprints b WHERE b.organization_id=$1 AND b.category_id=$2`, [organizationId, category]);
+    if (!blueprint) return { blueprint: null, slots: [], games: [] };
+    const { rows: slots } = await pool.query(`SELECT s.slot_code,s.entry_id,t.name team_name,t.color FROM fixture_position_assignments s
+      LEFT JOIN team_entries e ON e.organization_id=s.organization_id AND e.id=s.entry_id
+      LEFT JOIN teams t ON t.organization_id=e.organization_id AND t.id=e.team_id
+      WHERE s.organization_id=$1 AND s.blueprint_id=$2 ORDER BY s.slot_code`, [organizationId, blueprint.id]);
+    const { rows: games } = await pool.query(`SELECT code,stage,sporting_round,jornada_no,to_char(planned_date,'YYYY-MM-DD') planned_date,home_ref,away_ref
+      FROM fixture_position_games WHERE organization_id=$1 AND blueprint_id=$2 ORDER BY ordinal`, [organizationId, blueprint.id]);
+    return { blueprint, slots, games };
+  });
+  app.get('/api/v1/organizations/:id/categories/:categoryId/fixture/blueprint/competition', async request => {
+    const {id,categoryId}=request.params as {id:string;categoryId:string};
+    const organizationId=uuid(id),category=uuid(categoryId);
+    await organizationAccess(request,organizationId);
+    const state=await positionCompetitionState(pool,organizationId,category);
+    if(!state)return fail(404,'BLUEPRINT_NOT_FOUND','No se encontró el formato de esta Copa.');
+    const stats=state.rulesPublished?await categoryStatistics(pool,organizationId,category):null;
+    const names=stats?await playerStatNames(pool,organizationId,stats.players.map(player=>player.registrationId)):new Map();
+    return {competition:state.competition,results:state.results,matches:state.matches,preparedMatches:state.preparedMatches,rulesPublished:state.rulesPublished,players:stats?.players.map(player=>({...player,name:names.get(player.registrationId)?.name||'Jugador',publicName:names.get(player.registrationId)?.publicName||false}))||[],defense:stats?.defense||[],titleTie:state.titleTie,titleExtra:state.titleExtra};
+  });
+  app.post('/api/v1/organizations/:id/categories/:categoryId/fixture/blueprint/title-extra',async request=>{
+    const {id,categoryId}=request.params as {id:string;categoryId:string};
+    const organizationId=uuid(id),category=uuid(categoryId),actor=await organizationAccess(request,organizationId,true);
+    const input=z.object({decision:z.enum(['no_extra','extra']),homeEntryId:z.uuid().optional(),awayEntryId:z.uuid().optional()}).strict().parse(request.body);
+    return transaction(pool,async client=>{
+      const {rows:[plan]}=await client.query(`SELECT b.id,b.extra_reserved_date,c.edition_id FROM fixture_position_blueprints b
+        JOIN categories c ON c.organization_id=b.organization_id AND c.id=b.category_id WHERE b.organization_id=$1 AND b.category_id=$2 FOR UPDATE OF b`,[organizationId,category]);
+      if(!plan)fail(404,'BLUEPRINT_NOT_FOUND','No se encontró el formato de esta Copa.');
+      const state=await positionCompetitionState(client,organizationId,category);
+      if(!state)return fail(404,'BLUEPRINT_NOT_FOUND','No se encontró el formato de esta Copa.');
+      if(state.competition.official.quadrangular!==6||state.titleTie.length<2)fail(409,'TITLE_TIE_NOT_READY','Cerrá el cuadrangular; el partido extra solo corresponde ante empate por el título.');
+      if(input.decision==='extra'&&(!input.homeEntryId||!input.awayEntryId||input.homeEntryId===input.awayEntryId||!state.titleTie.includes(input.homeEntryId)||!state.titleTie.includes(input.awayEntryId)))fail(400,'TITLE_TEAMS_INVALID','Elegí dos equipos empatados en el primer puesto.');
+      const {rows:[previous]}=await client.query('SELECT decision,match_id FROM fixture_position_title_decisions WHERE organization_id=$1 AND category_id=$2 FOR UPDATE',[organizationId,category]);
+      if(previous?.match_id){
+        const {rows:[existing]}=await client.query(`SELECT m.id,m.home_entry_id,m.away_entry_id,md.status day_status,
+          EXISTS(SELECT 1 FROM match_records r WHERE r.organization_id=m.organization_id AND r.match_id=m.id) started,
+          EXISTS(SELECT 1 FROM lineup_versions l WHERE l.organization_id=m.organization_id AND l.match_id=m.id) has_lineup
+          FROM draft_matches m LEFT JOIN matchdays md ON md.organization_id=m.organization_id AND md.id=m.matchday_id
+          WHERE m.organization_id=$1 AND m.id=$2 FOR UPDATE OF m`,[organizationId,previous.match_id]);
+        if(existing?.started||existing?.has_lineup||existing?.day_status==='published')fail(409,'TITLE_EXTRA_ACTIVE','El partido extra ya empezó o se publicó. Revisá el partido antes de cambiar esta decisión.');
+        if(input.decision==='extra'){
+          if(existing.home_entry_id===input.homeEntryId&&existing.away_entry_id===input.awayEntryId)return {decision:'extra',matchId:existing.id,reused:true};
+          await client.query('UPDATE draft_matches SET home_entry_id=$3,away_entry_id=$4 WHERE organization_id=$1 AND id=$2',[organizationId,existing.id,input.homeEntryId,input.awayEntryId]);
+          await audit(client,actor.user_id,organizationId,'fixture.title_extra_changed',existing.id,'Equipos del partido extra corregidos',previous,input);
+          return {decision:'extra',matchId:existing.id,reused:false};
+        }
+        await client.query('UPDATE fixture_position_title_decisions SET decision=$3,match_id=NULL,decided_by=$4,decided_at=now() WHERE organization_id=$1 AND category_id=$2',[organizationId,category,'no_extra',actor.user_id]);
+        await client.query('UPDATE draft_matches SET archived_at=now(),archived_by=$3 WHERE organization_id=$1 AND id=$2',[organizationId,existing.id,actor.user_id]);
+      }
+      if(input.decision==='no_extra'){
+        if(!previous)await client.query('INSERT INTO fixture_position_title_decisions(organization_id,category_id,decision,decided_by) VALUES($1,$2,$3,$4)',[organizationId,category,'no_extra',actor.user_id]);
+        await audit(client,actor.user_id,organizationId,'fixture.title_extra_decided',category,'Sin partido extra por decisión del organizador',previous,{decision:'no_extra'});
+        return {decision:'no_extra',matchId:null,reused:previous?.decision==='no_extra'};
+      }
+      const {rows:[day]}=await client.query(`INSERT INTO matchdays(id,organization_id,edition_id,ordinal,created_by)
+        VALUES($1,$2,$3,15,$4) ON CONFLICT(organization_id,edition_id,ordinal) DO UPDATE SET ordinal=excluded.ordinal RETURNING id`,[randomUUID(),organizationId,plan.edition_id,actor.user_id]);
+      const matchId=randomUUID();
+      await client.query(`INSERT INTO draft_matches(id,organization_id,category_id,home_entry_id,away_entry_id,match_date,created_by,matchday_id,competition_stage)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,'knockout')`,[matchId,organizationId,category,input.homeEntryId,input.awayEntryId,plan.extra_reserved_date,actor.user_id,day.id]);
+      await client.query(`INSERT INTO fixture_position_title_decisions(organization_id,category_id,decision,match_id,decided_by)
+        VALUES($1,$2,'extra',$3,$4) ON CONFLICT(organization_id,category_id) DO UPDATE SET decision='extra',match_id=excluded.match_id,decided_by=excluded.decided_by,decided_at=now()`,[organizationId,category,matchId,actor.user_id]);
+      await audit(client,actor.user_id,organizationId,'fixture.title_extra_decided',category,'Partido extra elegido por el organizador',previous,{decision:'extra',matchId,homeEntryId:input.homeEntryId,awayEntryId:input.awayEntryId});
+      return {decision:'extra',matchId,reused:false};
+    });
+  });
+  app.post('/api/v1/organizations/:id/categories/:categoryId/fixture/blueprint/tiebreak',async request=>{
+    const {id,categoryId}=request.params as {id:string;categoryId:string};
+    const organizationId=uuid(id),category=uuid(categoryId),actor=await organizationAccess(request,organizationId,true);
+    if(actor.platform_admin)fail(403,'ORGANIZER_REQUIRED','El orden deportivo corresponde al organizador.');
+    const input=z.object({table:z.enum(['A','B','general']),position:z.number().int().positive(),entryOrder:z.array(z.uuid()).min(2).max(10),reason:z.string().trim().max(300).optional()}).strict().parse(request.body);
+    return transaction(pool,async client=>{
+      const {rows:[plan]}=await client.query('SELECT id FROM fixture_position_blueprints WHERE organization_id=$1 AND category_id=$2 FOR UPDATE',[organizationId,category]);
+      if(!plan)return fail(404,'BLUEPRINT_NOT_FOUND','No se encontró el formato de esta Copa.');
+      const raw=await positionCompetitionState(client,organizationId,category,false,false);
+      if(!raw||raw.competition.official.groups!==25)return fail(409,'GROUP_RESULTS_PENDING','Esperá las 25 actas de la primera etapa.');
+      const table=input.table==='A'?raw.competition.groupA:input.table==='B'?raw.competition.groupB:raw.competition.general;
+      const group=table.groups.find(item=>item.position===input.position&&item.unresolved);
+      if(!group||group.teamIds.length!==input.entryOrder.length||new Set(input.entryOrder).size!==input.entryOrder.length||input.entryOrder.some(id=>!group.teamIds.includes(id)))return fail(409,'TIE_CHANGED','La tabla cambió. Actualizá antes de ordenar los equipos.');
+      const decisionId=randomUUID(),reason=input.reason||'Orden manual confirmado por el organizador';
+      await client.query(`INSERT INTO standing_tiebreak_decisions(id,organization_id,category_id,source_key,group_key,position,entry_order,reason,decided_by)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[decisionId,organizationId,category,raw.sourceKeys[input.table],`position:${input.table}`,input.position,input.entryOrder,reason,actor.user_id]);
+      await audit(client,actor.user_id,organizationId,'fixture.position_tiebreak_decided',decisionId,reason,null,{table:input.table,position:input.position,entryOrder:input.entryOrder,sourceKey:raw.sourceKeys[input.table]});
+      const synced=await syncPositionMatches(client,organizationId,category,actor.user_id);
+      return {id:decisionId,table:input.table,position:input.position,createdMatches:synced.created};
+    });
+  });
+  app.post('/api/v1/organizations/:id/categories/:categoryId/fixture/blueprint/sync',async request=>{
+    const {id,categoryId}=request.params as {id:string;categoryId:string};
+    const organizationId=uuid(id),category=uuid(categoryId),actor=await organizationAccess(request,organizationId,true);
+    return transaction(pool,async client=>{
+      const {rows:[plan]}=await client.query('SELECT id FROM fixture_position_blueprints WHERE organization_id=$1 AND category_id=$2 FOR UPDATE',[organizationId,category]);
+      if(!plan)fail(404,'BLUEPRINT_NOT_FOUND','No se encontró el formato de esta Copa.');
+      const result=await syncPositionMatches(client,organizationId,category,actor.user_id);
+      await audit(client,actor.user_id,organizationId,'fixture.position_synced',plan.id,'Cruces oficiales preparados',null,result);
+      return result;
+    });
+  });
+  app.post('/api/v1/organizations/:id/categories/:categoryId/fixture/blueprint/publish-draw', async (request) => {
+    const { id, categoryId } = request.params as { id: string; categoryId: string };
+    const organizationId = uuid(id), category = uuid(categoryId), actor = await organizationAccess(request, organizationId, true);
+    const { expectedRevision } = z.object({ expectedRevision: z.number().int().positive() }).strict().parse(request.body);
+    return transaction(pool, async (client) => {
+      const { rows: [plan] } = await client.query('SELECT * FROM fixture_position_blueprints WHERE organization_id=$1 AND category_id=$2 FOR UPDATE', [organizationId,category]);
+      if (!plan) fail(404, 'BLUEPRINT_NOT_FOUND', 'No se encontró el sorteo.');
+      if (plan.revision !== expectedRevision) fail(409, 'DRAW_CHANGED', 'El sorteo cambió. Actualizá antes de publicarlo.');
+      const { rows: slots } = await client.query(`SELECT a.slot_code,a.entry_id,t.id team_id,t.name team_name,t.color,(t.shield_id IS NOT NULL) has_shield
+        FROM fixture_position_assignments a LEFT JOIN team_entries e ON e.organization_id=a.organization_id AND e.id=a.entry_id
+        LEFT JOIN teams t ON t.organization_id=e.organization_id AND t.id=e.team_id
+        WHERE a.organization_id=$1 AND a.blueprint_id=$2 ORDER BY a.slot_code`, [organizationId,plan.id]);
+      if (slots.length !== 10) fail(409, 'DRAW_INCOMPLETE', 'El plan necesita sus diez posiciones.');
+      const { rows: teams } = await client.query(`SELECT e.id entry_id,t.id team_id,t.name team_name,t.color,(t.shield_id IS NOT NULL) has_shield
+        FROM team_entries e JOIN teams t ON t.organization_id=e.organization_id AND t.id=e.team_id
+        WHERE e.organization_id=$1 AND e.category_id=$2 AND e.status='active' ORDER BY t.name,t.id`,[organizationId,category]);
+      const { rows: games } = await client.query(`SELECT code,stage,sporting_round,jornada_no,to_char(planned_date,'YYYY-MM-DD') planned_date,home_ref,away_ref FROM fixture_position_games WHERE organization_id=$1 AND blueprint_id=$2 ORDER BY ordinal`, [organizationId,plan.id]);
+      const { rows: [competition] } = await client.query(`SELECT t.id tournament_id,t.name tournament_name,c.name category_name FROM categories c JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id JOIN tournaments t ON t.organization_id=ed.organization_id AND t.id=ed.tournament_id WHERE c.organization_id=$1 AND c.id=$2`, [organizationId,category]);
+      const snapshot = { blueprint: { name:plan.name, opening_first_jornada:plan.opening_first_jornada, opening_second_jornada:plan.opening_second_jornada, opening_first_date:plan.opening_first_date, opening_second_date:plan.opening_second_date, extra_reserved_date:plan.extra_reserved_date }, slots, teams, games };
+      const { rows: [prior] } = await client.query('SELECT id FROM fixture_position_publications WHERE organization_id=$1 AND blueprint_id=$2 AND revision=$3', [organizationId,plan.id,plan.revision]);
+      if (prior) return { id:prior.id, revision:plan.revision, reused:true, tournamentId:competition.tournament_id };
+      const publicationId = randomUUID();
+      await client.query('INSERT INTO fixture_position_publications(id,organization_id,blueprint_id,revision,snapshot,published_by) VALUES($1,$2,$3,$4,$5,$6)', [publicationId,organizationId,plan.id,plan.revision,JSON.stringify(snapshot),actor.user_id]);
+      await audit(client,actor.user_id,organizationId,'fixture.draw_published',plan.id,'Publicación del sorteo',null,{revision:plan.revision,tournamentId:competition.tournament_id});
+      return { id:publicationId, revision:plan.revision, reused:false, tournamentId:competition.tournament_id };
+    });
+  });
+  app.post('/api/v1/organizations/:id/categories/:categoryId/fixture/blueprint', async (request, reply) => {
+    const { id, categoryId } = request.params as { id: string; categoryId: string };
+    const organizationId = uuid(id), category = uuid(categoryId), actor = await organizationAccess(request, organizationId, true);
+    const input = positionBlueprintSchema.parse(request.body);
+    const result = await transaction(pool, async (client) => {
+      const { rows: [found] } = await client.query('SELECT id FROM categories WHERE organization_id=$1 AND id=$2 FOR UPDATE', [organizationId, category]);
+      if (!found) fail(404, 'CATEGORY_NOT_FOUND', 'No se encontró la categoría.');
+      const { rows: [existing] } = await client.query('SELECT id FROM fixture_position_blueprints WHERE organization_id=$1 AND category_id=$2', [organizationId, category]);
+      if (existing) return { id: existing.id, reused: true };
+      const { rowCount: activeFixture } = await client.query("SELECT 1 FROM fixture_phases WHERE organization_id=$1 AND category_id=$2 AND status='generated'", [organizationId, category]);
+      if (activeFixture) fail(409, 'FIXTURE_ALREADY_GENERATED', 'El fixture oficial ya existe; revisá sus partidos antes de crear el plan.');
+      const blueprintId = randomUUID();
+      await client.query(`INSERT INTO fixture_position_blueprints(id,organization_id,category_id,name,opening_first_jornada,opening_second_jornada,opening_first_date,opening_second_date,extra_reserved_date,created_by)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [blueprintId,organizationId,category,input.name,input.opening.firstJornada,input.opening.secondJornada,input.opening.firstDate,input.opening.secondDate,input.extraReservedDate,actor.user_id]);
+      for (const group of ['A','B']) for (let position=1;position<=5;position++) await client.query('INSERT INTO fixture_position_assignments(organization_id,blueprint_id,slot_code) VALUES($1,$2,$3)', [organizationId,blueprintId,`${group}${position}`]);
+      for (const [index, game] of input.games.entries()) await client.query(`INSERT INTO fixture_position_games(id,organization_id,blueprint_id,code,ordinal,stage,sporting_round,jornada_no,planned_date,home_ref,away_ref)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [randomUUID(),organizationId,blueprintId,game.code,index+1,game.stage,game.sportingRound,game.jornadaNo,game.plannedDate,game.homeRef,game.awayRef]);
+      await audit(client,actor.user_id,organizationId,'fixture.position_blueprint_created',blueprintId,'Plan privado por posiciones',null,{categoryId:category,games:input.games.length});
+      return { id: blueprintId, reused: false };
+    });
+    return reply.code(result.reused ? 200 : 201).send(result);
+  });
+  app.patch('/api/v1/organizations/:id/categories/:categoryId/fixture/blueprint/slots/:code', async (request) => {
+    const { id, categoryId, code } = request.params as { id: string; categoryId: string; code: string };
+    const organizationId = uuid(id), category = uuid(categoryId), slotCode = z.string().regex(/^[AB][1-5]$/).parse(code);
+    const actor = await organizationAccess(request, organizationId, true);
+    const { entryId } = z.object({ entryId: z.uuid().nullable() }).strict().parse(request.body);
+    return transaction(pool, async (client) => {
+      const { rows: [plan] } = await client.query('SELECT id FROM fixture_position_blueprints WHERE organization_id=$1 AND category_id=$2 FOR UPDATE', [organizationId, category]);
+      if (!plan) fail(404, 'BLUEPRINT_NOT_FOUND', 'No se encontró el plan por posiciones.');
+      const { rowCount: activeFixture } = await client.query("SELECT 1 FROM fixture_phases WHERE organization_id=$1 AND category_id=$2 AND status='generated'", [organizationId, category]);
+      if (activeFixture) fail(409, 'FIXTURE_ALREADY_GENERATED', 'El fixture oficial ya existe; revisá sus partidos antes de cambiar el sorteo.');
+      if((await client.query('SELECT 1 FROM draft_matches m JOIN fixture_position_games g ON g.organization_id=m.organization_id AND g.id=m.position_game_id JOIN fixture_position_blueprints b ON b.organization_id=g.organization_id AND b.id=g.blueprint_id WHERE b.organization_id=$1 AND b.category_id=$2 LIMIT 1',[organizationId,category])).rowCount)fail(409,'POSITION_MATCHES_ACTIVE','Los partidos oficiales ya fueron preparados. Editá cada cruce desde Partidos.');
+      const { rows: slots } = await client.query('SELECT slot_code,entry_id FROM fixture_position_assignments WHERE organization_id=$1 AND blueprint_id=$2 FOR UPDATE', [organizationId, plan.id]);
+      const target = slots.find(slot => slot.slot_code === slotCode);
+      if (!target) fail(404, 'SLOT_NOT_FOUND', 'No se encontró esa posición.');
+      if (entryId) {
+        const { rows: [entry] } = await client.query("SELECT id FROM team_entries WHERE organization_id=$1 AND category_id=$2 AND id=$3 AND status='active'", [organizationId,category,entryId]);
+        if (!entry) fail(404, 'TEAM_NOT_IN_CATEGORY', 'Elegí un equipo activo de este torneo.');
+      }
+      const previous = target.entry_id as string | null;
+      if (previous === entryId) return { slotCode, entryId, changed: false };
+      const other = entryId ? slots.find(slot => slot.entry_id === entryId) : null;
+      await client.query('UPDATE fixture_position_assignments SET entry_id=NULL WHERE organization_id=$1 AND blueprint_id=$2 AND slot_code=$3', [organizationId,plan.id,slotCode]);
+      if (other) await client.query('UPDATE fixture_position_assignments SET entry_id=NULL WHERE organization_id=$1 AND blueprint_id=$2 AND slot_code=$3', [organizationId,plan.id,other.slot_code]);
+      await client.query('UPDATE fixture_position_assignments SET entry_id=$4 WHERE organization_id=$1 AND blueprint_id=$2 AND slot_code=$3', [organizationId,plan.id,slotCode,entryId]);
+      if (other && previous) await client.query('UPDATE fixture_position_assignments SET entry_id=$4 WHERE organization_id=$1 AND blueprint_id=$2 AND slot_code=$3', [organizationId,plan.id,other.slot_code,previous]);
+      await client.query('UPDATE fixture_position_blueprints SET revision=revision+1 WHERE id=$1', [plan.id]);
+      await audit(client,actor.user_id,organizationId,'fixture.position_assigned',plan.id,'Asignación de sorteo',{slotCode,entryId:previous},{slotCode,entryId,swappedWith:other?.slot_code||null});
+      return { slotCode, entryId, swappedWith: other?.slot_code || null, changed: true };
+    });
+  });
+  app.patch('/api/v1/organizations/:id/categories/:categoryId/fixture/blueprint/opening', async (request) => {
+    const { id, categoryId } = request.params as { id: string; categoryId: string };
+    const organizationId = uuid(id), category = uuid(categoryId), actor = await organizationAccess(request, organizationId, true);
+    const { firstJornadaCodes } = z.object({ firstJornadaCodes: z.array(z.string().regex(/^G\d{2}$/)).refine(value=>value.length===0||value.length===2,'Elegí dos partidos o dejá la apertura pendiente.') }).strict().parse(request.body);
+    if (new Set(firstJornadaCodes).size !== firstJornadaCodes.length) fail(400, 'OPENING_DUPLICATE', 'Elegí dos partidos diferentes.');
+    return transaction(pool, async (client) => {
+      const { rows: [plan] } = await client.query('SELECT * FROM fixture_position_blueprints WHERE organization_id=$1 AND category_id=$2 FOR UPDATE', [organizationId,category]);
+      if (!plan) fail(404, 'BLUEPRINT_NOT_FOUND', 'No se encontró el plan por posiciones.');
+      const { rowCount: activeFixture } = await client.query("SELECT 1 FROM fixture_phases WHERE organization_id=$1 AND category_id=$2 AND status='generated'", [organizationId,category]);
+      if (activeFixture) fail(409, 'FIXTURE_ALREADY_GENERATED', 'El fixture oficial ya existe; revisá sus partidos antes de cambiar la apertura.');
+      if((await client.query('SELECT 1 FROM draft_matches m JOIN fixture_position_games g ON g.organization_id=m.organization_id AND g.id=m.position_game_id JOIN fixture_position_blueprints b ON b.organization_id=g.organization_id AND b.id=g.blueprint_id WHERE b.organization_id=$1 AND b.category_id=$2 LIMIT 1',[organizationId,category])).rowCount)fail(409,'POSITION_MATCHES_ACTIVE','Los partidos oficiales ya fueron preparados. Reprogramá cada partido desde Fixture.');
+      const { rows: opening } = await client.query("SELECT code,jornada_no FROM fixture_position_games WHERE organization_id=$1 AND blueprint_id=$2 AND stage='groups' AND sporting_round='F1' FOR UPDATE", [organizationId,plan.id]);
+      if (opening.length !== 5 || firstJornadaCodes.some(code => !opening.some(game => game.code === code))) fail(409, 'OPENING_GAMES_CHANGED', 'La primera fecha ya no tiene los cinco cruces esperados.');
+      await client.query(`UPDATE fixture_position_games SET jornada_no=CASE WHEN cardinality($3::text[])=0 THEN NULL WHEN code=ANY($3::text[]) THEN $4::integer ELSE $5::integer END,
+        planned_date=CASE WHEN cardinality($3::text[])=0 THEN NULL WHEN code=ANY($3::text[]) THEN $6::date ELSE $7::date END
+        WHERE organization_id=$1 AND blueprint_id=$2 AND stage='groups' AND sporting_round='F1'`, [organizationId,plan.id,firstJornadaCodes,plan.opening_first_jornada,plan.opening_second_jornada,plan.opening_first_date,plan.opening_second_date]);
+      await client.query('UPDATE fixture_position_blueprints SET revision=revision+1 WHERE id=$1', [plan.id]);
+      await audit(client,actor.user_id,organizationId,'fixture.opening_divided',plan.id,'Reparto de apertura',opening,{firstJornadaCodes});
+      return { firstJornadaCodes, firstJornada:plan.opening_first_jornada, secondJornada:plan.opening_second_jornada };
+    });
   });
   app.post('/api/v1/organizations/:id/categories/:categoryId/fixture/phase', async (request, reply) => {
     const { id, categoryId } = request.params as { id: string; categoryId: string };
@@ -2494,6 +2853,8 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
         }
       }
       await client.query("UPDATE match_records SET status='official',approval_id=$3 WHERE organization_id=$1 AND match_id=$2",[organizationId,match,result.snapshotId]);
+      const {rows:[positionMatch]}=await client.query('SELECT category_id FROM draft_matches WHERE organization_id=$1 AND id=$2 AND position_game_id IS NOT NULL',[organizationId,match]);
+      if(positionMatch)await syncPositionMatches(client,organizationId,positionMatch.category_id,actor.user_id);
       await recordSuspensionService(client,organizationId,match);
       await appendMatchOutbox(client,organizationId,match,record.approval_id?'match.corrected':'match.official',record.revision,{...result.snapshot,approvalId:result.snapshotId,previousApprovalId:record.approval_id});
       return {...result,bracketReassigned,correctedMatchdays:correctedMatchdays.size};

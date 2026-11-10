@@ -1,5 +1,9 @@
 # 10. Guía visual y sistema de diseño provisional
 
+**Referencias externas revisadas el 09/11/2026:** [hallazgos de GitHub para pantallas públicas y administrativas](investigacion-github-2026-11-09.md). Son propuestas de comparación; las correcciones del propietario y las decisiones vigentes siguen mandando.
+
+**Referencia añadida el 10/11/2026:** [elnine](https://elnine.com.ar/) organiza la lectura por competencia y utiliza filas de encuentros compactas con hora/estado, equipos y marcador de rápida lectura. Adoptar esa densidad y jerarquía para el portal federativo y las vistas de partido, respetando nuestra navegación por pestañas, los escudos recibidos y el carácter no necesariamente en vivo de estas competencias. No copiar su marca, colores ni funciones ajenas al producto. La entrada de la FPFS debe distinguir con un rótulo breve las copas de clubes de las eliminatorias de selecciones; tocar una competición abre el torneo directamente. [Inventario de fuentes iniciales](fuentes-fcfs-2026.md).
+
 **Estado al 28/10/2026:** planificación visual, no identidad comercial aprobada. La revisión del proyecto gym incluye su guía inicial, las observaciones posteriores del propietario y dos capturas existentes. La prioridad aquí es que **todo el producto** funcione primero en teléfono: superadmin, organizador, administrador de equipo, planillero y aficionado.
 
 Primera exploración disponible: [prototipo navegable](../prototipos/01-direccion-visual/README.md) y [revisión local](evidencias/t01-prototipo-visual.md). Esta entrega permite evaluar la dirección; todavía no hay aprobación estética del propietario ni prueba física.

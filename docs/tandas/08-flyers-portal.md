@@ -8,6 +8,8 @@
 
 **Corrección del flyer de resultado del 06/11/2026:** cuando el acta oficial incluye tanda, el flyer conserva el resultado del partido y muestra por separado «Penales local : visitante». La tanda no se cuenta como gol. [Evidencia](../evidencias/t08-penales-flyer-2026-11-06.md).
 
+**Diseño y generación contextual del 10/11/2026:** los botones de Flyer de Fixture, partido y estadísticas crean directamente el archivo de la fuente tocada usando los ajustes guardados del torneo. La configuración separada admite tres logos, colores, plantilla, tamaño y formato; se recuperan emblema del torneo y logo del organizador como valores iniciales. El archivo generado queda privado hasta publicación expresa. La plantilla v2 incorpora una composición más deportiva; los archivos de versiones anteriores no se alteran. El flyer de Clasificación por grupos apunta a la página del grupo concreto en el formato de esta Copa (cinco por grupo). [Prueba y límites](../evidencias/t04-t08-etapas-flyers-caacupe-2026-11-10.md).
+
 **Objetivo:** difundir datos deportivos reales mediante plantillas e imágenes locales de 1v1, fecha y resultado con goleadores, y portal público móvil sin exponer información privada.
 
 ## Dependencias
@@ -46,3 +48,5 @@ T04: fixture/jornadas; T05–T06: resultados/estadísticas oficiales; T01: media
 ## Demostración de salida
 
 Generar previa y resultado, reprogramar, regenerar y comparar versiones; abrir portal anónimo y probar que endpoints/documentos privados niegan acceso. **Puerta:** artefactos coherentes y privacidad.
+
+**Copa Caacupé — 10/11/2026:** el enlace público del plan parcial muestra Partidos, Fixture por Fechas/Jornadas, Clasificación por Grupos/Cuartos/Cuadrangular/Tabla general y los diez clubes con escudo. Las celdas sin acta permanecen pendientes; no se publican datos de lista de buena fe. [Evidencia](../evidencias/t04-t08-vista-publica-plan-parcial-2026-11-10.md).

@@ -2,7 +2,7 @@
 import { computed, nextTick, ref } from 'vue';
 import { tiebreakerNames, tiebreakerLabels as breakerLabels, previewCompetitionBracket, type CompetitionPlan, type RuleConfig } from '@torneos/shared';
 import BracketView from './BracketView.vue';
-const props = defineProps<{ modelValue: RuleConfig; disabled?: boolean; focusCards?:boolean }>();
+const props = defineProps<{ modelValue: RuleConfig; disabled?: boolean; focusCards?:boolean; lockedFormat?:boolean }>();
 const emit = defineEmits<{ 'update:modelValue': [value: RuleConfig] }>();
 const lastLimitedCount = ref(1);
 type AgeConfig = NonNullable<NonNullable<RuleConfig['eligibility']>['age']>;
@@ -246,6 +246,7 @@ function walkoverNumber(key: 'winnerGoals' | 'loserGoals' | 'winnerPoints' | 'lo
 
 <template>
   <div class="rules-fields stack">
+    <template v-if="!lockedFormat">
     <div><h2>Fase inicial</h2><p class="small muted">Elegí cómo comienza esta categoría. El fixture y los cruces se armarán en la tanda de programación.</p></div>
     <div class="choices grid" role="group" aria-label="Formato de fase inicial">
       <button type="button" class="choice" :aria-pressed="modelValue.initialPhase?.mode === 'league'" :disabled="disabled" @click="choosePhase('league')">Liga</button>
@@ -273,6 +274,7 @@ function walkoverNumber(key: 'winnerGoals' | 'loserGoals' | 'winnerPoints' | 'lo
         <BracketView v-if="qualificationCount <= modelValue.competitionPlan.bracketSize" :rounds="plannedRounds" planned />
       </template>
     </section>
+    </template>
     <div><h2>Plantel y planilla</h2><p class="small muted">Valores sugeridos; ajustalos a tu reglamento antes de publicar.</p></div>
     <div class="form-grid">
       <div class="field"><label for="rule-field">Jugadores en cancha</label><input id="rule-field" type="number" inputmode="numeric" min="1" max="30" required :disabled="disabled" :value="modelValue.playersOnField" @input="number('playersOnField',$event)"></div>

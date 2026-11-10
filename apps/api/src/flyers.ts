@@ -17,8 +17,26 @@ const publishInput=z.object({publicVisible:z.boolean(),reason:z.string().trim().
 type Access=(request:FastifyRequest,org:string,write?:boolean)=>Promise<{user_id:string}>;
 type Fail=(status:number,code:string,message:string)=>never;
 export function registerFlyerRoutes(app:FastifyInstance,pool:DatabasePool,mediaDir:string,origin:string,access:Access,fail:Fail){
- const source=async(org:string,input:z.infer<typeof sourceInput>)=>{try{return await loadFlyerSource(pool,org,input.kind,input.sourceId,input.size,input.pageNo,input.note);}catch(error){if(error instanceof FlyerSourceError)fail(error.statusCode,error.code,error.message);throw error;}};
- const current=async(row:any)=>{try{const live=await loadFlyerSource(pool,row.organization_id,row.kind,row.source_id,row.size_code,row.page_no,row.note);return sourceHash(live)===row.source_key;}catch{return false;}};
+ const brand=async(org:string,snap:FlyerSnapshot)=>{
+  const lookup:Record<string,string>={
+   notice:'SELECT id FROM tournaments WHERE organization_id=$1 AND id=$2',
+   matchday:'SELECT ed.tournament_id id FROM matchdays md JOIN editions ed ON ed.organization_id=md.organization_id AND ed.id=md.edition_id WHERE md.organization_id=$1 AND md.id=$2',
+   match:'SELECT ed.tournament_id id FROM draft_matches dm JOIN matchdays md ON md.organization_id=dm.organization_id AND md.id=dm.matchday_id JOIN editions ed ON ed.organization_id=md.organization_id AND ed.id=md.edition_id WHERE dm.organization_id=$1 AND dm.id=$2',
+   standings:'SELECT ed.tournament_id id FROM categories c JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id WHERE c.organization_id=$1 AND c.id=$2',
+   bracket:'SELECT ed.tournament_id id FROM fixture_phases p JOIN categories c ON c.organization_id=p.organization_id AND c.id=p.category_id JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id WHERE p.organization_id=$1 AND p.id=$2',
+   scorer:'SELECT ed.tournament_id id FROM player_registrations pr JOIN team_entries e ON e.organization_id=pr.organization_id AND e.id=pr.entry_id JOIN categories c ON c.organization_id=e.organization_id AND c.id=e.category_id JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id WHERE pr.organization_id=$1 AND pr.id=$2'
+  };
+  const query=lookup[snap.kind]||lookup[['result','champion'].includes(snap.kind)?'match':['scorers','defense'].includes(snap.kind)?'standings':'bracket'];
+  const {rows:[reference]}=await pool.query(query,[org,snap.sourceId]);if(!reference)return snap;
+  const {rows:[settings]}=await pool.query(`SELECT coalesce(s.primary_color,'#102B2B') primary_color,coalesce(s.accent_color,'#A9E1B9') accent_color,
+    coalesce(s.cup_logo_id,t.emblem_id) cup_asset_id,coalesce(s.organizer_logo_id,o.logo_id) organizer_asset_id,s.federation_logo_id federation_asset_id
+    FROM tournaments t JOIN organizations o ON o.id=t.organization_id LEFT JOIN tournament_flyer_settings s ON s.organization_id=t.organization_id AND s.tournament_id=t.id
+    WHERE t.organization_id=$1 AND t.id=$2`,[org,reference.id]);
+  if(settings)snap.brand={primaryColor:settings.primary_color,accentColor:settings.accent_color,cupAssetId:settings.cup_asset_id,organizerAssetId:settings.organizer_asset_id,federationAssetId:settings.federation_asset_id};
+  return snap;
+ };
+ const source=async(org:string,input:z.infer<typeof sourceInput>)=>{try{return await brand(org,await loadFlyerSource(pool,org,input.kind,input.sourceId,input.size,input.pageNo,input.note));}catch(error){if(error instanceof FlyerSourceError)fail(error.statusCode,error.code,error.message);throw error;}};
+ const current=async(row:any)=>{try{const live=await loadFlyerSource(pool,row.organization_id,row.kind,row.source_id,row.size_code,row.page_no,row.note);if((row.snapshot as FlyerSnapshot)?.brand)await brand(row.organization_id,live);return sourceHash(live)===row.source_key;}catch{return false;}};
  const safeFile=async(row:any)=>{if(row.status!=='ready'||!row.filename||!/^flyer-[0-9a-f-]{36}\.(png|jpg|pdf)$/.test(row.filename))fail(404,'FLYER_NOT_READY','El archivo todavía no está disponible.');let data:Buffer;try{data=await readFile(resolve(mediaDir,row.filename));}catch{return fail(404,'FLYER_FILE_MISSING','El archivo no está disponible.');}if(data.length!==row.byte_length||createHash('sha256').update(data).digest('hex')!==row.checksum)fail(409,'FLYER_FILE_CHANGED','El archivo generado cambió en disco.');return data;};
  app.get('/api/v1/organizations/:id/flyers/templates',async(request)=>{const org=uuid.parse((request.params as any).id);await access(request,org);return {templates:flyerTemplates,sizes:flyerSizes,kinds:flyerKinds.filter(kind=>kind!=='scorer')};});
  app.post('/api/v1/organizations/:id/flyers/preview',async(request,reply)=>{const org=uuid.parse((request.params as any).id);await access(request,org,true);const input=sourceInput.extend({template:templateSchema.default('forest')}).parse(request.body);const snap=await source(org,input);return reply.header('X-Flyer-Pages',String(snap.totalPages)).header('X-Flyer-Page-Labels',JSON.stringify(snap.pageLabels||[])).type('image/svg+xml').send(renderFlyerSvg(snap,input.size,input.template,await loadFlyerAssets(pool,mediaDir,org,snap)));});

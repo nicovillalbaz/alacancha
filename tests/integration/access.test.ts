@@ -15,6 +15,7 @@ import { renderFlyerSvg } from '../../apps/api/src/flyer-template.ts';
 import { bestRemainingTie, qualifiedEntries, tieWinner } from '../../apps/api/src/fixture-progress.ts';
 import { hashPassword, digest, decryptDocument } from '../../apps/api/src/security.ts';
 import { rankStandings, roundRobin, drawGroups, knockoutBracket, ruleSchema, previewCompetitionBracket, projectMatchJournal, deriveOfficialStatistics, type RankedMatch, type CurrentUser, type RuleConfig, type MatchJournalEvent } from '@torneos/shared';
+import { fcfsPositionPlan } from '../../scripts/fcfs-position-plan.ts';
 
 const databaseUrl = process.env.TEST_DATABASE_URL!;
 if (!databaseUrl || new URL(databaseUrl).pathname !== '/torneos_test' || new URL(databaseUrl).hostname !== '127.0.0.1') throw new Error('Pruebas restringidas a torneos_test en este PC.');
@@ -194,7 +195,7 @@ test('enlaces vencidos y reemplazados se rechazan', async () => {
 test('referencia de permiso cruzada entre organizaciones falla en PostgreSQL', async () => {
   await assert.rejects(pool.query("INSERT INTO access_grants(id,organization_id,membership_id,resource_type,resource_id) VALUES($1,$2,$3,'team',$4)", [randomUUID(), ids.b, ids.memberA, randomUUID()]), (error: unknown) => (error as { code: string }).code === '23503');
 });
-test('logo privado: carga propia, acceso cruzado denegado y archivo fingido rechazado', async () => {
+test('logo de organización: carga propia, acceso cruzado y lectura pública', async () => {
   const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6Z8sAAAAASUVORK5CYII=', 'base64');
   const boundary = 'torneos-test-boundary';
   const payload = Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="logo.png"\r\nContent-Type: image/png\r\n\r\n`), image, Buffer.from(`\r\n--${boundary}--\r\n`)]);
@@ -203,6 +204,58 @@ test('logo privado: carga propia, acceso cruzado denegado y archivo fingido rech
   assert.equal((await request(adminB, 'GET', `/organizations/${ids.a}/logo`)).statusCode, 403);
   const fake = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="logo.png"\r\nContent-Type: image/png\r\n\r\n<script>no</script>\r\n--${boundary}--\r\n`);
   assert.equal((await app.inject({ method: 'POST', url: `/api/v1/organizations/${ids.a}/logo`, headers: { ...headers(adminA), 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: fake })).statusCode, 400);
+  const publicPath = `/api/v1/public/organizations/${ids.a}/logo`;
+  const before = await app.inject(publicPath);
+  if (before.statusCode === 404) {
+    const tournament = await newTournament();
+    assert.equal((await request(adminA, 'POST', `/organizations/${ids.a}/categories/${tournament.response.json().categoryId}/rules/publish`, { reason: 'Reglas sintéticas revisadas', expectedRevision: 1 })).statusCode, 200);
+  }
+  assert.deepEqual((await app.inject(publicPath)).rawPayload, image);
+  assert.equal((await app.inject(`/api/v1/public/organizations/${ids.b}/logo`)).statusCode, 404);
+});
+test('T02: emblema de torneo privado hasta publicar y aislado por organización', async () => {
+  const tournament = await newTournament();
+  const { tournamentId, categoryId } = tournament.response.json();
+  const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6Z8sAAAAASUVORK5CYII=', 'base64');
+  const boundary = 'tournament-emblem-test';
+  const payload = Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="copa.png"\r\nContent-Type: image/png\r\n\r\n`), image, Buffer.from(`\r\n--${boundary}--\r\n`)]);
+  const path = `/organizations/${ids.a}/tournaments/${tournamentId}/emblem`;
+  const upload = (session: Session) => app.inject({ method: 'POST', url: `/api/v1${path}`, headers: { ...headers(session), 'content-type': `multipart/form-data; boundary=${boundary}` }, payload });
+  assert.equal((await upload(adminB)).statusCode, 403);
+  assert.equal((await upload(teamA)).statusCode, 403);
+  const saved = await upload(adminA);
+  assert.equal(saved.statusCode, 201, saved.body);
+  assert.equal((await request(adminA, 'GET', `/organizations/${ids.a}/tournaments`)).json().find((item: {id:string}) => item.id === tournamentId).has_emblem, true);
+  assert.deepEqual((await request(adminA, 'GET', path)).rawPayload, image);
+  assert.equal((await request(adminB, 'GET', path)).statusCode, 403);
+  const publicPath = `/api/v1/public${path}`;
+  assert.equal((await app.inject(publicPath)).statusCode, 404);
+  assert.equal((await request(adminA, 'POST', `/organizations/${ids.a}/categories/${categoryId}/rules/publish`, { reason: 'Reglas sintéticas revisadas', expectedRevision: 1 })).statusCode, 200);
+  assert.deepEqual((await app.inject(publicPath)).rawPayload, image);
+  assert.equal((await app.inject(`/api/v1/public/organizations/${ids.b}/tournaments/${tournamentId}/emblem`)).statusCode, 404);
+});
+test('T08: diseño del flyer guarda colores y tres logos con alcance de torneo', async () => {
+  const tournament=await newTournament(),tournamentId=tournament.response.json().tournamentId;
+  const path=`/organizations/${ids.a}/tournaments/${tournamentId}/flyer-settings`;
+  assert.equal((await request(adminB,'GET',path)).statusCode,403);
+  assert.equal((await request(teamA,'PATCH',path,{})).statusCode,403);
+  const initial=await request(adminA,'GET',path);assert.equal(initial.statusCode,200,initial.body);assert.equal(initial.json().revision,0);
+  const input={revision:0,template:'forest',size:'portrait',format:'png',primaryColor:'#122C3A',accentColor:'#D9F166'};
+  assert.equal((await request(adminB,'PATCH',path,input)).statusCode,403);
+  const saved=await request(adminA,'PATCH',path,input);assert.equal(saved.statusCode,200,saved.body);assert.equal(saved.json().revision,1);
+  assert.equal((await request(adminA,'PATCH',path,input)).statusCode,409);
+  const image=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6Z8sAAAAASUVORK5CYII=','base64');
+  const boundary='flyer-brand-test';const payload=Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="marca.png"\r\nContent-Type: image/png\r\n\r\n`),image,Buffer.from(`\r\n--${boundary}--\r\n`)]);
+  for(const slot of ['cup','organizer','federation']){
+    const url=`/api/v1${path}/logos/${slot}`,upload=(session:Session)=>app.inject({method:'POST',url,headers:{...headers(session),'content-type':`multipart/form-data; boundary=${boundary}`},payload});
+    assert.equal((await upload(adminB)).statusCode,403);assert.equal((await upload(teamA)).statusCode,403);
+    assert.equal((await upload(adminA)).statusCode,201);assert.deepEqual((await request(adminA,'GET',`${path}/logos/${slot}`)).rawPayload,image);
+  }
+  const current=(await request(adminA,'GET',path)).json();assert.ok(current.cup_logo_id&&current.organizer_logo_id&&current.federation_logo_id);
+  assert.equal(current.primary_color,'#122C3A');assert.equal(current.accent_color,'#D9F166');assert.equal(current.revision,4);
+  assert.equal((await request(adminA,'GET',`/organizations/${ids.b}/tournaments/${tournamentId}/flyer-settings`)).statusCode,403);
+  const svg=renderFlyerSvg({kind:'match',sourceId:randomUUID(),title:'Próximo encuentro',kicker:'Copa',competition:'Edición',subline:'',footer:'',lines:[],note:null,orgAssetId:null,entryIds:[],scorerRegistrationIds:[],matchdayId:null,sourceRevision:null,approvalId:null,pageNo:1,totalPages:1,brand:{primaryColor:current.primary_color,accentColor:current.accent_color,cupAssetId:current.cup_logo_id,organizerAssetId:current.organizer_logo_id,federationAssetId:current.federation_logo_id}},'square','forest',{});
+  assert.match(svg,/#122C3A/);assert.match(svg,/#D9F166/);assert.match(svg,/Generado por NAVZ/);
 });
 test('recuperación: un uso y revocación de las sesiones anteriores', async () => {
   const before = await login('a', password, ids.a);
@@ -229,7 +282,7 @@ test('limitación de intentos responde sin revelar si el usuario existe', async 
 });
 test('migración repetible y seed rechazado fuera de las bases locales autorizadas', async () => {
   await migrate(pool);
-  const { rows: [count] } = await pool.query('SELECT count(*)::int total FROM schema_migrations'); assert.equal(count.total, 41);
+  const { rows: [count] } = await pool.query('SELECT count(*)::int total FROM schema_migrations'); assert.equal(count.total, 47);
   await assert.rejects(seed(pool, 'postgresql://no:sinuso@127.0.0.1:55461/produccion'), /solo se permiten/);
 });
 
@@ -646,6 +699,294 @@ test('T02: un administrador de equipo nuevo recibe invitación, luego acceso a s
   assert.equal((await request(admin, 'POST', `/organizations/${ids.a}/teams`, { requestId: randomUUID(), name: 'No autorizado', color: '#165D46', categoryId })).statusCode, 403);
 });
 
+test('T02: el organizador puede corregir el nombre de un equipo sin abrir acceso ajeno', async () => {
+  const tournament = await newTournament();
+  const categoryId = tournament.response.json().categoryId;
+  const created = await request(adminA, 'POST', `/organizations/${ids.a}/teams`, { requestId: randomUUID(), name: `Nombre provisional ${randomUUID().slice(0, 6)}`, color: '#165D46', categoryId });
+  assert.equal(created.statusCode, 201, created.body);
+  const teamId = created.json().teamId, path = `/organizations/${ids.a}/teams/${teamId}`;
+  const name = `Nombre confirmado ${randomUUID().slice(0, 6)}`;
+  assert.equal((await request(adminB, 'PATCH', path, { name })).statusCode, 403);
+  assert.equal((await request(teamA, 'PATCH', path, { name })).statusCode, 403);
+  assert.equal((await request(adminA, 'PATCH', `/organizations/${ids.b}/teams/${teamId}`, { name })).statusCode, 403);
+  assert.equal((await request(adminA, 'PATCH', path, { name: ' ' })).statusCode, 400);
+  const renamed = await request(adminA, 'PATCH', path, { name });
+  assert.equal(renamed.statusCode, 200, renamed.body);
+  assert.equal(renamed.json().name, name);
+  assert.equal((await request(adminA, 'GET', path)).json()[0].name, name);
+  assert.equal((await request(adminA, 'PATCH', path, { name })).json().reused, true);
+  const otherName = `Otro ${randomUUID().slice(0, 6)}`;
+  const other = await request(adminA, 'POST', `/organizations/${ids.a}/teams`, { requestId: randomUUID(), name: otherName, color: '#165D46', categoryId });
+  assert.equal(other.statusCode, 201, other.body);
+  const conflict = await request(adminA, 'PATCH', path, { name: otherName });
+  assert.equal(conflict.statusCode, 409);
+});
+
+test('T04: plan privado por posiciones conserva Fechas/Jornadas y resuelve el sorteo sin crear partidos', async () => {
+  const tournament = await newTournament(); assert.equal(tournament.response.statusCode, 201, tournament.response.body);
+  const categoryId = tournament.response.json().categoryId;
+  const base = `/organizations/${ids.a}/categories/${categoryId}/fixture/blueprint`;
+  const first = await request(adminA,'POST',`/organizations/${ids.a}/teams`,{requestId:randomUUID(),name:`Fariña ${randomUUID().slice(0,6)}`,color:'#123456',categoryId});
+  const second = await request(adminA,'POST',`/organizations/${ids.a}/teams`,{requestId:randomUUID(),name:`Barrio ${randomUUID().slice(0,6)}`,color:'#654321',categoryId});
+  assert.equal(first.statusCode,201,first.body); assert.equal(second.statusCode,201,second.body);
+  assert.equal((await request(adminB,'GET',base)).statusCode,403);
+  assert.equal((await request(teamA,'POST',base,fcfsPositionPlan)).statusCode,403);
+  const created=await request(adminA,'POST',base,fcfsPositionPlan);assert.equal(created.statusCode,201,created.body);
+  assert.equal((await request(adminA,'POST',base,fcfsPositionPlan)).statusCode,200);
+  let plan=(await request(adminA,'GET',base)).json();
+  assert.equal(plan.games.length,35);assert.equal(plan.slots.length,10);
+  assert.deepEqual(plan.games.filter((game:{sporting_round:string;jornada_no:number|null})=>game.sporting_round==='F1').map((game:{jornada_no:number|null})=>game.jornada_no),[null,null,null,null,null]);
+  assert.deepEqual(plan.games.filter((game:{jornada_no:number;sporting_round:string})=>game.jornada_no===4).map((game:{sporting_round:string})=>game.sporting_round),['F2','F2','F3']);
+  assert.deepEqual(plan.games.filter((game:{jornada_no:number;sporting_round:string})=>game.jornada_no===6).map((game:{sporting_round:string})=>game.sporting_round),['F3','F4','F4']);
+  const firstEntry=first.json().entryId,secondEntry=second.json().entryId;
+  assert.equal((await request(adminB,'PATCH',`${base}/slots/A1`,{entryId:firstEntry})).statusCode,403);
+  assert.equal((await request(teamA,'PATCH',`${base}/slots/A1`,{entryId:firstEntry})).statusCode,403);
+  assert.equal((await request(adminA,'PATCH',`${base}/slots/A1`,{entryId:firstEntry})).statusCode,200);
+  assert.equal((await request(adminA,'PATCH',`${base}/slots/B1`,{entryId:secondEntry})).statusCode,200);
+  const swap=await request(adminA,'PATCH',`${base}/slots/A1`,{entryId:secondEntry});assert.equal(swap.statusCode,200,swap.body);
+  assert.equal(swap.json().swappedWith,'B1');
+  plan=(await request(adminA,'GET',base)).json();
+  assert.equal(plan.slots.find((slot:{slot_code:string})=>slot.slot_code==='A1').entry_id,secondEntry);
+  assert.equal(plan.slots.find((slot:{slot_code:string})=>slot.slot_code==='B1').entry_id,firstEntry);
+  const replacement=await request(adminA,'PATCH',`${base}/slots/A1`,{entryId:firstEntry});assert.equal(replacement.statusCode,200,replacement.body);
+  plan=(await request(adminA,'GET',base)).json();
+  assert.equal(plan.slots.find((slot:{slot_code:string})=>slot.slot_code==='A1').entry_id,firstEntry);
+  assert.equal(plan.slots.find((slot:{slot_code:string})=>slot.slot_code==='B1').entry_id,secondEntry);
+  assert.equal((await request(adminA,'PATCH',`${base}/slots/B1`,{entryId:null})).statusCode,200);
+  assert.equal((await request(adminA,'PATCH',`${base}/slots/A1`,{entryId:secondEntry})).statusCode,200);
+  plan=(await request(adminA,'GET',base)).json();
+  assert.equal(plan.slots.find((slot:{slot_code:string})=>slot.slot_code==='A1').entry_id,secondEntry);
+  assert.equal(plan.slots.find((slot:{slot_code:string})=>slot.slot_code==='B1').entry_id,null);
+  assert.equal((await request(adminA,'PATCH',`${base}/slots/A1`,{entryId:null})).statusCode,200);
+  const opening=await request(adminA,'PATCH',`${base}/opening`,{firstJornadaCodes:['G01','G02']});assert.equal(opening.statusCode,200,opening.body);
+  plan=(await request(adminA,'GET',base)).json();
+  assert.equal(plan.games.filter((game:{sporting_round:string;jornada_no:number})=>game.sporting_round==='F1'&&game.jornada_no===1).length,2);
+  assert.equal(plan.games.filter((game:{sporting_round:string;jornada_no:number})=>game.sporting_round==='F1'&&game.jornada_no===2).length,3);
+  assert.equal((await request(adminA,'PATCH',`${base}/opening`,{firstJornadaCodes:[]})).statusCode,200);
+  plan=(await request(adminA,'GET',base)).json();
+  assert.equal(plan.games.filter((game:{sporting_round:string;jornada_no:number|null})=>game.sporting_round==='F1'&&game.jornada_no===null).length,5);
+  assert.equal((await request(adminA,'PATCH',`${base}/opening`,{firstJornadaCodes:['G01','G01']})).statusCode,400);
+  const {rows:[count]}=await pool.query('SELECT count(*)::int total FROM draft_matches WHERE organization_id=$1 AND category_id=$2',[ids.a,categoryId]);
+  assert.equal(count.total,0);
+});
+
+test('T04/T08: el plan parcial se publica sin resultados ni asignaciones inventadas', async () => {
+  const tournament=await newTournament(ids.a,{...fiveRules,points:{win:2,draw:1,loss:0},initialPhase:null,competitionPlan:null});
+  const {categoryId,tournamentId}=tournament.response.json();
+  const base=`/organizations/${ids.a}/categories/${categoryId}/fixture/blueprint`;
+  assert.equal((await request(adminA,'POST',base,fcfsPositionPlan)).statusCode,201);
+  const entries:string[]=[];
+  for(let index=0;index<10;index++){
+    const created=await request(adminA,'POST',`/organizations/${ids.a}/teams`,{requestId:randomUUID(),name:`Equipo plan ${index+1} ${randomUUID().slice(0,5)}`,color:'#123456',categoryId});
+    assert.equal(created.statusCode,201,created.body);
+    entries.push(created.json().entryId);
+  }
+  assert.equal((await request(adminA,'PATCH',`${base}/slots/A1`,{entryId:entries[0]})).statusCode,200);
+  const plan=(await request(adminA,'GET',base)).json();
+  assert.equal((await request(adminB,'POST',`${base}/publish-draw`,{expectedRevision:plan.blueprint.revision})).statusCode,403);
+  assert.equal((await request(teamA,'POST',`${base}/publish-draw`,{expectedRevision:plan.blueprint.revision})).statusCode,403);
+  assert.equal((await request(adminA,'POST',`${base}/publish-draw`,{expectedRevision:plan.blueprint.revision})).statusCode,200);
+  const publicPath=`/api/v1/public/organizations/${ids.a}/draws`;
+  const snapshot=(await app.inject({method:'GET',url:publicPath})).json().find((row:{tournament_id:string})=>row.tournament_id===tournamentId).snapshot;
+  assert.equal(snapshot.slots.length,10);
+  assert.equal(snapshot.slots.filter((slot:{entry_id:string|null})=>slot.entry_id).length,1);
+  assert.equal(snapshot.teams.length,10);
+  assert.equal(snapshot.games.length,35);
+  assert.equal(snapshot.games.filter((game:{jornada_no:number|null})=>game.jornada_no===null).length,5);
+  assert.equal((await app.inject({method:'GET',url:`${publicPath}/${categoryId}/competition`})).json().available,false);
+  assert.equal((await app.inject({method:'GET',url:`/api/v1/public/organizations/${ids.b}/draws`})).json().some((row:{tournament_id:string})=>row.tournament_id===tournamentId),false);
+});
+
+test('T04/T08: el sorteo completo se publica por versión y queda visible sin sesión', async () => {
+  const specialRules={...fiveRules,points:{win:2,draw:1,loss:0},initialPhase:null,competitionPlan:null};
+  const tournament=await newTournament(ids.a,specialRules);
+  const {categoryId,tournamentId}=tournament.response.json();
+  const base=`/organizations/${ids.a}/categories/${categoryId}/fixture/blueprint`;
+  const publicPath=`/api/v1/public/organizations/${ids.a}/draws`;
+  assert.equal((await request(adminA,'POST',base,fcfsPositionPlan)).statusCode,201);
+  const locked=await request(adminA,'POST',`/organizations/${ids.a}/categories/${categoryId}/rules/draft`,{expectedRevision:1,reason:'Intento de cambiar el formato',rules:fiveRules});
+  assert.equal(locked.statusCode,409);assert.equal(locked.json().code,'FORMAT_LOCKED');
+  const edited=await request(adminA,'POST',`/organizations/${ids.a}/categories/${categoryId}/rules/draft`,{expectedRevision:1,reason:'Actualizar cupos',rules:{...specialRules,maxBenchPlayers:6,maxMatchRoster:11}});
+  assert.equal(edited.statusCode,200,edited.body);
+  assert.equal((await request(adminA,'POST',`/organizations/${ids.a}/categories/${categoryId}/rules/publish`,{expectedRevision:2,reason:'Faltó confirmar puntuación'})).json().code,'FORMAT_CONFIRMATION_REQUIRED');
+  assert.equal((await request(adminB,'POST',`${base}/publish-draw`,{expectedRevision:1})).statusCode,403);
+  assert.equal((await request(teamA,'POST',`${base}/publish-draw`,{expectedRevision:1})).statusCode,403);
+  assert.equal((await app.inject({method:'GET',url:publicPath})).json().some((row:{tournament_id:string})=>row.tournament_id===tournamentId),false);
+  const entryIds:string[]=[];
+  for(let index=0;index<10;index++){
+    const created=await request(adminA,'POST',`/organizations/${ids.a}/teams`,{requestId:randomUUID(),name:`Club sorteo ${index+1} ${randomUUID().slice(0,5)}`,color:'#123456',categoryId});
+    assert.equal(created.statusCode,201,created.body);
+    entryIds.push(created.json().entryId);
+    const slot=`${index<5?'A':'B'}${index%5+1}`;
+    assert.equal((await request(adminA,'PATCH',`${base}/slots/${slot}`,{entryId:entryIds[index]})).statusCode,200);
+  }
+  let plan=(await request(adminA,'GET',base)).json();
+  assert.equal((await request(adminA,'POST',`${base}/publish-draw`,{expectedRevision:1})).statusCode,409);
+  const published=await request(adminA,'POST',`${base}/publish-draw`,{expectedRevision:plan.blueprint.revision});
+  assert.equal(published.statusCode,200,published.body);
+  assert.equal((await request(adminA,'POST',`${base}/publish-draw`,{expectedRevision:plan.blueprint.revision})).json().reused,true);
+  let draws=(await app.inject({method:'GET',url:publicPath})).json();
+  const first=draws.find((row:{tournament_id:string})=>row.tournament_id===tournamentId);
+  assert.equal(first.snapshot.slots.length,10);
+  assert.equal(first.snapshot.games.length,35);
+  assert.equal(first.snapshot.slots[0].entry_id,entryIds[0]);
+  assert.equal(first.snapshot.games.filter((game:{sporting_round:string;jornada_no:number|null})=>game.sporting_round==='F1'&&game.jornada_no===null).length,5);
+  assert.ok((await app.inject({method:'GET',url:'/api/v1/public/organizations'})).json().some((row:{id:string})=>row.id===ids.a));
+  assert.ok((await app.inject({method:'GET',url:`/api/v1/public/tournaments?q=${encodeURIComponent(tournament.body.name)}`})).json().some((row:{id:string})=>row.id===tournamentId));
+  assert.equal((await app.inject({method:'GET',url:'/api/v1/public/organizations/'+ids.b+'/draws'})).json().some((row:{tournament_id:string})=>row.tournament_id===tournamentId),false);
+  assert.equal((await request(adminA,'PATCH',`${base}/slots/A1`,{entryId:entryIds[1]})).statusCode,200);
+  draws=(await app.inject({method:'GET',url:publicPath})).json();
+  assert.equal(draws.find((row:{tournament_id:string})=>row.tournament_id===tournamentId).snapshot.slots[0].entry_id,entryIds[0]);
+  plan=(await request(adminA,'GET',base)).json();
+  assert.equal(plan.blueprint.published_revision,first.revision);
+  assert.equal((await request(adminA,'POST',`${base}/publish-draw`,{expectedRevision:plan.blueprint.revision})).statusCode,200);
+  draws=(await app.inject({method:'GET',url:publicPath})).json();
+  assert.equal(draws.find((row:{tournament_id:string})=>row.tournament_id===tournamentId).snapshot.slots[0].entry_id,entryIds[1]);
+  assert.equal((await request(adminA,'PATCH',`${base}/opening`,{firstJornadaCodes:['G01','G02']})).statusCode,200);
+  draws=(await app.inject({method:'GET',url:publicPath})).json();
+  assert.equal(draws.find((row:{tournament_id:string})=>row.tournament_id===tournamentId).snapshot.games.filter((game:{sporting_round:string;jornada_no:number|null})=>game.sporting_round==='F1'&&game.jornada_no===null).length,5);
+  plan=(await request(adminA,'GET',base)).json();
+  assert.equal((await request(adminA,'POST',`${base}/publish-draw`,{expectedRevision:plan.blueprint.revision})).statusCode,200);
+  draws=(await app.inject({method:'GET',url:publicPath})).json();
+  assert.equal(draws.find((row:{tournament_id:string})=>row.tournament_id===tournamentId).snapshot.games.filter((game:{sporting_round:string;jornada_no:number|null})=>game.sporting_round==='F1'&&game.jornada_no===1).length,2);
+  assert.equal((await request(adminB,'POST',`${base}/sync`,{})).statusCode,403);
+  assert.equal((await request(teamA,'POST',`${base}/sync`,{})).statusCode,403);
+  const confirmed=await request(adminA,'POST',`/organizations/${ids.a}/categories/${categoryId}/rules/publish`,{expectedRevision:2,reason:'Puntos y desempates revisados',fixedFormatConfirmed:true});
+  assert.equal(confirmed.statusCode,200,confirmed.body);
+  const sync=await request(adminA,'POST',`${base}/sync`,{});
+  assert.equal(sync.statusCode,200,sync.body);
+  assert.equal(sync.json().created,25);
+  assert.equal((await request(adminA,'POST',`${base}/sync`,{})).json().created,0);
+  const competition=await request(adminA,'GET',`${base}/competition`);
+  assert.equal(competition.statusCode,200,competition.body);
+  assert.equal(competition.json().preparedMatches,25);
+  assert.equal(competition.json().competition.groupA.totals.length,5);
+  assert.equal(competition.json().competition.groupB.totals.length,5);
+  assert.deepEqual(competition.json().competition.groupA.totals.map((row:{points:number})=>row.points),[0,0,0,0,0]);
+  assert.equal(competition.json().competition.blocked,'group_results');
+  assert.equal((await request(adminA,'PATCH',`${base}/slots/A1`,{entryId:entryIds[0]})).json().code,'POSITION_MATCHES_ACTIVE');
+  assert.equal((await app.inject({method:'GET',url:`${publicPath}/${categoryId}/competition`})).json().available,true);
+  const entrySlot=new Map<string,string>(plan.slots.map((slot:{slot_code:string;entry_id:string})=>[slot.slot_code,slot.entry_id]));
+  const createSyntheticActa=async(code:string,homeGoals:number,awayGoals:number,homePenalties=0,awayPenalties=0)=>{
+    const {rows:[match]}=await pool.query(`SELECT m.id,m.home_entry_id,m.away_entry_id FROM draft_matches m JOIN fixture_position_games g ON g.organization_id=m.organization_id AND g.id=m.position_game_id
+      WHERE m.organization_id=$1 AND m.category_id=$2 AND g.code=$3`,[ids.a,categoryId,code]);
+    assert.ok(match,`Falta el partido ${code}`);
+    const events:MatchJournalEvent[]=[];
+    for(const [team,count,kind] of [[match.home_entry_id,homeGoals,'goal'],[match.away_entry_id,awayGoals,'goal'],[match.home_entry_id,homePenalties,'shootout_goal'],[match.away_entry_id,awayPenalties,'shootout_goal']] as const)
+      for(let index=0;index<count;index++)events.push({id:randomUUID(),sequence:events.length+1,kind,teamEntryId:team,registrationId:null,relatedRegistrationId:null,incidentNote:null,cardCode:null,windowNo:null,period:kind==='goal'?'PT':null,minute:null,voidsEventId:null,reason:null,recordedAt:new Date().toISOString()});
+    assert.deepEqual(projectMatchJournal(events,match.home_entry_id,match.away_entry_id).score,{home:homeGoals,away:awayGoals});
+    const recordId=randomUUID(),snapshotId=randomUUID();
+    await pool.query("INSERT INTO match_records(id,organization_id,match_id,status,rule_version,revision,started_by) VALUES($1,$2,$3,'official',1,$4,$5)",[recordId,ids.a,match.id,events.length,ids.adminA]);
+    await pool.query("INSERT INTO match_acta_snapshots(id,organization_id,match_id,version,kind,event_revision,snapshot,reason,created_by) VALUES($1,$2,$3,1,'approved',$4,$5,$6,$7)",[snapshotId,ids.a,match.id,events.length,JSON.stringify({score:{home:homeGoals,away:awayGoals},shootout:{home:homePenalties,away:awayPenalties},events}),`Acta sintética ${code}`,ids.adminA]);
+    await pool.query('UPDATE match_records SET approval_id=$3 WHERE organization_id=$1 AND match_id=$2',[ids.a,match.id,snapshotId]);
+  };
+  for(const game of fcfsPositionPlan.games.filter(game=>game.stage==='groups')){
+    const home=Number(game.homeRef.slice(1)),away=Number(game.awayRef.slice(1));
+    const homeGoals=game.homeRef[0]!==game.awayRef[0]?2:home<away?1:0;
+    const awayGoals=game.homeRef[0]!==game.awayRef[0]?0:home>away?1:0;
+    await createSyntheticActa(game.code,homeGoals,awayGoals);
+  }
+  const afterGroups=await request(adminA,'GET',`${base}/competition`);
+  assert.equal(afterGroups.statusCode,200,afterGroups.body);
+  assert.equal(afterGroups.json().competition.official.groups,25);
+  assert.equal(afterGroups.json().competition.groupA.totals[0].played,5);
+  assert.equal(afterGroups.json().competition.groupB.totals[0].played,5);
+  assert.equal(afterGroups.json().competition.general.totals[0].points,10);
+  const privateDaysPublic=(await app.inject({method:'GET',url:`${publicPath}/${categoryId}/competition`})).json();
+  assert.equal(privateDaysPublic.competition.official.groups,0);
+  assert.deepEqual(privateDaysPublic.players,[]);
+  assert.deepEqual(privateDaysPublic.defense.map((row:{played:number})=>row.played),Array(10).fill(0));
+  assert.equal((await request(adminA,'POST',`${base}/sync`,{})).json().created,4);
+  const afterQuarterPairs=(await request(adminA,'GET',`${base}/competition`)).json();
+  assert.deepEqual(afterQuarterPairs.competition.participants.MM1,{homeEntryId:entrySlot.get('A1'),awayEntryId:entrySlot.get('B4')});
+  await createSyntheticActa('MM1',0,1);
+  await createSyntheticActa('MM2',1,0);
+  await createSyntheticActa('MM3',0,0,4,3);
+  await createSyntheticActa('MM4',1,0);
+  assert.equal((await request(adminA,'POST',`${base}/sync`,{})).json().created,6);
+  const afterQuarterfinals=(await request(adminA,'GET',`${base}/competition`)).json();
+  assert.equal(afterQuarterfinals.competition.seeds.includes(entrySlot.get('A1')),false);
+  assert.deepEqual(afterQuarterfinals.competition.participants.Q1,{homeEntryId:entrySlot.get('A2'),awayEntryId:entrySlot.get('B4')});
+  assert.equal(afterQuarterfinals.preparedMatches,35);
+  assert.equal(afterQuarterfinals.defense.find((row:{entryId:string})=>row.entryId===entrySlot.get('A2')).played,6);
+  for(const game of fcfsPositionPlan.games.filter(game=>game.stage==='quadrangular'))await createSyntheticActa(game.code,0,0);
+  const finalState=(await request(adminA,'GET',`${base}/competition`)).json();
+  assert.equal(finalState.competition.official.quadrangular,6);
+  assert.equal(finalState.titleTie.length,4);
+  const extraPath=`${base}/title-extra`;
+  assert.equal((await request(adminB,'POST',extraPath,{decision:'no_extra'})).statusCode,403);
+  assert.equal((await request(teamA,'POST',extraPath,{decision:'no_extra'})).statusCode,403);
+  assert.equal((await request(adminA,'POST',extraPath,{decision:'no_extra'})).statusCode,200);
+  const titlePair=[entrySlot.get('A2')!,entrySlot.get('B4')!];
+  const extra=await request(adminA,'POST',extraPath,{decision:'extra',homeEntryId:titlePair[0],awayEntryId:titlePair[1]});
+  assert.equal(extra.statusCode,200,extra.body);
+  assert.ok(extra.json().matchId);
+  assert.equal((await request(adminA,'GET',`${base}/competition`)).json().titleExtra.decision,'extra');
+  assert.equal((await app.inject({method:'GET',url:`${publicPath}/${categoryId}/competition`})).json().titleExtra,null);
+  const extraMatchId=extra.json().matchId,extraApproval=randomUUID();
+  await pool.query("INSERT INTO match_records(id,organization_id,match_id,status,rule_version,revision,started_by) VALUES($1,$2,$3,'official',1,1,$4)",[randomUUID(),ids.a,extraMatchId,ids.adminA]);
+  const extraEvents=Array.from({length:7},(_,index)=>({id:randomUUID(),sequence:index+1,kind:'shootout_goal',teamEntryId:index<4?titlePair[0]:titlePair[1],registrationId:null,relatedRegistrationId:null,incidentNote:null,cardCode:null,windowNo:null,period:null,minute:null,voidsEventId:null,reason:null,recordedAt:new Date().toISOString()}));
+  await pool.query("INSERT INTO match_acta_snapshots(id,organization_id,match_id,version,kind,event_revision,snapshot,reason,created_by) VALUES($1,$2,$3,1,'approved',7,$4,'Partido extra sintético',$5)",[extraApproval,ids.a,extraMatchId,JSON.stringify({score:{home:0,away:0},shootout:{home:4,away:3},events:extraEvents}),ids.adminA]);
+  await pool.query('UPDATE match_records SET approval_id=$3 WHERE organization_id=$1 AND match_id=$2',[ids.a,extraMatchId,extraApproval]);
+  assert.equal((await request(adminA,'GET',`${base}/competition`)).json().titleExtra.winnerEntryId,titlePair[0]);
+  assert.equal((await request(adminA,'POST',extraPath,{decision:'no_extra'})).json().code,'TITLE_EXTRA_ACTIVE');
+});
+
+test('T04: orden manual de grupos y general avanza solo con actas vigentes y permiso propio',async()=>{
+  const created=await newTournament();assert.equal(created.response.statusCode,201,created.response.body);
+  const {categoryId}=created.response.json(),base=`/organizations/${ids.a}/categories/${categoryId}/fixture/blueprint`;
+  assert.equal((await request(adminA,'POST',base,fcfsPositionPlan)).statusCode,201);
+  const entries:string[]=[];
+  for(let index=0;index<10;index++){
+    const team=await request(adminA,'POST',`/organizations/${ids.a}/teams`,{requestId:randomUUID(),name:`Empate ${index+1} ${randomUUID().slice(0,5)}`,color:'#165D46',categoryId});
+    assert.equal(team.statusCode,201,team.body);entries.push(team.json().entryId);
+    assert.equal((await request(adminA,'PATCH',`${base}/slots/${index<5?'A':'B'}${index%5+1}`,{entryId:entries[index]})).statusCode,200);
+  }
+  assert.equal((await request(adminA,'PATCH',`${base}/opening`,{firstJornadaCodes:['G01','G02']})).statusCode,200);
+  const specialRules={...fiveRules,points:{win:2,draw:1,loss:0},initialPhase:null,competitionPlan:null};
+  assert.equal((await request(adminA,'POST',`/organizations/${ids.a}/categories/${categoryId}/rules/draft`,{expectedRevision:1,reason:'Copa sintética',rules:specialRules})).statusCode,200);
+  assert.equal((await request(adminA,'POST',`/organizations/${ids.a}/categories/${categoryId}/rules/publish`,{expectedRevision:2,reason:'Reglas sintéticas',fixedFormatConfirmed:true})).statusCode,200);
+  assert.equal((await request(adminA,'POST',`${base}/sync`,{})).json().created,25);
+  const addActa=async(code:string,homeGoals:number,awayGoals:number)=>{
+    const {rows:[match]}=await pool.query(`SELECT m.id,m.home_entry_id,m.away_entry_id FROM draft_matches m JOIN fixture_position_games g ON g.organization_id=m.organization_id AND g.id=m.position_game_id WHERE m.organization_id=$1 AND m.category_id=$2 AND g.code=$3`,[ids.a,categoryId,code]);
+    assert.ok(match);
+    const events=Array.from({length:homeGoals+awayGoals},(_,index)=>({id:randomUUID(),sequence:index+1,kind:'goal',teamEntryId:index<homeGoals?match.home_entry_id:match.away_entry_id,registrationId:null,relatedRegistrationId:null,incidentNote:null,cardCode:null,windowNo:null,period:'PT',minute:null,voidsEventId:null,reason:null,recordedAt:new Date().toISOString()}));
+    const approvalId=randomUUID();
+    await pool.query("INSERT INTO match_records(id,organization_id,match_id,status,rule_version,revision,started_by) VALUES($1,$2,$3,'official',1,$4,$5)",[randomUUID(),ids.a,match.id,events.length,ids.adminA]);
+    await pool.query("INSERT INTO match_acta_snapshots(id,organization_id,match_id,version,kind,event_revision,snapshot,reason,created_by) VALUES($1,$2,$3,1,'approved',$4,$5,$6,$7)",[approvalId,ids.a,match.id,events.length,JSON.stringify({score:{home:homeGoals,away:awayGoals},shootout:{home:0,away:0},events}),`Acta sintética ${code}`,ids.adminA]);
+    await pool.query('UPDATE match_records SET approval_id=$3 WHERE organization_id=$1 AND match_id=$2',[ids.a,match.id,approvalId]);
+    return {matchId:match.id,approvalId};
+  };
+  let firstGroup:{matchId:string;approvalId:string}|null=null;
+  for(const game of fcfsPositionPlan.games.filter(game=>game.stage==='groups')){
+    const acta=await addActa(game.code,0,0);if(!firstGroup)firstGroup=acta;
+  }
+  assert.equal((await request(adminA,'GET',`${base}/competition`)).json().competition.blocked,'group_tiebreak');
+  const tiePath=`${base}/tiebreak`;
+  const groupA={table:'A',position:1,entryOrder:entries.slice(0,5)};
+  assert.equal((await request(adminB,'POST',tiePath,groupA)).statusCode,403);
+  assert.equal((await request(teamA,'POST',tiePath,groupA)).statusCode,403);
+  assert.equal((await request(adminA,'POST',tiePath,{...groupA,entryOrder:[entries[0],entries[0]]})).json().code,'TIE_CHANGED');
+  assert.equal((await request(adminA,'POST',tiePath,groupA)).statusCode,200);
+  const groupB={table:'B',position:1,entryOrder:entries.slice(5)};
+  const bDecision=await request(adminA,'POST',tiePath,groupB);assert.equal(bDecision.statusCode,200,bDecision.body);
+  assert.equal(bDecision.json().createdMatches,4);
+  assert.equal((await request(adminA,'GET',`${base}/competition`)).json().competition.participants.MM1.homeEntryId,entries[0]);
+  await addActa('MM1',1,0);await addActa('MM2',1,0);await addActa('MM3',1,0);await addActa('MM4',1,0);
+  assert.equal((await request(adminA,'GET',`${base}/competition`)).json().competition.blocked,'general_tiebreak');
+  const generalOrder=[entries[1],entries[5],entries[6],entries[0],entries[2],entries[3],entries[4],entries[7],entries[8],entries[9]];
+  const resolved=await request(adminA,'POST',tiePath,{table:'general',position:1,entryOrder:generalOrder});
+  assert.equal(resolved.statusCode,200,resolved.body);assert.equal(resolved.json().createdMatches,6);
+  const after=(await request(adminA,'GET',`${base}/competition`)).json();
+  assert.deepEqual(after.competition.seeds,[entries[1],entries[5],entries[6],entries[0]]);
+  assert.equal(after.competition.participants.Q1.homeEntryId,entries[1]);
+  const {rows:[original]}=await pool.query('SELECT snapshot FROM match_acta_snapshots WHERE id=$1',[firstGroup!.approvalId]);
+  const revisedId=randomUUID();
+  await pool.query("INSERT INTO match_acta_snapshots(id,organization_id,match_id,version,kind,event_revision,snapshot,reason,created_by) VALUES($1,$2,$3,2,'approved',0,$4,'Corrección sintética',$5)",[revisedId,ids.a,firstGroup!.matchId,JSON.stringify(original.snapshot),ids.adminA]);
+  await pool.query('UPDATE match_records SET approval_id=$3 WHERE organization_id=$1 AND match_id=$2',[ids.a,firstGroup!.matchId,revisedId]);
+  assert.equal((await request(adminA,'GET',`${base}/competition`)).json().competition.blocked,'group_tiebreak');
+});
+
 test('T02: revocar una asignación corta acceso al equipo y reasignar lo recupera con historial', async () => {
   const tournament = await newTournament(); assert.equal(tournament.response.statusCode, 201);
   const categoryId = tournament.response.json().categoryId;
@@ -703,7 +1044,7 @@ test('T02: sedes y patrocinadores son privados por defecto, se publican y archiv
   await assert.rejects(pool.query('INSERT INTO tournament_venues(organization_id,tournament_id,venue_id,created_by) VALUES($1,$2,$3,$4)', [ids.b, tournamentId, venue.json().id, ids.adminA]), (error: unknown) => (error as { code: string }).code === '23503');
 });
 
-test('T02: equipo y escudo salen al portal solo con autorización explícita', async () => {
+test('T02: publicar el torneo muestra equipos y escudos; el organizador puede ocultarlos', async () => {
   const tournament = await newTournament(); assert.equal(tournament.response.statusCode, 201);
   const categoryId = tournament.response.json().categoryId;
   const team = await request(adminA, 'POST', `/organizations/${ids.a}/teams`, { requestId: randomUUID(), name: `Escudo sintético ${randomUUID().slice(0, 6)}`, color: '#234F7D', categoryId });
@@ -720,14 +1061,14 @@ test('T02: equipo y escudo salen al portal solo con autorización explícita', a
   const publicList = `/api/v1/public/organizations/${ids.a}/tournaments`;
   assert.equal((await app.inject(publicList)).json().teams.some((item: { id: string }) => item.id === teamId), false);
   assert.equal((await request(adminA, 'POST', `/organizations/${ids.a}/categories/${categoryId}/rules/publish`, { expectedRevision: 1, reason: 'Reglamento publicado' })).statusCode, 200);
-  assert.equal((await app.inject(publicList)).json().teams.some((item: { id: string }) => item.id === teamId), false);
-  assert.equal((await request(teamA, 'POST', `/organizations/${ids.a}/entries/${entryId}/publication`, { publicVisible: true, reason: 'Intento ajeno' })).statusCode, 403);
-  assert.equal((await request(adminB, 'POST', `/organizations/${ids.a}/entries/${entryId}/publication`, { publicVisible: true, reason: 'Intento de otro tenant' })).statusCode, 403);
-  assert.equal((await request(adminA, 'POST', `/organizations/${ids.a}/entries/${entryId}/publication`, { publicVisible: true, reason: 'Equipo autorizado para portal' })).statusCode, 200);
   assert.equal((await app.inject(publicList)).json().teams.some((item: { id: string }) => item.id === teamId), true);
   const downloaded = await app.inject(publicShield); assert.equal(downloaded.statusCode, 200); assert.deepEqual(downloaded.rawPayload, image);
+  assert.equal((await request(teamA, 'POST', `/organizations/${ids.a}/entries/${entryId}/publication`, { publicVisible: false, reason: 'Intento ajeno' })).statusCode, 403);
+  assert.equal((await request(adminB, 'POST', `/organizations/${ids.a}/entries/${entryId}/publication`, { publicVisible: false, reason: 'Intento de otro tenant' })).statusCode, 403);
   assert.equal((await request(adminA, 'POST', `/organizations/${ids.a}/entries/${entryId}/publication`, { publicVisible: false, reason: 'Retiro de visibilidad' })).statusCode, 200);
   assert.equal((await app.inject(publicShield)).statusCode, 404);
+  assert.equal((await request(adminA, 'POST', `/organizations/${ids.a}/entries/${entryId}/publication`, { publicVisible: true, reason: 'Mostrar de nuevo' })).statusCode, 200);
+  assert.equal((await app.inject(publicShield)).statusCode, 200);
 });
 
 test('T02: categorías nuevas comparten o crean edición y un equipo puede entrar en ambas', async () => {

@@ -6,3 +6,7 @@ node_modules/
 dist/
 *.tsbuildinfo
 coverage/
+img/FCFS/*.pdf
+img/FCFS/*.docx
+img/FCFS/*.xlsx
+img/FCFS/*.jpeg

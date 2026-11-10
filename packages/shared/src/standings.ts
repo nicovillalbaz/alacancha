@@ -29,32 +29,35 @@ export interface StandingTotals {
 export interface StandingGroup { position: number; teamIds: string[]; unresolved: boolean }
 type Breaker = NonNullable<RuleConfig['advanced']>['tiebreakers'][number];
 
-function totals(teamIds: string[], matches: RankedMatch[]): Map<string, StandingTotals> {
+function totals(teamIds: string[], matches: RankedMatch[], includeExternalOpponents = false): Map<string, StandingTotals> {
   const result = new Map(teamIds.map((teamId) => [teamId, { teamId, played: 0, points: 0, wins: 0, draws: 0, losses: 0, goalsFor: 0, goalsAgainst: 0, goalDifference: 0, yellowCards: 0, redCards: 0 }]));
   for (const match of matches) {
     if (match.status !== 'official') continue;
     const home = result.get(match.homeTeamId), away = result.get(match.awayTeamId);
-    if (!home || !away || home === away) continue;
-    home.played++; away.played++;
-    home.points += match.homePoints; away.points += match.awayPoints;
-    if (match.homeGoals > match.awayGoals) { home.wins++; away.losses++; }
-    else if (match.awayGoals > match.homeGoals) { away.wins++; home.losses++; }
-    else { home.draws++; away.draws++; }
-    home.goalsFor += match.homeGoals; away.goalsFor += match.awayGoals;
-    home.goalsAgainst += match.awayGoals; away.goalsAgainst += match.homeGoals;
-    home.goalDifference += match.homeGoals - match.awayGoals;
-    away.goalDifference += match.awayGoals - match.homeGoals;
-    home.yellowCards += match.homeYellowCards; away.yellowCards += match.awayYellowCards;
-    home.redCards += match.homeRedCards; away.redCards += match.awayRedCards;
+    if ((!home || !away) && !includeExternalOpponents || home === away) continue;
+    if (home) {
+      home.played++; home.points += match.homePoints;
+      if (match.homeGoals > match.awayGoals) home.wins++; else if (match.homeGoals < match.awayGoals) home.losses++; else home.draws++;
+      home.goalsFor += match.homeGoals; home.goalsAgainst += match.awayGoals;
+      home.goalDifference += match.homeGoals - match.awayGoals;
+      home.yellowCards += match.homeYellowCards; home.redCards += match.homeRedCards;
+    }
+    if (away) {
+      away.played++; away.points += match.awayPoints;
+      if (match.awayGoals > match.homeGoals) away.wins++; else if (match.awayGoals < match.homeGoals) away.losses++; else away.draws++;
+      away.goalsFor += match.awayGoals; away.goalsAgainst += match.homeGoals;
+      away.goalDifference += match.awayGoals - match.homeGoals;
+      away.yellowCards += match.awayYellowCards; away.redCards += match.awayRedCards;
+    }
   }
   return result;
 }
 
 /** Un criterio «entre sí» se recalcula para el subconjunto que continúa empatado. */
-export function rankStandings(teamIds: string[], matches: RankedMatch[], order: Breaker[], pointAdjustments: ReadonlyMap<string,number> = new Map()): { totals: StandingTotals[]; groups: StandingGroup[] } {
+export function rankStandings(teamIds: string[], matches: RankedMatch[], order: Breaker[], pointAdjustments: ReadonlyMap<string,number> = new Map(), options: { includeExternalOpponents?: boolean } = {}): { totals: StandingTotals[]; groups: StandingGroup[] } {
   if (new Set(teamIds).size !== teamIds.length) throw new Error('No repitas equipos en una tabla.');
   const official = matches.filter((match) => match.status === 'official');
-  const full = totals(teamIds, official);
+  const full = totals(teamIds, official, options.includeExternalOpponents);
   for (const [teamId, delta] of pointAdjustments) { const row = full.get(teamId); if (row) row.points += delta; }
   const criteria: Breaker[] = ['head_to_head_points', 'head_to_head_wins', 'head_to_head_goal_difference', 'head_to_head_goals_for', 'head_to_head_goals_against', 'wins', 'goal_difference', 'goals_for', 'goals_against', 'yellow_cards', 'red_cards', 'manual_draw'];
   if (!order.length || new Set(order).size !== order.length || order.some((criterion) => !criteria.includes(criterion)) || (order.includes('manual_draw') && order.at(-1) !== 'manual_draw')) throw new Error('La jerarquía de desempates es inválida.');

@@ -5,7 +5,7 @@ import type { DatabasePool } from '@torneos/db';
 import type { FlyerSnapshot } from './flyer-template.ts';
 
 export async function loadFlyerAssets(pool:DatabasePool,mediaDir:string,org:string,snapshot:FlyerSnapshot){
- const ids=[snapshot.orgAssetId,snapshot.home?.assetId,snapshot.away?.assetId,...snapshot.lines.flatMap(line=>[line.homeAssetId,line.awayAssetId])].filter((id):id is string=>Boolean(id));
+ const ids=[snapshot.orgAssetId,snapshot.brand?.cupAssetId,snapshot.brand?.organizerAssetId,snapshot.brand?.federationAssetId,snapshot.home?.assetId,snapshot.away?.assetId,...snapshot.lines.flatMap(line=>[line.homeAssetId,line.awayAssetId])].filter((id):id is string=>Boolean(id));
  if(!ids.length)return {};
  const {rows}=await pool.query("SELECT id,filename,content_type,checksum,byte_length FROM media WHERE organization_id=$1 AND id=ANY($2::uuid[]) AND content_type IN ('image/png','image/jpeg','image/webp') AND byte_length<=2097152",[org,ids]);
  const result:Record<string,string>={};

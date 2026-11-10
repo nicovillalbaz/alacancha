@@ -14,6 +14,8 @@
     "demo:ready": "node scripts/run-local.mjs seed-ready",
     "demo:journeys": "node scripts/run-local.mjs seed-journeys",
     "demo:finished": "node scripts/run-local.mjs seed-finished",
+    "fcfs:draft": "node scripts/run-local.mjs load-fcfs-draft",
+    "fcfs:shields": "node scripts/run-local.mjs load-fcfs-shields",
     "demo:verify": "node scripts/run-local.mjs verify-finished",
     "dev": "node scripts/run-local.mjs dev",
     "dev:api": "node scripts/run-local.mjs api",
