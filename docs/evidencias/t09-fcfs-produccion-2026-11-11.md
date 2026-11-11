@@ -13,6 +13,8 @@ Fecha: 11/11/2026. VPS OVH, Ubuntu 24.04, PostgreSQL propio, API y worker como s
 - Se guardaron el logo FCFS, el emblema de Copa, el logo FPFS de flyer y los diez escudos. El diseño de flyer conserva verde oscuro/dorado, formato vertical PNG. La clave nueva de `usuariofcfs` está fuera del repositorio, en archivo 0600 del VPS; no se registró en esta evidencia.
 - Los 35 cruces por posiciones y la vista pública parcial están publicados. A1–B5 siguen vacíos, J1/J2 esperan distribución, y no hay partidos, marcadores ni tabla oficial inventados. El torneo y el reglamento deportivo permanecen borrador.
 - `https://alacancha.webs.vc/` devuelve una organización; la búsqueda de Caacupé devuelve la Copa. El enlace directo devuelve 200 con título propio, el emblema público responde 200 (123422 bytes), el sitemap incluye el torneo y `/ready` responde 200. API, worker y Caddy activos.
+- Tras la carga se creó otro respaldo `/srv/torneos/backups/initial-20261111T175130Z.dump` y se volvió a restaurar correctamente la estructura de 68 tablas. El archivo `media-with-fcfs-20261111.tar.gz` preserva los medios cargados (1,2 MB). Es una copia local al VPS; la copia externa sigue pendiente.
+- El ensayo inicial escribió PNG de prueba en el mismo directorio de medios que producción; no aparecen como registros en la base real. El wrapper se corrigió para que los próximos ensayos usen `/srv/torneos/media-rehearsal`. Los archivos huérfanos antiguos se conservan dentro del respaldo y no se borraron sin comprobación de referencias.
 - El manifiesto entrega `name` y `short_name` «A la cancha»; el icono anterior sigue. Los metadatos por URL se generan en el servidor. Google Analytics está preparado, pero inactivo sin ID `G-...`.
 
 ## Calidad y límites
