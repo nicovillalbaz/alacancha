@@ -45,6 +45,8 @@ try {
     GROUP BY e.organization_id,e.id ORDER BY registrations DESC,e.id LIMIT 1`);
   const measurements = [
     await sample('health', ['/health']),
+    await sample('portada-publica', ['/']),
+    await sample('sitemap-publico', ['/sitemap.xml']),
     await sample('fixture-publico-varios-torneos', organizations.map(item=>`/api/v1/public/organizations/${item.id}/fixture`)),
     await sample('estadisticas-publicas-varias-categorias', categories.map(item=>`/api/v1/public/organizations/${item.organization_id}/categories/${item.id}/statistics`)),
   ];

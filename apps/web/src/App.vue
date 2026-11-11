@@ -1,22 +1,31 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, defineComponent, h, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { accessLabels, accessStates, roleLabels, rulePresets, ruleSchema, tiebreakerLabels, playerDraftSchema, matchPeriodCodes, knockoutRoundName, previewCompetitionBracket, type PlannedRound, type AccessState, type CurrentUser, type OrganizationSummary, type RuleConfig, type TournamentSummary, type TournamentResources, type TeamSummary, type PlayerDraftSummary, type PlayerDraftInput, type GoodFaithVersion, type PlayerDocument, type PlayerMovement, type PlayerRestriction, type EligibilityResult, type DraftMatch, type LineupVersion, type PlayerImportBatch, type PlayerIdentitySearch, type PlayerIdentityChange, type FixtureOverview, type PositionBlueprintView, type PositionCompetitionView, type MatchdaySummary, type MatchCaptureView, type MatchJournalEvent } from '@torneos/shared';
 import Icon from './Icon.vue';
-import RulesEditor from './RulesEditor.vue';
-import BracketView from './BracketView.vue';
-import FanPortal from './FanPortal.vue';
 import PublicDirectory from './PublicDirectory.vue';
-import TournamentWorkspace from './TournamentWorkspace.vue';
-import PositionBlueprint from './PositionBlueprint.vue';
-import PositionStatistics from './PositionStatistics.vue';
-import PublicPositionPortal, {type PublicDraw} from './PublicPositionPortal.vue';
-import FlyerSettings from './FlyerSettings.vue';
+import type { PublicDraw } from './PublicPositionPortal.vue';
 import SportTabs from './SportTabs.vue';
 import SportEventMark from './SportEventMark.vue';
 import PublicMatchRow from './PublicMatchRow.vue';
-import FixtureDayEditor from './FixtureDayEditor.vue';
-import PaymentsWorkspace from './PaymentsWorkspace.vue';
+import InstallButton from './InstallButton.vue';
 import { queueMatchEvent,queuedMatchEvents,removeQueuedMatchEvent,type QueuedMatchEvent } from './offline-events.ts';
+
+const LoadingScreen = defineComponent(() => () => h('p', { class: 'small muted pad', role: 'status' }, 'Cargando…'));
+const LoadError = defineComponent(() => () => h('div', { class: 'pad stack', role: 'alert' }, [
+  h('p', 'No se pudo abrir esta vista.'),
+  h('button', { class: 'btn', type: 'button', onClick: () => location.reload() }, 'Reintentar'),
+]));
+const lazyScreen = (loader: () => Promise<{ default: import('vue').Component }>) => defineAsyncComponent({ loader, loadingComponent: LoadingScreen, errorComponent: LoadError, delay: 150 });
+const RulesEditor = lazyScreen(() => import('./RulesEditor.vue'));
+const BracketView = lazyScreen(() => import('./BracketView.vue'));
+const FanPortal = lazyScreen(() => import('./FanPortal.vue'));
+const TournamentWorkspace = lazyScreen(() => import('./TournamentWorkspace.vue'));
+const PositionBlueprint = lazyScreen(() => import('./PositionBlueprint.vue'));
+const PositionStatistics = lazyScreen(() => import('./PositionStatistics.vue'));
+const PublicPositionPortal = lazyScreen(() => import('./PublicPositionPortal.vue'));
+const FlyerSettings = lazyScreen(() => import('./FlyerSettings.vue'));
+const FixtureDayEditor = lazyScreen(() => import('./FixtureDayEditor.vue'));
+const PaymentsWorkspace = lazyScreen(() => import('./PaymentsWorkspace.vue'));
 
 interface Administrator { id: string; user_id: string; name: string; username: string; organization_id: string; organization_name: string; organization_status: AccessState; status: AccessState; role: keyof typeof roleLabels; version: number }
 interface Audit { id: string; action: string; reason: string; actor: string; organization_name: string | null; created_at: string; before_data: { status?: AccessState } | null; after_data: { status?: AccessState } | null }
@@ -44,6 +53,15 @@ function routeFromLocation(){
   if(segments.length===1&&['acceso','panel'].includes(segments[0]))return segments[0];
   if(segments.length<=2&&/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(segments[0])&&(!segments[1]||/^[0-9a-f-]{36}$/i.test(segments[1])))return `portal/${segments.join('/')}`;
   return 'publico';
+}
+function setPublicPageMeta(title:string,description:string,canonical:string,image=''){
+  document.title=title;
+  const meta=(key:string,value:string,property=false)=>{const attribute=property?'property':'name';let element=document.head.querySelector<HTMLMetaElement>(`meta[${attribute}="${key}"]`);if(!element){element=document.createElement('meta');element.setAttribute(attribute,key);document.head.append(element);}element.content=value;};
+  meta('description',description);meta('og:type','website',true);meta('og:title',title,true);meta('og:description',description,true);meta('og:url',canonical,true);
+  let link=document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');if(!link){link=document.createElement('link');link.rel='canonical';document.head.append(link);}link.href=canonical;
+  document.head.querySelector('meta[property="og:image"]')?.remove();
+  if(image)meta('og:image',image,true);
+  meta('twitter:card',image?'summary_large_image':'summary');
 }
 const initialRoute=routeFromLocation();
 const route = ref(initialRoute);
@@ -1217,7 +1235,7 @@ async function loadView(force = false) {
     }
     if (parts.value[0] === 'publico') {
       publicOrganization.value = null; publicTournaments.value = []; publicTeams.value = []; publicSponsors.value = []; publicFixture.value = []; publicBrackets.value = []; publicStatistics.value = {}; publicFlyers.value=[]; publicDraws.value=[];
-      if(!parts.value[1]){publicOrganizations.value=await api<PublicOrganizationItem[]>('/public/organizations');document.title='Organizaciones · Torneos';return;}
+      if(!parts.value[1]){publicOrganizations.value=await api<PublicOrganizationItem[]>('/public/organizations');setPublicPageMeta('Torneos de fútbol · Fixture y resultados','Encontrá organizaciones, torneos, partidos, resultados y estadísticas de fútbol.',`${location.origin}/`);return;}
       const [result, published, brackets,sharedFlyers,draws] = await Promise.all([api<{ organization: PublicOrganization; tournaments: TournamentSummary[]; teams: typeof publicTeams.value; sponsors: typeof publicSponsors.value }>(`/public/organizations/${parts.value[1]}/tournaments`), api<PublicFixtureDay[]>(`/public/organizations/${parts.value[1]}/fixture`), api<PublicBracket[]>(`/public/organizations/${parts.value[1]}/brackets`),api<typeof publicFlyers.value>(`/public/organizations/${parts.value[1]}/flyers`),api<PublicDraw[]>(`/public/organizations/${parts.value[1]}/draws`)]);
       publicDraws.value=draws;
       publicCatalog.value=[...new Map([...result.tournaments.map(item=>[item.id,{id:item.id,name:item.name,organization_id:parts.value[1],organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const),...draws.map(item=>[item.tournament_id,{id:item.tournament_id,name:item.tournament_name,organization_id:parts.value[1],organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const)].map(item=>[item[0],item[1]])).values()];
@@ -1225,8 +1243,12 @@ async function loadView(force = false) {
       if(tournamentId&&!result.tournaments.some(item=>item.id===tournamentId)&&!draws.some(item=>item.tournament_id===tournamentId))throw new RequestError('Este torneo todavía no está publicado.','NOT_FOUND',404);
       publicOrganization.value = result.organization; publicTournaments.value = tournamentId?result.tournaments.filter(item=>item.id===tournamentId):result.tournaments; publicTeams.value = result.teams.filter(team=>publicTournaments.value.some(item=>item.category_id===team.category_id)); publicSponsors.value = result.sponsors.filter(sponsor=>!tournamentId||sponsor.tournament_id===tournamentId);
       publicFixture.value = tournamentId?published.filter(day=>day.tournament_id===tournamentId):published; publicBrackets.value = tournamentId?brackets.filter(item=>item.tournament_id===tournamentId):brackets;publicFlyers.value=tournamentId?sharedFlyers.filter(item=>item.tournamentId===tournamentId):sharedFlyers;
-      const publicName=tournamentId?(publicTournament.value?.name||draws.find(item=>item.tournament_id===tournamentId)?.tournament_name):(result.organization as unknown as {name:string}|null)?.name||'Torneos';document.title=`${publicName} · Fixture y resultados`;
-      document.querySelector('meta[name="description"]')?.setAttribute('content',`Fixture, resultados, clasificación y goleadores de ${publicName}.`);
+      const publicName=tournamentId?(publicTournament.value?.name||draws.find(item=>item.tournament_id===tournamentId)?.tournament_name):(result.organization as unknown as {name:string}|null)?.name||'Torneos';
+      const title=tournamentId?`${publicName} · ${result.organization.name}`:`${publicName} · Torneos`;
+      const description=tournamentId?`Partidos, fixture, clasificación y goleadores de ${publicName}.`:`Torneos, partidos, resultados y estadísticas de ${publicName}.`;
+      const canonical=`${location.origin}/${result.organization.public_slug}${tournamentId?`/${tournamentId}`:''}`;
+      const image=publicTournament.value?.has_emblem&&publicTournament.value.status==='published'?`${location.origin}/api/v1/public/organizations/${result.organization.id}/tournaments/${tournamentId}/emblem`:result.organization.logo_id?`${location.origin}/api/v1/public/organizations/${result.organization.id}/logo`:'';
+      setPublicPageMeta(title,description,canonical,image);
       const statResults = await Promise.allSettled(result.tournaments.map(item => api<PublicStats>(`/public/organizations/${parts.value[1]}/categories/${item.category_id}/statistics`)));
       publicStatistics.value = Object.fromEntries(result.tournaments.flatMap((item, index) => statResults[index].status === 'fulfilled' ? [[item.category_id, statResults[index].value]] : []));
       publicResultsStream?.close();publicResultsStream=new EventSource(`/api/v1/public/organizations/${parts.value[1]}/results/stream`);
@@ -1432,6 +1454,7 @@ onUnmounted(() => { publicResultsStream?.close();privateMatchStream?.close();win
         <button class="link btn ghost full mt" @click="go('acceso')">Volver a ingresar</button>
       </template>
     </div>
+    <footer v-if="parts[0] === 'publico'" class="public-credit">Desarrollado por NAVZ <a href="tel:+595972995557">+595972995557</a></footer>
   </main>
   <div v-else-if="user" class="shell">
     <aside class="sidebar">
@@ -1901,4 +1924,5 @@ onUnmounted(() => { publicResultsStream?.close();privateMatchStream?.close();win
   </div>
   <main v-else id="contenido" tabindex="-1" class="auth"><div class="auth-card"><h1 tabindex="-1">Abriendo tu cuenta</h1><p class="muted mt">{{ error || 'Comprobando la sesión…' }}</p><a v-if="error" class="btn mt" href="#/acceso">Volver a ingresar</a></div></main>
   <div v-if="success" class="toast" role="status"><Icon name="check" />{{ success }}</div>
+  <InstallButton />
 </template>

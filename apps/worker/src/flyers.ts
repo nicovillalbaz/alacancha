@@ -6,7 +6,7 @@ import type { DatabasePool } from '@torneos/db';
 import { renderFlyerSvg, flyerSizes, type FlyerSize, type FlyerSnapshot, type FlyerTemplateKey } from '../../api/src/flyer-template.ts';
 import { loadFlyerAssets } from '../../api/src/flyer-assets.ts';
 
-const chrome=process.env.CHROME_PATH||'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+const chrome=process.env.CHROME_PATH||(process.platform==='win32'?'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe':'chromium');
 async function run(binary:string,args:string[],timeout=30000){
  await new Promise<void>((ok,bad)=>{const child=spawn(binary,args,{windowsHide:true,stdio:'ignore'});const timer=setTimeout(()=>{child.kill();bad(new Error('Tiempo de generación agotado.'));},timeout);child.on('error',error=>{clearTimeout(timer);bad(error);});child.on('exit',code=>{clearTimeout(timer);code===0?ok():bad(new Error(`El generador terminó con código ${code}.`));});});
 }

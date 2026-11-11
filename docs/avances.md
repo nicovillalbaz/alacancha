@@ -177,3 +177,28 @@ Pruebas: `npm run typecheck` correcto. Navegador local: J12 muestra J13 y J14; e
 Visual/dispositivo: revisión de captura a 390 px; teléfono físico pendiente.
 Datos/operación: sin migración ni cambio de resultados/publicaciones. [Evidencia](evidencias/t04-t08-finales-densidad-movil-2026-11-10.md).
 Riesgos/pendientes: validar en dispositivo físico la legibilidad de nombres largos y la navegación entre jornadas.
+
+### 2026-11-10 — T08/T09: SEO, instalación y archivos de flyer
+
+Estado: código local verificado; aceptación física y despliegue pendientes.
+Implementado: web compilada servida por Fastify con HTML y metadatos por URL pública, `robots.txt`, mapa del sitio filtrado por publicación, ruta `/index.html` para el service worker, botón de instalación con aviso cuando el navegador lo ofrece y guía manual cuando no, y firma pública «Desarrollado por NAVZ +595972995557». El worker acepta Chromium en Linux mediante `PATH` o `CHROME_PATH`.
+Pruebas: `npm run build` correcto; `npm run audit:routes` 158 rutas, ninguna sin clasificar; `npm test` 93/93, con generación real de PNG, JPG y PDF, aislamiento entre organizaciones, sitemap sin borrador y HTML/canónico/noindex. El empaquetado avisa que el archivo JS principal supera 500 kB, sin fallo de compilación.
+Visual/dispositivo: catálogo y torneo público revisados en navegador móvil simulado de aproximadamente 390 px sin desborde; pendientes Android e iOS físicos, descarga/guardado por navegador, teclado y red inestable.
+Datos/operación: sin migración ni datos modificados. HTTPS, base, worker y almacenamiento deben estar operativos para un piloto; no se desplegó. [Evidencia y matriz de aceptación](evidencias/t08-t09-seo-instalacion-2026-11-10.md).
+Riesgos/pendientes: ningún navegador garantiza un aviso programático de instalación; iOS exige acción del usuario en Compartir. El archivo del flyer se crea en el servidor, pero el modo de guardarlo varía por navegador. La prueba local no demuestra compatibilidad en todos los dispositivos.
+
+### 2026-11-11 — T04/T08/T09: barrido de código, operación y experiencia
+
+Estado: correcciones locales verificadas; despliegue y aceptación física pendientes.
+Implementado: Fixture público ya no inventa jornadas vacías y muestra el día J1/J2 pendiente sin comprimir su fecha en una columna; conteo singular de partidos corregido. El worker consume la cola durable de publicaciones sin modificar snapshots. Las lecturas de Fechas dentro de una transacción usan consultas secuenciales. En producción solo se confía en la cabecera de IP reenviada por el proxy local.
+Pruebas: `npm run typecheck`, `npm run build`, `npm run audit:routes` (158 rutas, 0 sin clasificar), `npm test` (93/93), `npm audit --omit=dev --audit-level=high` (0 vulnerabilidades), `npm run ops:check` (`ok`, 0 eventos antiguos tras procesar 23) y `npm run restore:check` (68 tablas y 1.481 archivos con filas y sumas de verificación iguales). La integración cubre publicación propia, rechazo entre organizaciones, consumo por lotes e idempotencia. La advertencia de consultas simultáneas de `pg` dejó de aparecer tras serializarlas.
+Visual/dispositivo: navegación pública y administrativa revisada a 320 px en navegador simulado; Fixture, Clasificación, Partidos, detalle de partido y ficha de equipo. Fixture de Caacupé sin desbordamiento horizontal a 320, 390, 768 y 1280 px; pestaña activada con Enter. Fecha de J1/J2 revisada después del ajuste. Pruebas de teléfono físico, red inestable, teclado virtual, zoom y lector de pantalla aún pendientes.
+Datos/operación: ninguna migración ni borrado de datos; el worker local marcó consumidos 23 eventos pendientes de publicaciones persistidas. [Acta](evidencias/t09-auditoria-integral-2026-11-11.md).
+Riesgos/pendientes: bundle principal de 599,87 kB antes de gzip; SEO/sitemap y SSE necesitan medición con tráfico real. HTTPS, worker persistente y apertura/guardado de flyers en Android/iOS requieren el piloto.
+
+### 2026-11-11 — T09: carga web por vista
+
+Estado: optimización local implementada; aceptación física y medición con red real pendientes.
+Implementado: los módulos de portal deportivo, reglamento, fixture, estadísticas, pagos y flyers se cargan al abrir la vista. La portada de organizaciones conserva su carga directa. Los archivos JS/CSS compilados con hash reciben caché inmutable en producción y los recursos estáticos omiten la consulta de sesión; HTML y API siguen sin almacenamiento. Sin migración, cambio de permisos ni modificación de datos.
+Pruebas y medidas: [evidencia de carga](evidencias/t09-carga-web-2026-11-11.md). La compilación pasó de 599,87 kB (158,44 kB gzip) de JS inicial a 447,85 kB (125,29 kB gzip) entre los dos archivos iniciales. La descarga de cada vista diferida se suma al abrirla; no es una medida de tiempo de carga en teléfono. `npm run typecheck`, `npm run build` y la suite completa se ejecutaron; se recorrieron portada, Copa Caacupé pública, Pagos y Clasificación administrativa en navegador local.
+Pendiente: prueba en Android/iOS físicos y bajo red móvil; medir uso de caché y tiempo de interacción al desplegar.

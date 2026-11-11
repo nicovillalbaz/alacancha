@@ -22,6 +22,7 @@ import { registerFixtureProgressRoutes } from './fixture-progress-routes.ts';
 import { registerFixtureRefereeRoutes } from './fixture-referees-routes.ts';
 import { tieWinner, type ApprovedScore } from './fixture-progress.ts';
 import { positionCompetitionState, syncPositionMatches } from './position-competition.ts';
+import { registerPublicWebRoutes } from './public-web.ts';
 
 interface Auth { session_id: string; user_id: string; organization_id: string | null; display_name: string; username: string; platform_admin: boolean; rawToken: string }
 declare module 'fastify' { interface FastifyRequest { auth: Auth | null } }
@@ -55,7 +56,7 @@ const requireOwner = (request: FastifyRequest): Auth => {
 
 export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
   const pool = suppliedPool || createPool(config.databaseUrl);
-  const app = Fastify({ logger: false, bodyLimit: 64 * 1024, trustProxy: false });
+  const app = Fastify({ logger: false, bodyLimit: 64 * 1024, trustProxy: config.production ? '127.0.0.1' : false });
   app.decorateRequest('auth', null);
   await app.register(cookie);
   await app.register(rateLimit, { global: false });
@@ -63,14 +64,17 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
   const dummyHash = await hashPassword(opaqueToken());
   const cookieOptions = { httpOnly: true, secure: config.production, sameSite: 'lax' as const, path: '/', maxAge: 43200 };
 
-  app.addHook('onSend', async (_request, reply) => {
-    reply.header('X-Content-Type-Options', 'nosniff').header('Referrer-Policy', 'no-referrer').header('Cache-Control', 'no-store').header('X-Frame-Options', 'DENY');
-    reply.header('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+  app.addHook('onSend', async (request, reply) => {
+    reply.header('X-Content-Type-Options', 'nosniff').header('Referrer-Policy', 'no-referrer').header('X-Frame-Options', 'DENY');
+    if (!reply.hasHeader('Cache-Control')) reply.header('Cache-Control', 'no-store');
+    reply.header('Content-Security-Policy', request.url.startsWith('/api/') || ['/health','/ready','/robots.txt','/sitemap.xml'].includes(request.url.split('?')[0]) ? "default-src 'none'; frame-ancestors 'none'" : "default-src 'self'; img-src 'self' data: blob:; connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
   });
   app.addHook('preHandler', async (request) => {
     const origin = request.headers.origin;
     const mutation = !['GET', 'HEAD', 'OPTIONS'].includes(request.method);
     if (mutation && origin && origin !== config.origin) fail(403, 'ORIGIN_DENIED', 'El origen de la solicitud no está permitido.');
+    const requestPath = request.url.split('?')[0];
+    if (!mutation && (/^\/(?:assets|icons)\/[a-zA-Z0-9._-]+$/.test(requestPath) || ['/manifest.webmanifest','/sw.js'].includes(requestPath))) return;
     const rawToken = request.cookies.torneos_session;
     if (rawToken && /^[A-Za-z0-9_-]{43}$/.test(rawToken)) {
       const result = await pool.query(`SELECT s.id session_id,s.user_id,s.organization_id,u.display_name,u.username,u.platform_admin FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at>now() AND u.disabled_at IS NULL`, [digest(rawToken)]);
@@ -1901,7 +1905,11 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       const { rowCount } = await client.query('SELECT 1 FROM editions WHERE organization_id=$1 AND id=$2', [organizationId, edition]);
       if (!rowCount) fail(404, 'EDITION_NOT_FOUND', 'No se encontró la edición.');
       const { rows } = await client.query('SELECT id,edition_id,ordinal,status,revision,archived_at FROM matchdays WHERE organization_id=$1 AND edition_id=$2 ORDER BY ordinal', [organizationId, edition]);
-      return Promise.all(rows.map(async (day) => ({ ...day, archivedAt:day.archived_at, matches: day.archived_at?[]:await matchdaySnapshot(client, organizationId, day.id), archivedMatches:day.archived_at?[]:await matchdaySnapshot(client,organizationId,day.id,true) })));
+      const days = [];
+      for (const day of rows) {
+        days.push({ ...day, archivedAt:day.archived_at, matches:day.archived_at?[]:await matchdaySnapshot(client,organizationId,day.id), archivedMatches:day.archived_at?[]:await matchdaySnapshot(client,organizationId,day.id,true) });
+      }
+      return days;
     });
   });
   app.post('/api/v1/organizations/:id/editions/:editionId/matchdays', async (request, reply) => {
@@ -2882,6 +2890,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     return captureView(organizationId,match);
   });
   registerFlyerRoutes(app,pool,config.mediaDir,config.origin,organizationAccess,fail);
+  registerPublicWebRoutes(app,pool,config.origin);
   app.addHook('onClose', async () => { if (!suppliedPool) await pool.end(); });
   return app;
 }

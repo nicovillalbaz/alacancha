@@ -2,8 +2,8 @@ import ts from 'typescript';
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-const sources=['app.ts','discipline.ts','flyers.ts','fixture-progress-routes.ts','fixture-referees-routes.ts','private-exports.ts'];
-const publicPaths=new Set(['/health','/ready','/api/v1/auth/login','/api/v1/invitations/inspect','/api/v1/invitations/accept']);
+const sources=['app.ts','discipline.ts','flyers.ts','fixture-progress-routes.ts','fixture-referees-routes.ts','private-exports.ts','public-web.ts'];
+const publicPaths=new Set(['/health','/ready','/robots.txt','/sitemap.xml','/*','/api/v1/auth/login','/api/v1/invitations/inspect','/api/v1/invitations/accept']);
 const methods=new Set(['get','post','patch','put','delete']);
 const routes:Array<{method:string;path:string;file:string;line:number;access:string}>=[];
 for(const name of sources){

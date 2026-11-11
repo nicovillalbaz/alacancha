@@ -10,6 +10,7 @@ import { readConfig } from '../../apps/api/src/config.ts';
 import { disciplineDecisionPdf } from '../../apps/api/src/discipline-pdf.ts';
 import { sportsReportCsv } from '../../apps/api/src/sports-report.ts';
 import { processFlyerJobs } from '../../apps/worker/src/flyers.ts';
+import { processFixtureOutbox } from '../../apps/worker/src/fixture-outbox.ts';
 import { loadFlyerSource } from '../../apps/api/src/flyer-source.ts';
 import { renderFlyerSvg } from '../../apps/api/src/flyer-template.ts';
 import { bestRemainingTie, qualifiedEntries, tieWinner } from '../../apps/api/src/fixture-progress.ts';
@@ -388,6 +389,7 @@ test('T02: reintento de creación y reglamento publicado conserva versiones, per
   assert.equal(changedPayload.statusCode, 409);
   const publicCatalogPath='/api/v1/public/tournaments';
   assert.equal((await app.inject(publicCatalogPath)).json().some((item:{id:string})=>item.id===id),false);
+  assert.doesNotMatch((await app.inject('/sitemap.xml')).body,new RegExp(id));
   const pubPath = `/organizations/${ids.a}/categories/${categoryId}/rules/publish`;
   assert.equal((await request(adminB, 'POST', pubPath, { reason: 'Intento ajeno', expectedRevision: 1 })).statusCode, 403);
   assert.equal((await request(teamA, 'POST', pubPath, { reason: 'Intento de equipo', expectedRevision: 1 })).statusCode, 403);
@@ -405,6 +407,9 @@ test('T02: reintento de creación y reglamento publicado conserva versiones, per
   assert.equal(typeof listed.tournament_count,'number');assert.equal('accent' in listed,false);
   assert.equal(listed.public_slug,catalog.json().find((item:{id:string})=>item.id===id)?.organization_slug);
   assert.equal(directory.json().some((item:{id:string})=>item.id===withoutPublication),false);
+  const sitemap=(await app.inject('/sitemap.xml')).body;
+  assert.match(sitemap,new RegExp(`${listed.public_slug}/${id}`));
+  assert.doesNotMatch(sitemap,new RegExp(withoutPublication));
   assert.equal('rules' in catalog.json().find((item:{id:string})=>item.id===id),false);
   const publicPath = `/api/v1/public/organizations/${ids.a}/tournaments`;
   let publicRows = (await app.inject(publicPath)).json().tournaments;
@@ -1856,6 +1861,11 @@ test('T04: jornada multicategoría, conflictos, publicación única y reprograma
   assert.equal(updated.matches.find((m: { id: string }) => m.id === one.id).match_time, '15:00');
   const { rows: [history] } = await pool.query('SELECT count(*)::int total FROM match_schedule_history WHERE organization_id=$1 AND match_id=$2', [ids.a, one.id]); assert.equal(history.total, 2);
   const { rows: [afterPublication] } = await pool.query('SELECT count(*)::int total FROM matchday_publications WHERE organization_id=$1 AND matchday_id=$2', [ids.a, dayId]); assert.equal(afterPublication.total, 2);
+  let processedEvents=0, batch=0;
+  do {batch=await processFixtureOutbox(pool,1000);processedEvents+=batch;} while(batch>0 && processedEvents<100000);
+  assert.ok(processedEvents>=2);
+  const {rows:[processed]}=await pool.query('SELECT count(*)::int total FROM fixture_outbox o JOIN matchday_publications p ON p.id=o.publication_id WHERE p.matchday_id=$1 AND o.delivered_at IS NOT NULL',[dayId]);assert.equal(processed.total,2);
+  assert.equal(await processFixtureOutbox(pool,1000),0);
   const { rows: [round] } = await pool.query('SELECT fixture_round_id FROM draft_matches WHERE organization_id=$1 AND id=$2', [ids.a, one.id]); assert.equal(round.fixture_round_id, firstFixture.rounds[0].id);
   const secondDay = await request(adminA, 'POST', dayPath, { ordinal: 2 }); assert.equal(secondDay.statusCode, 201);
   const twoLater = firstFixture.rounds.slice(1).flatMap((item: { matches: Array<{ id: string }> }) => item.matches).find((item: { id: string }) => item.id !== sameTeamLater.id)!;

@@ -17,7 +17,7 @@ const commands = {
   'verify-finished': ts('scripts/verify-finished-cups.ts'),
   api: ts('apps/api/src/server.ts'), web: ['node_modules/vite/bin/vite.js', '--config', 'apps/web/vite.config.ts', '--host', '127.0.0.1'],
   'preview-pwa': ['node_modules/vite/bin/vite.js','preview','--config','apps/web/vite.config.ts','--host','127.0.0.1'],
-  test: ['--env-file=.env', '--import', 'tsx', '--test', '--test-concurrency=1', ...process.argv.slice(3), 'tests/integration/access.test.ts', 'tests/backup-bundle.test.ts', 'tests/pwa.test.ts', 'tests/offline-events.test.ts', 'tests/position-competition.test.ts'],
+  test: ['--env-file=.env', '--import', 'tsx', '--test', '--test-concurrency=1', ...process.argv.slice(3), 'tests/integration/access.test.ts', 'tests/backup-bundle.test.ts', 'tests/pwa.test.ts', 'tests/offline-events.test.ts', 'tests/position-competition.test.ts', 'tests/public-web.test.ts'],
   backup: ts('scripts/backup.ts'), 'restore-check': ts('scripts/restore-check.ts'), 'perf-check': ts('scripts/perf-check.ts'), 'perf-load': ts('scripts/perf-check.ts'), 'ops-check': ts('scripts/ops-check.ts'), worker: ts('apps/worker/src/index.ts'),
   'perf-scenario': ts('scripts/perf-scenario.ts'),
   'audit-routes': ts('scripts/audit-routes.ts'),

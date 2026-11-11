@@ -1,5 +1,6 @@
 {
   "name": "Gestión de torneos",
+  "id": "/",
   "short_name": "Torneos",
   "description": "Administración y consulta de torneos de fútbol.",
   "lang": "es-PY",
