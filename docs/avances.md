@@ -237,3 +237,11 @@ Estado: desplegado y verificado por HTTPS; ensayo presencial con varios teléfon
 Implementado: publicar el sorteo conserva su instantánea por revisión; las pestañas públicas ya abiertas reciben un aviso SSE y consultan la revisión nueva, también al reconectar. El servidor cierra las conexiones SSE al reiniciarse para evitar que retengan el apagado. Una asignación privada sigue requiriendo pulsar «Actualizar vista pública».
 Pruebas: `npm run typecheck`, `npm run build`, 98/98 pruebas, incluida publicación sintética con conexión abierta y cierre rápido. En producción, servicios activos, `/ready` correcto, Copa por enlace corto 200 y SSE público `ready`. La Copa real permanece en revisión pública 1 con 0/10 puestos asignados; no se tocó el sorteo.
 Límites: actualización en pocos segundos con conexión, sin garantía de entrega instantánea ni disponibilidad absoluta; carga simultánea y teléfonos físicos pendientes. [Evidencia](evidencias/t09-sorteo-publico-sse-2026-11-11.md).
+
+### 2026-11-11 — T09: fichas públicas de equipos y cruces planificados
+
+Estado: desplegado y verificado por HTTPS; prueba física pendiente.
+
+La Copa pública permite tocar un equipo para ver su escudo y los jugadores publicados, o un estado vacío claro si aún no hay. Los cruces del plan se pueden abrir antes de tener acta oficial. «Partidos» del organizador muestra los cruces por jornadas y fechas aun sin sorteo definitivo. La API limita la lista pública a equipos de la revisión publicada y excluye datos privados. El sorteo de prueba sigue retirado: revisión 21 con 0/10 puestos asignados. Sin migración ni cambios en datos reales.
+
+Pruebas: `npm run typecheck`, `npm run build`, 98/98, auditoría de 163 rutas sin pendientes y verificación en navegador local a 320/390 px. En producción, `/ready`, la Copa y la ficha vacía de 8 de Diciembre respondieron 200; el navegador abrió su ficha. [Evidencia](evidencias/t09-fichas-publicas-y-cruces-2026-11-11.md).
