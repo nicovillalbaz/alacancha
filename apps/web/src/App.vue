@@ -1263,7 +1263,15 @@ async function loadView(force = false) {
       publicStatistics.value = Object.fromEntries(result.tournaments.flatMap((item, index) => statResults[index].status === 'fulfilled' ? [[item.category_id, statResults[index].value]] : []));
       publicResultsStream?.close();publicResultsStream=new EventSource(`/api/v1/public/organizations/${parts.value[1]}/results/stream`);
       const refreshResults=()=>{void api<PublicFixtureDay[]>(`/public/organizations/${parts.value[1]}/fixture`).then(days=>{if(parts.value[0]==='publico')publicFixture.value=tournamentId?days.filter(day=>day.tournament_id===tournamentId):days;}).catch(()=>{});void Promise.allSettled(publicTournaments.value.map(item=>api<PublicStats>(`/public/organizations/${parts.value[1]}/categories/${item.category_id}/statistics`))).then(results=>{if(parts.value[0]==='publico')publicStatistics.value=Object.fromEntries(publicTournaments.value.flatMap((item,index)=>results[index].status==='fulfilled'?[[item.category_id,results[index].value]]:[]));});};
-      publicResultsStream.addEventListener('result',refreshResults);publicResultsStream.addEventListener('ready',refreshResults);
+      const drawOrganizationId=parts.value[1];
+      const refreshDraws=()=>{void api<PublicDraw[]>(`/public/organizations/${drawOrganizationId}/draws`).then(latest=>{
+        if(parts.value[0]!=='publico'||parts.value[1]!==drawOrganizationId)return;
+        if(latest.some(item=>(publicDraws.value.find(current=>current.category_id===item.category_id)?.revision||0)>item.revision))return;
+        publicDraws.value=latest;
+      }).catch(()=>{});};
+      publicResultsStream.addEventListener('result',refreshResults);
+      publicResultsStream.addEventListener('draw',refreshDraws);
+      publicResultsStream.addEventListener('ready',()=>{refreshResults();refreshDraws();});
       return;
     }
     if(parts.value[0]==='panel'){

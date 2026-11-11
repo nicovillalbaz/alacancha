@@ -816,7 +816,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       FROM fixture_position_publications pp JOIN fixture_position_blueprints bp ON bp.organization_id=pp.organization_id AND bp.id=pp.blueprint_id
       JOIN categories c ON c.organization_id=bp.organization_id AND c.id=bp.category_id JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id
       JOIN tournaments t ON t.organization_id=ed.organization_id AND t.id=ed.tournament_id JOIN organizations o ON o.id=t.organization_id
-      WHERE pp.organization_id=$1 AND o.status='active' ORDER BY t.id,pp.published_at DESC`, [organizationId]);
+      WHERE pp.organization_id=$1 AND o.status='active' ORDER BY t.id,pp.revision DESC,pp.published_at DESC`, [organizationId]);
     return rows;
   });
   app.get('/api/v1/public/organizations/:id/draws/:categoryId/competition',async request=>{
@@ -2350,9 +2350,14 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const organizationId=uuid((request.params as {id:string}).id);
     const {rowCount:active}=await pool.query("SELECT 1 FROM organizations WHERE id=$1 AND status='active'",[organizationId]);
     if(!active) fail(404,'NOT_FOUND','No se encontró el torneo público.');
+    const drawVersionsSql=`SELECT p.blueprint_id,b.category_id,max(p.revision)::int revision FROM fixture_position_publications p
+      JOIN fixture_position_blueprints b ON b.organization_id=p.organization_id AND b.id=p.blueprint_id
+      WHERE p.organization_id=$1 GROUP BY p.blueprint_id,b.category_id`;
+    const drawVersions=new Map<string,number>((await pool.query(drawVersionsSql,[organizationId])).rows.map(item=>[item.blueprint_id,item.revision]));
     reply.hijack();reply.raw.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache, no-transform','Connection':'keep-alive','X-Accel-Buffering':'no'});
     reply.raw.write('event: ready\ndata: {}\n\n');
-    let cursor=new Date().toISOString(),lastId='00000000-0000-0000-0000-000000000000',running=false,closed=false;
+    let cursor=new Date().toISOString(),lastId='00000000-0000-0000-0000-000000000000';
+    let running=false,closed=false;
     const poll=async()=>{if(running||closed)return;running=true;try{
       const {rows}=await pool.query(`SELECT x.id,x.match_id,x.created_at::text created_text FROM match_record_outbox x
         JOIN draft_matches m ON m.organization_id=x.organization_id AND m.id=x.match_id
@@ -2366,6 +2371,11 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
         AND md.status='published' AND he.public_visible AND ae.public_visible AND c.status='published' AND ed.status='published' AND t.status='published'
         ORDER BY x.created_at,x.id LIMIT 100`,[organizationId,cursor,lastId]);
       for(const item of rows){reply.raw.write(`event: result\ndata: ${JSON.stringify({matchId:item.match_id})}\n\n`);cursor=item.created_text;lastId=item.id;}
+      const {rows:draws}=await pool.query(drawVersionsSql,[organizationId]);
+      for(const item of draws)if(item.revision>(drawVersions.get(item.blueprint_id)||0)){
+        reply.raw.write(`event: draw\ndata: ${JSON.stringify({categoryId:item.category_id,revision:item.revision})}\n\n`);
+        drawVersions.set(item.blueprint_id,item.revision);
+      }
       reply.raw.write(': keepalive\n\n');
     }catch{closed=true;reply.raw.end();}finally{running=false;}};
     const interval=setInterval(()=>{void poll();},3000);

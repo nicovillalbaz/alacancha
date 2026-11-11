@@ -2396,3 +2396,39 @@ test('contraseña: cada cuenta cambia la propia; solo superadmin cambia la ajena
   assert.equal(logs.length, 2);
   assert.ok(logs.every((row) => row.before_data === null && row.after_data === null));
 });
+
+test('T04/T08: una página pública abierta recibe el sorteo publicado sin recargar', async () => {
+  const tournament=await newTournament(ids.a,{...fiveRules,points:{win:2,draw:1,loss:0},initialPhase:null,competitionPlan:null});
+  const {categoryId}=tournament.response.json();
+  const base=`/organizations/${ids.a}/categories/${categoryId}/fixture/blueprint`;
+  assert.equal((await request(adminA,'POST',base,fcfsPositionPlan)).statusCode,201);
+  const team=await request(adminA,'POST',`/organizations/${ids.a}/teams`,{requestId:randomUUID(),name:`Club en directo ${runId}`,color:'#165D46',categoryId});
+  assert.equal(team.statusCode,201,team.body);
+  assert.equal((await request(adminA,'PATCH',`${base}/slots/A1`,{entryId:team.json().entryId})).statusCode,200);
+  const plan=(await request(adminA,'GET',base)).json();
+  const streamApp=await buildApp(config,pool);
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),12000);
+  try{
+    const address=await streamApp.listen({host:'127.0.0.1',port:0});
+    const response=await fetch(`${address}/api/v1/public/organizations/${ids.a}/results/stream`,{signal:controller.signal});
+    assert.equal(response.status,200);
+    const reader=response.body!.getReader(),decoder=new TextDecoder();
+    const first=await reader.read();
+    assert.match(decoder.decode(first.value),/event: ready/);
+    const published=await request(adminA,'POST',`${base}/publish-draw`,{expectedRevision:plan.blueprint.revision});
+    assert.equal(published.statusCode,200,published.body);
+    let received='';
+    while(!received.includes(`"categoryId":"${categoryId}"`)){
+      const chunk=await reader.read();
+      if(chunk.done)break;
+      received+=decoder.decode(chunk.value);
+    }
+    assert.match(received,/event: draw/);
+    assert.match(received,new RegExp(categoryId));
+  }finally{
+    clearTimeout(timeout);
+    controller.abort();
+    await streamApp.close();
+  }
+});

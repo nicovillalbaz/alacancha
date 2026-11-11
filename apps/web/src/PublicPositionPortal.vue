@@ -18,7 +18,7 @@ const selectedRound=ref('F1'),selectedDay=ref(0),selectorOpen=ref(!props.selecte
 const competition=ref<Competition|null>(null),error=ref(''),selectedMatch=ref<MatchDetail|null>(null);
 let epoch=0;
 async function loadCompetition(){const category=current.value?.category_id,organization=props.organization?.id,currentEpoch=++epoch;competition.value=null;error.value='';if(!category||!organization)return;try{const response=await fetch(`/api/v1/public/organizations/${organization}/draws/${category}/competition`);if(!response.ok)throw new Error();const data=await response.json() as Competition;if(currentEpoch===epoch)competition.value=data;}catch{if(currentEpoch===epoch)error.value='No se pudieron cargar los resultados.';}}
-watch(()=>[current.value?.category_id,props.organization?.id],loadCompetition,{immediate:true});
+watch(()=>[current.value?.category_id,props.organization?.id,current.value?.revision],loadCompetition,{immediate:true});
 watch(()=>current.value?.tournament_id,()=>{selectedRound.value='F1';selectedDay.value=days.value[0]??0;selectedMatch.value=null;});
 const slots=computed(()=>new Map((current.value?.snapshot.slots||[]).map(slot=>[slot.slot_code,slot])));
 const teams=computed<Team[]>(()=>current.value?.snapshot.teams||current.value?.snapshot.slots.filter(slot=>slot.entry_id&&slot.team_id&&slot.team_name).map(slot=>({entry_id:slot.entry_id!,team_id:slot.team_id!,team_name:slot.team_name!,color:slot.color,has_shield:slot.has_shield}))||[]);
