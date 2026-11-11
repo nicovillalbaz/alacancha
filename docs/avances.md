@@ -230,3 +230,10 @@ Estado: corrección desplegada y verificada en HTTPS; candidato de icono solo en
 Implementado: el superadmin puede editar nombre, color y logo de una organización sin adquirir acceso al torneo; se eliminó la contradicción entre la pantalla y el servidor que causaba 403. En la Copa pública se ven el logo de la FCFS y el emblema de la Copa, y un botón discreto vuelve a organizaciones. La imagen de la A de césped se preparó como icono candidato junto al icono vigente, sin cambiar la PWA instalada.
 Pruebas: 97/97, compilación correcta y auditoría de 162 rutas sin pendientes. En producción el logo privado respondió 200 con sesión superadmin, los datos privados del torneo conservaron 403 y el emblema público respondió 200. Navegador: cabecera revisada a 390 y 320 px; regreso al catálogo y apertura directa de la Copa comprobados. [Evidencia](evidencias/t09-marca-y-navegacion-2026-11-11.md).
 Pendiente: revisar el candidato visual con el propietario y ensayarlo en teléfonos físicos antes de reemplazar favicon/iconos instalables.
+
+### 2026-11-11 — T04/T08/T09: sorteo visible en páginas abiertas
+
+Estado: desplegado y verificado por HTTPS; ensayo presencial con varios teléfonos pendiente.
+Implementado: publicar el sorteo conserva su instantánea por revisión; las pestañas públicas ya abiertas reciben un aviso SSE y consultan la revisión nueva, también al reconectar. El servidor cierra las conexiones SSE al reiniciarse para evitar que retengan el apagado. Una asignación privada sigue requiriendo pulsar «Actualizar vista pública».
+Pruebas: `npm run typecheck`, `npm run build`, 98/98 pruebas, incluida publicación sintética con conexión abierta y cierre rápido. En producción, servicios activos, `/ready` correcto, Copa por enlace corto 200 y SSE público `ready`. La Copa real permanece en revisión pública 1 con 0/10 puestos asignados; no se tocó el sorteo.
+Límites: actualización en pocos segundos con conexión, sin garantía de entrega instantánea ni disponibilidad absoluta; carga simultánea y teléfonos físicos pendientes. [Evidencia](evidencias/t09-sorteo-publico-sse-2026-11-11.md).
