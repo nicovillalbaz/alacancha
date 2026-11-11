@@ -2,6 +2,17 @@
 
 Preparación para un futuro piloto; no autoriza migrar datos reales ni publicar el servicio.
 
+**Instalación del 11/11/2026:** [evidencia del VPS](../evidencias/t09-vps-preparado-2026-11-11.md). El dominio aún no existe: los servicios están en loopback y el firewall solo permite SSH. No abrir el login por HTTP público.
+
+## Archivos operativos del VPS
+
+- `scripts/vps-bootstrap.sh`: crea una sola vez la base y `/srv/torneos/production.env` con secretos aleatorios; cancela si ya existe el entorno.
+- `scripts/vps-bootstrap-superadmin.ts`: crea el primer superadmin únicamente si la base está vacía; deja una clave temporal fuerte en `/srv/torneos/first-login.txt` (solo root). Consultarla por SSH y retirarla después de guardarla de forma segura. No enviar claves por chat ni subir ese archivo al repositorio.
+- `scripts/vps-backup-check.sh`: respalda PostgreSQL y ensaya restauración en `torneos_restore_check`; no reemplaza la copia externa de base y medios.
+- `deploy/systemd/torneos-api.service` y `deploy/systemd/torneos-worker.service`: procesos persistentes sin contenedores, con escritura limitada al directorio de medios. Verificar `systemctl status torneos-api torneos-worker` y `curl http://127.0.0.1:4312/ready`.
+
+La base nueva no incluye datos de muestra. `npm run db:seed` y los cargadores `demo:*`/`fcfs:*` no se ejecutan en producción. Una actualización debe conservar `/srv/torneos/production.env`, `/srv/torneos/media` y los respaldos fuera del checkout; respaldar y ensayar restauración antes de migraciones con riesgo.
+
 ## Procesos
 
 Instalar Node.js 24, PostgreSQL exclusivo del proyecto, Chromium y FFmpeg. Configurar `DATABASE_URL`, `APP_SECRET`, `WEB_ORIGIN=https://dominio-elegido`, `MEDIA_DIR`, `NODE_ENV=production`, `API_HOST=127.0.0.1` y `API_PORT=4312` en el entorno de los procesos. Si Chromium no está disponible como `chromium` en `PATH`, definir `CHROME_PATH` con su ruta absoluta. El mismo `MEDIA_DIR` debe ser legible y escribible por API y worker.

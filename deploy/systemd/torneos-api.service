@@ -1,0 +1,23 @@
+[Unit]
+Description=API y web de torneos
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=torneos
+Group=torneos
+WorkingDirectory=/srv/torneos/app
+EnvironmentFile=/srv/torneos/production.env
+ExecStart=/usr/local/bin/node --import tsx apps/api/src/server.ts
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/srv/torneos/media
+
+[Install]
+WantedBy=multi-user.target

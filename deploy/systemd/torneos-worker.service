@@ -1,0 +1,23 @@
+[Unit]
+Description=Worker de flyers y publicaciones de torneos
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=torneos
+Group=torneos
+WorkingDirectory=/srv/torneos/app
+EnvironmentFile=/srv/torneos/production.env
+ExecStart=/usr/local/bin/node --import tsx apps/worker/src/loop.ts
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/srv/torneos/media
+
+[Install]
+WantedBy=multi-user.target
