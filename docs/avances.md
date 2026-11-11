@@ -245,3 +245,7 @@ Estado: desplegado y verificado por HTTPS; prueba física pendiente.
 La Copa pública permite tocar un equipo para ver su escudo y los jugadores publicados, o un estado vacío claro si aún no hay. Los cruces del plan se pueden abrir antes de tener acta oficial. «Partidos» del organizador muestra los cruces por jornadas y fechas aun sin sorteo definitivo. La API limita la lista pública a equipos de la revisión publicada y excluye datos privados. El sorteo de prueba sigue retirado: revisión 21 con 0/10 puestos asignados. Sin migración ni cambios en datos reales.
 
 Pruebas: `npm run typecheck`, `npm run build`, 98/98, auditoría de 163 rutas sin pendientes y verificación en navegador local a 320/390 px. En producción, `/ready`, la Copa y la ficha vacía de 8 de Diciembre respondieron 200; el navegador abrió su ficha. [Evidencia](evidencias/t09-fichas-publicas-y-cruces-2026-11-11.md).
+
+### 2026-11-11 — T09: limpieza visual de partidos y equipos públicos
+
+Se quitó el marco oscuro que aportaba el borde nativo de los nuevos botones de partido. Los encuentros se separan con un trazo fino. Los equipos se distribuyen en dos columnas en escritorio y una en móvil, conservando toda la fila como acceso a la ficha. Sin cambio de datos ni permisos. Compilación y tipos correctos; revisión visual local en escritorio y a 390 px sin desbordamiento. Aceptación física pendiente. [Evidencia](evidencias/t09-ajuste-listas-publicas-2026-11-11.md).
