@@ -1238,7 +1238,7 @@ async function loadView(force = false) {
     }
     if (parts.value[0] === 'publico') {
       publicOrganization.value = null; publicTournaments.value = []; publicTeams.value = []; publicSponsors.value = []; publicFixture.value = []; publicBrackets.value = []; publicStatistics.value = {}; publicFlyers.value=[]; publicDraws.value=[];
-      if(!parts.value[1]){publicOrganizations.value=await api<PublicOrganizationItem[]>('/public/organizations');setPublicPageMeta('Torneos de fútbol · Fixture y resultados','Encontrá organizaciones, torneos, partidos, resultados y estadísticas de fútbol.',`${location.origin}/`);return;}
+      if(!parts.value[1]){publicOrganizations.value=await api<PublicOrganizationItem[]>('/public/organizations');setPublicPageMeta('A la cancha · Torneos','Encontrá organizaciones, torneos, partidos, resultados y estadísticas.',`${location.origin}/`);return;}
       const [result, published, brackets,sharedFlyers,draws] = await Promise.all([api<{ organization: PublicOrganization; tournaments: TournamentSummary[]; teams: typeof publicTeams.value; sponsors: typeof publicSponsors.value }>(`/public/organizations/${parts.value[1]}/tournaments`), api<PublicFixtureDay[]>(`/public/organizations/${parts.value[1]}/fixture`), api<PublicBracket[]>(`/public/organizations/${parts.value[1]}/brackets`),api<typeof publicFlyers.value>(`/public/organizations/${parts.value[1]}/flyers`),api<PublicDraw[]>(`/public/organizations/${parts.value[1]}/draws`)]);
       publicDraws.value=draws;
       publicCatalog.value=[...new Map([...result.tournaments.map(item=>[item.id,{id:item.id,name:item.name,organization_id:parts.value[1],organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const),...draws.map(item=>[item.tournament_id,{id:item.tournament_id,name:item.tournament_name,organization_id:parts.value[1],organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const)].map(item=>[item[0],item[1]])).values()];
@@ -1250,7 +1250,8 @@ async function loadView(force = false) {
       const title=tournamentId?`${publicName} · ${result.organization.name}`:`${publicName} · Torneos`;
       const description=tournamentId?`Partidos, fixture, clasificación y goleadores de ${publicName}.`:`Torneos, partidos, resultados y estadísticas de ${publicName}.`;
       const canonical=`${location.origin}/${result.organization.public_slug}${tournamentId?`/${tournamentId}`:''}`;
-      const image=publicTournament.value?.has_emblem&&publicTournament.value.status==='published'?`${location.origin}/api/v1/public/organizations/${result.organization.id}/tournaments/${tournamentId}/emblem`:result.organization.logo_id?`${location.origin}/api/v1/public/organizations/${result.organization.id}/logo`:'';
+      const hasEmblem=publicTournament.value?.has_emblem&&publicTournament.value.status==='published'||draws.some(item=>item.tournament_id===tournamentId&&item.has_emblem);
+      const image=hasEmblem?`${location.origin}/api/v1/public/organizations/${result.organization.id}/tournaments/${tournamentId}/emblem`:result.organization.logo_id?`${location.origin}/api/v1/public/organizations/${result.organization.id}/logo`:'';
       setPublicPageMeta(title,description,canonical,image);
       const statResults = await Promise.allSettled(result.tournaments.map(item => api<PublicStats>(`/public/organizations/${parts.value[1]}/categories/${item.category_id}/statistics`)));
       publicStatistics.value = Object.fromEntries(result.tournaments.flatMap((item, index) => statResults[index].status === 'fulfilled' ? [[item.category_id, statResults[index].value]] : []));

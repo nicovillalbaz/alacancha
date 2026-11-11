@@ -22,6 +22,8 @@ test('SEO entrega solo torneos públicos, HTML de cada URL y acceso no indexable
     const root=await app.inject('/');assert.equal(root.statusCode,200);assert.match(root.body,/Federación de Prueba/);
     const shell=await app.inject('/index.html');assert.equal(shell.statusCode,200);assert.match(shell.body,/rel="canonical" href="https:\/\/torneos.example\/"/);
     const page=await app.inject('/federacion-prueba/'+tournamentId);assert.equal(page.statusCode,200);assert.match(page.body,/<title>Copa Pública · Federación de Prueba<\/title>/);assert.match(page.body,/rel="canonical" href="https:\/\/torneos.example\/federacion-prueba\//);assert.match(page.body,/og:image/);assert.doesNotMatch(page.body,/content="genérica"/);
+    visible.official=false;
+    const partial=await app.inject('/federacion-prueba/'+tournamentId);assert.equal(partial.statusCode,200);assert.match(partial.body,/og:image/);
     const sitemap=await app.inject('/sitemap.xml');assert.equal(sitemap.statusCode,200);assert.match(sitemap.body,/federacion-prueba\/22222222/);assert.doesNotMatch(sitemap.body,/borrador/);
     const robots=await app.inject('/robots.txt');assert.match(robots.body,/Disallow: \/acceso/);assert.match(robots.body,/Allow: \/api\/v1\/public\//);
     const login=await app.inject('/acceso');assert.equal(login.statusCode,200);assert.match(login.body,/noindex,nofollow/);

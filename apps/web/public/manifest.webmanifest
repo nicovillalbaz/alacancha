@@ -1,8 +1,8 @@
 {
-  "name": "Gestión de torneos",
+  "name": "A la cancha",
   "id": "/",
-  "short_name": "Torneos",
-  "description": "Administración y consulta de torneos de fútbol.",
+  "short_name": "A la cancha",
+  "description": "Administración y consulta de torneos.",
   "lang": "es-PY",
   "start_url": "/",
   "scope": "/",

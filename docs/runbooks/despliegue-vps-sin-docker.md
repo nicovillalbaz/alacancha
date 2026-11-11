@@ -13,6 +13,8 @@ El acceso HTTPS provisional está activo; esto no autoriza importar datos reales
 
 La base nueva no incluye datos de muestra. `npm run db:seed` y los cargadores `demo:*`/`fcfs:*` no se ejecutan en producción. Una actualización debe conservar `/srv/torneos/production.env`, `/srv/torneos/media` y los respaldos fuera del checkout; respaldar y ensayar restauración antes de migraciones con riesgo.
 
+La primera carga real de Caacupé utiliza exclusivamente `scripts/import-fcfs-production.ts`. El comando exige `NODE_ENV=production`, el origen HTTPS esperado, `FCFS_PRODUCTION_IMPORT=production`, la base `torneos_prod` en loopback y los 13 PNG revisados en `/srv/torneos/import-assets` (tres logos y diez escudos en `escudos/`). Primero ejecutar `scripts/vps-backup-check.sh`, respaldar también `/srv/torneos/media`, restaurar la base en `torneos_import_rehearsal` y correr el importador con `FCFS_PRODUCTION_IMPORT=rehearsal` sobre esa copia. Verificar los conteos y la vista pública; entonces correrlo en producción. El importador no lee el acceso de muestra local ni imprime contraseñas; deja la clave nueva de `usuariofcfs` con permiso 0600 en `/srv/torneos/private/fcfs-access-production.txt`. No ejecutarlo para cargar torneos de muestra.
+
 ## Procesos
 
 Instalar Node.js 24, PostgreSQL exclusivo del proyecto, Chromium y FFmpeg. Configurar `DATABASE_URL`, `APP_SECRET`, `WEB_ORIGIN=https://dominio-elegido`, `MEDIA_DIR`, `NODE_ENV=production`, `API_HOST=127.0.0.1` y `API_PORT=4312` en el entorno de los procesos. Si Chromium no está disponible como `chromium` en `PATH`, definir `CHROME_PATH` con su ruta absoluta. El mismo `MEDIA_DIR` debe ser legible y escribible por API y worker.

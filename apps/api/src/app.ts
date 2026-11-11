@@ -544,10 +544,13 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const { rows: [media] } = await pool.query(`SELECT m.filename,m.content_type FROM tournaments t
       JOIN organizations o ON o.id=t.organization_id AND o.status='active'
       JOIN media m ON m.organization_id=t.organization_id AND m.id=t.emblem_id
-      WHERE t.organization_id=$1 AND t.id=$2 AND t.status='published'
-      AND EXISTS (SELECT 1 FROM editions ed JOIN categories c ON c.organization_id=ed.organization_id AND c.edition_id=ed.id
+      WHERE t.organization_id=$1 AND t.id=$2 AND (EXISTS (SELECT 1 FROM editions ed JOIN categories c ON c.organization_id=ed.organization_id AND c.edition_id=ed.id
         JOIN rule_versions r ON r.organization_id=c.organization_id AND r.category_id=c.id AND r.status='published'
-        WHERE ed.organization_id=t.organization_id AND ed.tournament_id=t.id AND ed.status='published' AND c.status='published')`, [organizationId, tournament]);
+        WHERE ed.organization_id=t.organization_id AND ed.tournament_id=t.id AND ed.status='published' AND c.status='published' AND t.status='published')
+      OR EXISTS (SELECT 1 FROM editions ed JOIN categories c ON c.organization_id=ed.organization_id AND c.edition_id=ed.id
+        JOIN fixture_position_blueprints b ON b.organization_id=c.organization_id AND b.category_id=c.id
+        JOIN fixture_position_publications p ON p.organization_id=b.organization_id AND p.blueprint_id=b.id
+        WHERE ed.organization_id=t.organization_id AND ed.tournament_id=t.id))`, [organizationId, tournament]);
     if (!media) fail(404, 'NOT_FOUND', 'No hay emblema público para este torneo.');
     if (!/^[0-9a-f-]+\.(png|jpg|webp)$/.test(media.filename)) fail(500, 'INVALID_FILE', 'No se pudo abrir el archivo.');
     return reply.type(media.content_type).send(await readFile(resolve(config.mediaDir, media.filename)));
@@ -773,7 +776,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
   });
   app.get('/api/v1/public/organizations/:id/draws', async (request) => {
     const organizationId = uuid((request.params as { id: string }).id);
-    const { rows } = await pool.query(`SELECT DISTINCT ON (t.id) t.id tournament_id,t.name tournament_name,c.id category_id,c.name category_name,pp.revision,pp.snapshot,pp.published_at
+    const { rows } = await pool.query(`SELECT DISTINCT ON (t.id) t.id tournament_id,t.name tournament_name,(t.emblem_id IS NOT NULL) has_emblem,c.id category_id,c.name category_name,pp.revision,pp.snapshot,pp.published_at
       FROM fixture_position_publications pp JOIN fixture_position_blueprints bp ON bp.organization_id=pp.organization_id AND bp.id=pp.blueprint_id
       JOIN categories c ON c.organization_id=bp.organization_id AND c.id=bp.category_id JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id
       JOIN tournaments t ON t.organization_id=ed.organization_id AND t.id=ed.tournament_id JOIN organizations o ON o.id=t.organization_id
