@@ -2,6 +2,8 @@
 
 **Primera carga federativa (en preparación):** [fuentes, diez equipos del afiche y separación entre copas de clubes y eliminatorias](fuentes-fcfs-2026.md). Es un inventario, no una carga publicada.
 
+**Copa Caacupé en producción (11/11/2026):** [evidencia del respaldo, ensayo y carga](evidencias/t09-fcfs-produccion-2026-11-11.md). La vista pública contiene el plan parcial y los diez equipos; el sorteo, el reglamento oficial y los resultados siguen pendientes.
+
 **Alcance vigente al 27/10/2026:** planificación móvil primero. El control de acceso es manual desde superadmin; las secciones antiguas de cobros/facturación de la especificación maestra son históricas.
 
 **Entrega vigente del 28/10/2026:** [base funcional T01](evidencias/t01-base-funcional.md) y [cierre de código local T02](evidencias/t02-cierre-codigo-local.md), persistentes en PostgreSQL nativo y sin contenedores. [Guía de desarrollo y accesos de muestra](runbooks/desarrollo-local.md). El [prototipo deportivo](../prototipos/01-direccion-visual/README.md) continúa separado, con datos ficticios en memoria. La aceptación física y de uso de T01/T02 sigue pendiente.

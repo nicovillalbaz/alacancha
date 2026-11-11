@@ -62,6 +62,7 @@ function setPublicPageMeta(title:string,description:string,canonical:string,imag
   document.head.querySelector('meta[property="og:image"]')?.remove();
   if(image)meta('og:image',image,true);
   meta('twitter:card',image?'summary_large_image':'summary');
+  (window as Window & { gtag?: (...args: unknown[]) => void }).gtag?.('event','page_view',{page_location:canonical,page_title:title});
 }
 const initialRoute=routeFromLocation();
 const route = ref(initialRoute);

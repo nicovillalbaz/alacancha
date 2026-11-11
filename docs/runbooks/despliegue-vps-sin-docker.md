@@ -40,6 +40,8 @@ dominio-elegido.example {
 
 El certificado HTTPS y `WEB_ORIGIN` deben coincidir. En local, `localhost` es un contexto seguro admitido para probar la PWA. La web servida por Vite en 4311 sirve para desarrollo visual; la respuesta HTML de producción se comprueba en el proceso API.
 
+Google Analytics 4 queda opcional e inactivo mientras no exista `GA_MEASUREMENT_ID`. Tras crear una propiedad web y decidir el aviso/consentimiento aplicable, definir `GA_MEASUREMENT_ID=G-...` en `/srv/torneos/production.env` y reiniciar `torneos-api`. Solo las páginas públicas incluyen el tag; el cliente envía una vista por navegación pública y no incorpora nombres de jugadores, documentos ni datos de sesión. Verificar en Tiempo real de Analytics con una visita de prueba. Sin ID no se carga ningún recurso de Google. La guía oficial para encontrar el ID está en https://support.google.com/analytics/answer/9539598.
+
 ## Comprobación antes del piloto
 
 - Abrir `/`, `/organizacion-publica` y `/organizacion-publica/uuid-de-torneo` sin sesión; verificar título, OG, canónico y navegación.

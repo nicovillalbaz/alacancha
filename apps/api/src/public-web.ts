@@ -22,8 +22,9 @@ const escapeHtml = (value: string) => value.replaceAll('&','&amp;').replaceAll('
 const escapeXml = escapeHtml;
 const typeFor = (path: string) => path.endsWith('.js') ? 'text/javascript; charset=utf-8' : path.endsWith('.css') ? 'text/css; charset=utf-8' : path.endsWith('.png') ? 'image/png' : path.endsWith('.svg') ? 'image/svg+xml' : path.endsWith('.webmanifest') ? 'application/manifest+json' : 'application/octet-stream';
 
-export function registerPublicWebRoutes(app: FastifyInstance, pool: DatabasePool, origin: string, webDist = resolve('apps/web/dist')) {
+export function registerPublicWebRoutes(app: FastifyInstance, pool: DatabasePool, origin: string, webDist = resolve('apps/web/dist'), measurementId = process.env.GA_MEASUREMENT_ID || '') {
   const base = origin.replace(/\/$/, '');
+  const gaEnabled = /^G-[A-Z0-9]+$/.test(measurementId);
   const pages = async () => {
     const unique = new Map<string,Page>();
     for (const page of (await pool.query(pagesSql)).rows as Page[]) {
@@ -43,7 +44,7 @@ export function registerPublicWebRoutes(app: FastifyInstance, pool: DatabasePool
     const path = new URL(request.url, base).pathname;
     if (path.startsWith('/api/') || path === '/health' || path === '/ready') return reply.code(404).send({code:'NOT_FOUND'});
     const staticPath = path.slice(1);
-    if (/^(?:assets|icons)\/[a-zA-Z0-9._-]+$/.test(staticPath) || ['manifest.webmanifest','sw.js'].includes(staticPath)) {
+    if (/^(?:assets|icons)\/[a-zA-Z0-9._-]+$/.test(staticPath) || ['manifest.webmanifest','sw.js','analytics.js'].includes(staticPath)) {
       try {
         const body = await readFile(resolve(webDist, staticPath));
         if (/^assets\/[a-zA-Z0-9._-]+-[a-zA-Z0-9_-]{8,}\.(?:js|css)$/.test(staticPath)) reply.header('Cache-Control', 'public, max-age=31536000, immutable');
@@ -67,7 +68,8 @@ export function registerPublicWebRoutes(app: FastifyInstance, pool: DatabasePool
     const image = tournament?.has_emblem ? `${base}/api/v1/public/organizations/${tournament.organization_id}/tournaments/${tournament.tournament_id}/emblem` : organization?.has_logo ? `${base}/api/v1/public/organizations/${organization.organization_id}/logo` : '';
     const children = segments.length===0 ? [...new Map(published.map(page=>[page.public_slug,page])).values()].map(page=>({url:`/${page.public_slug}`,name:page.organization_name})) : organization && !tournament ? published.filter(page=>page.public_slug===organization.public_slug).map(page=>({url:`/${page.public_slug}/${page.tournament_id}`,name:page.tournament_name})) : [];
     const meta = `<title>${escapeHtml(title)}</title><meta name="description" content="${escapeHtml(description)}">${publicPage?`<link rel="canonical" href="${escapeHtml(canonical)}"><meta property="og:type" content="website"><meta property="og:title" content="${escapeHtml(title)}"><meta property="og:description" content="${escapeHtml(description)}"><meta property="og:url" content="${escapeHtml(canonical)}">${image?`<meta property="og:image" content="${escapeHtml(image)}">`:''}<meta name="twitter:card" content="${image?'summary_large_image':'summary'}">`:'<meta name="robots" content="noindex,nofollow">'}`;
-    shell = shell.replace(/<title>[^<]*<\/title>/, '').replace(/<meta name="description"[^>]*>/, '').replace('</head>', `${meta}</head>`);
+    const analytics = publicPage && gaEnabled ? `<meta name="ga-measurement-id" content="${measurementId}"><script async src="https://www.googletagmanager.com/gtag/js?id=${measurementId}"></script><script src="/analytics.js"></script>` : '';
+    shell = shell.replace(/<title>[^<]*<\/title>/, '').replace(/<meta name="description"[^>]*>/, '').replace('</head>', `${meta}${analytics}</head>`);
     if (publicPage) shell = shell.replace('<div id="app"></div>', `<div id="app"></div><noscript><main><h1>${escapeHtml(name)}</h1><p>${escapeHtml(description)}</p>${children.length?`<ul>${children.map(child=>`<li><a href="${escapeHtml(child.url)}">${escapeHtml(child.name)}</a></li>`).join('')}</ul>`:''}</main></noscript>`);
     return reply.code(publicPage ? 200 : segments[0]==='acceso'||segments[0]==='panel' ? 200 : 404).type('text/html; charset=utf-8').send(shell);
   });

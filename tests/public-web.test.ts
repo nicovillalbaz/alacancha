@@ -27,9 +27,24 @@ test('SEO entrega solo torneos públicos, HTML de cada URL y acceso no indexable
     const sitemap=await app.inject('/sitemap.xml');assert.equal(sitemap.statusCode,200);assert.match(sitemap.body,/federacion-prueba\/22222222/);assert.doesNotMatch(sitemap.body,/borrador/);
     const robots=await app.inject('/robots.txt');assert.match(robots.body,/Disallow: \/acceso/);assert.match(robots.body,/Allow: \/api\/v1\/public\//);
     const login=await app.inject('/acceso');assert.equal(login.statusCode,200);assert.match(login.body,/noindex,nofollow/);
+    assert.doesNotMatch(root.body,/googletagmanager/);
     const unknown=await app.inject('/borrador');assert.equal(unknown.statusCode,404);assert.match(unknown.body,/noindex,nofollow/);
     const asset=await app.inject('/assets/app.js');assert.equal(asset.statusCode,200);assert.match(String(asset.headers['content-type']||''),/javascript/);
     const versioned=await app.inject('/assets/app-aB12_cD3.js');assert.equal(versioned.statusCode,200);assert.equal(versioned.headers['cache-control'],'public, max-age=31536000, immutable');
     assert.notEqual(asset.headers['cache-control'],versioned.headers['cache-control']);
+  } finally {await app.close();await rm(directory,{recursive:true,force:true});}
+});
+
+test('Analytics requiere ID válido y solo se inserta en páginas públicas', async () => {
+  const directory=await mkdtemp(join(tmpdir(),'torneos-ga-'));
+  const pool={query:async()=>({rows:[]})} as unknown as DatabasePool;
+  const app=Fastify();
+  try {
+    await writeFile(join(directory,'index.html'),'<html><head><title>Inicio</title></head><body><div id="app"></div></body></html>');
+    registerPublicWebRoutes(app,pool,'https://torneos.example',directory,'G-TEST1234');
+    const publicPage=await app.inject('/');
+    assert.match(publicPage.body,/gtag\/js\?id=G-TEST1234/);
+    assert.match(publicPage.body,/\/analytics.js/);
+    assert.doesNotMatch((await app.inject('/acceso')).body,/gtag\/js/);
   } finally {await app.close();await rm(directory,{recursive:true,force:true});}
 });

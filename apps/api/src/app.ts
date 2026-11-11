@@ -67,14 +67,15 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
   app.addHook('onSend', async (request, reply) => {
     reply.header('X-Content-Type-Options', 'nosniff').header('Referrer-Policy', 'no-referrer').header('X-Frame-Options', 'DENY');
     if (!reply.hasHeader('Cache-Control')) reply.header('Cache-Control', 'no-store');
-    reply.header('Content-Security-Policy', request.url.startsWith('/api/') || ['/health','/ready','/robots.txt','/sitemap.xml'].includes(request.url.split('?')[0]) ? "default-src 'none'; frame-ancestors 'none'" : "default-src 'self'; img-src 'self' data: blob:; connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
+    const analyticsSources = /^G-[A-Z0-9]+$/.test(process.env.GA_MEASUREMENT_ID || '') ? " https://www.googletagmanager.com https://*.google-analytics.com" : '';
+    reply.header('Content-Security-Policy', request.url.startsWith('/api/') || ['/health','/ready','/robots.txt','/sitemap.xml'].includes(request.url.split('?')[0]) ? "default-src 'none'; frame-ancestors 'none'" : `default-src 'self'; img-src 'self' data: blob:${analyticsSources}; connect-src 'self'${analyticsSources}; style-src 'self' 'unsafe-inline'; script-src 'self'${analyticsSources}; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'`);
   });
   app.addHook('preHandler', async (request) => {
     const origin = request.headers.origin;
     const mutation = !['GET', 'HEAD', 'OPTIONS'].includes(request.method);
     if (mutation && origin && origin !== config.origin) fail(403, 'ORIGIN_DENIED', 'El origen de la solicitud no está permitido.');
     const requestPath = request.url.split('?')[0];
-    if (!mutation && (/^\/(?:assets|icons)\/[a-zA-Z0-9._-]+$/.test(requestPath) || ['/manifest.webmanifest','/sw.js'].includes(requestPath))) return;
+    if (!mutation && (/^\/(?:assets|icons)\/[a-zA-Z0-9._-]+$/.test(requestPath) || ['/manifest.webmanifest','/sw.js','/analytics.js'].includes(requestPath))) return;
     const rawToken = request.cookies.torneos_session;
     if (rawToken && /^[A-Za-z0-9_-]{43}$/.test(rawToken)) {
       const result = await pool.query(`SELECT s.id session_id,s.user_id,s.organization_id,u.display_name,u.username,u.platform_admin FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at>now() AND u.disabled_at IS NULL`, [digest(rawToken)]);
