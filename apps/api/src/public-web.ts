@@ -3,15 +3,15 @@ import type { DatabasePool } from '@torneos/db';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-type Page = { organization_id: string; organization_name: string; public_slug: string; has_logo: boolean; tournament_id: string; tournament_name: string; has_emblem: boolean; official: boolean };
-const pagesSql = `SELECT DISTINCT o.id organization_id,o.name organization_name,o.public_slug,(o.logo_id IS NOT NULL) has_logo,t.id tournament_id,t.name tournament_name,(t.emblem_id IS NOT NULL) has_emblem,true official
+type Page = { organization_id: string; organization_name: string; public_slug: string; has_logo: boolean; tournament_id: string; tournament_name: string; tournament_slug: string | null; has_emblem: boolean; official: boolean };
+const pagesSql = `SELECT DISTINCT o.id organization_id,o.name organization_name,o.public_slug,(o.logo_id IS NOT NULL) has_logo,t.id tournament_id,t.name tournament_name,t.public_slug tournament_slug,(t.emblem_id IS NOT NULL) has_emblem,true official
   FROM organizations o JOIN tournaments t ON t.organization_id=o.id AND t.status='published'
   JOIN editions ed ON ed.organization_id=t.organization_id AND ed.tournament_id=t.id AND ed.status='published'
   JOIN categories c ON c.organization_id=ed.organization_id AND c.edition_id=ed.id AND c.status='published'
   JOIN rule_versions r ON r.organization_id=c.organization_id AND r.category_id=c.id AND r.status='published'
   WHERE o.status='active'
   UNION
-  SELECT DISTINCT o.id,o.name,o.public_slug,(o.logo_id IS NOT NULL),t.id,t.name,(t.emblem_id IS NOT NULL),false
+  SELECT DISTINCT o.id,o.name,o.public_slug,(o.logo_id IS NOT NULL),t.id,t.name,t.public_slug,(t.emblem_id IS NOT NULL),false
   FROM organizations o JOIN tournaments t ON t.organization_id=o.id
   JOIN editions ed ON ed.organization_id=t.organization_id AND ed.tournament_id=t.id
   JOIN categories c ON c.organization_id=ed.organization_id AND c.edition_id=ed.id
@@ -37,7 +37,11 @@ export function registerPublicWebRoutes(app: FastifyInstance, pool: DatabasePool
   app.get('/sitemap.xml', async (_request, reply) => {
     const published = await pages();
     const urls = new Set<string>([`${base}/`]);
-    for (const page of published) { urls.add(`${base}/${page.public_slug}`); urls.add(`${base}/${page.public_slug}/${page.tournament_id}`); }
+    for (const page of published) {
+      const siblings=published.filter(item=>item.organization_id===page.organization_id);
+      if(siblings.length>1||!page.tournament_slug)urls.add(`${base}/${page.public_slug}`);
+      urls.add(page.tournament_slug?`${base}/${page.tournament_slug}`:`${base}/${page.public_slug}/${page.tournament_id}`);
+    }
     return reply.type('application/xml; charset=utf-8').send(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${[...urls].map(url=>`<url><loc>${escapeXml(url)}</loc></url>`).join('')}</urlset>`);
   });
   app.get('/*', async (request, reply) => {
@@ -58,19 +62,25 @@ export function registerPublicWebRoutes(app: FastifyInstance, pool: DatabasePool
     catch { return reply.code(503).type('text/plain').send('Compilá la web antes de servirla.'); }
     const segments = path === '/index.html' ? [] : path.split('/').filter(Boolean);
     const published = await pages();
-    const organization = segments.length ? published.find(page=>page.public_slug===segments[0]) : undefined;
-    const tournament = segments.length===2 && organization ? published.find(page=>page.public_slug===segments[0] && page.tournament_id===segments[1]) : undefined;
+    const aliasTournament=segments.length===1?published.find(page=>page.tournament_slug===segments[0]):undefined;
+    const organization = aliasTournament || (segments.length ? published.find(page=>page.public_slug===segments[0]) : undefined);
+    const tournament = aliasTournament || (segments.length===2 && organization ? published.find(page=>page.public_slug===segments[0] && page.tournament_id===segments[1]) : undefined);
+    const organizationPages=organization?published.filter(page=>page.organization_id===organization.organization_id):[];
+    if((segments.length===2&&!!tournament?.tournament_slug)||(segments.length===1&&!aliasTournament&&organizationPages.length===1&&!!organizationPages[0].tournament_slug)){
+      const alias=tournament?.tournament_slug||organizationPages[0].tournament_slug;
+      return reply.code(308).header('Location',`${base}/${alias}`).send();
+    }
     const publicPage = segments.length===0 || segments.length===1 && !!organization || !!tournament;
-    const canonical = segments.length===0 ? `${base}/` : tournament ? `${base}/${organization!.public_slug}/${tournament.tournament_id}` : organization && segments.length===1 ? `${base}/${organization.public_slug}` : '';
+    const canonical = segments.length===0 ? `${base}/` : tournament ? tournament.tournament_slug?`${base}/${tournament.tournament_slug}`:`${base}/${organization!.public_slug}/${tournament.tournament_id}` : organization && segments.length===1 ? `${base}/${organization.public_slug}` : '';
     const name = tournament?.tournament_name || organization?.organization_name || 'A la cancha';
     const title = tournament ? `${name} · ${organization!.organization_name}` : organization ? `${name} · A la cancha` : 'A la cancha · Torneos';
     const description = tournament ? `Partidos, fixture, clasificación y goleadores de ${name}.` : organization ? `Torneos, partidos, resultados y estadísticas de ${name}.` : 'Encontrá organizaciones, torneos, partidos, resultados y estadísticas.';
     const image = tournament?.has_emblem ? `${base}/api/v1/public/organizations/${tournament.organization_id}/tournaments/${tournament.tournament_id}/emblem` : organization?.has_logo ? `${base}/api/v1/public/organizations/${organization.organization_id}/logo` : '';
-    const children = segments.length===0 ? [...new Map(published.map(page=>[page.public_slug,page])).values()].map(page=>({url:`/${page.public_slug}`,name:page.organization_name})) : organization && !tournament ? published.filter(page=>page.public_slug===organization.public_slug).map(page=>({url:`/${page.public_slug}/${page.tournament_id}`,name:page.tournament_name})) : [];
+    const children = segments.length===0 ? [...new Map(published.map(page=>[page.public_slug,page])).values()].map(page=>({url:published.filter(item=>item.organization_id===page.organization_id).length===1&&page.tournament_slug?`/${page.tournament_slug}`:`/${page.public_slug}`,name:page.organization_name})) : organization && !tournament ? organizationPages.map(page=>({url:page.tournament_slug?`/${page.tournament_slug}`:`/${page.public_slug}/${page.tournament_id}`,name:page.tournament_name})) : [];
     const meta = `<title>${escapeHtml(title)}</title><meta name="description" content="${escapeHtml(description)}">${publicPage?`<link rel="canonical" href="${escapeHtml(canonical)}"><meta property="og:type" content="website"><meta property="og:title" content="${escapeHtml(title)}"><meta property="og:description" content="${escapeHtml(description)}"><meta property="og:url" content="${escapeHtml(canonical)}">${image?`<meta property="og:image" content="${escapeHtml(image)}">`:''}<meta name="twitter:card" content="${image?'summary_large_image':'summary'}">`:'<meta name="robots" content="noindex,nofollow">'}`;
     const analytics = publicPage && gaEnabled ? `<meta name="ga-measurement-id" content="${measurementId}"><script async src="https://www.googletagmanager.com/gtag/js?id=${measurementId}"></script><script src="/analytics.js"></script>` : '';
     shell = shell.replace(/<title>[^<]*<\/title>/, '').replace(/<meta name="description"[^>]*>/, '').replace('</head>', `${meta}${analytics}</head>`);
-    if (publicPage) shell = shell.replace('<div id="app"></div>', `<div id="app"></div><noscript><main><h1>${escapeHtml(name)}</h1><p>${escapeHtml(description)}</p>${children.length?`<ul>${children.map(child=>`<li><a href="${escapeHtml(child.url)}">${escapeHtml(child.name)}</a></li>`).join('')}</ul>`:''}</main></noscript>`);
+    if (publicPage) shell = shell.replace('<div id="app"></div>', `<div id="app" data-public-path="${escapeHtml(path)}"${organization?` data-public-organization-id="${organization.organization_id}"`:''}${tournament?` data-public-tournament-id="${tournament.tournament_id}"`:''}></div><noscript><main><h1>${escapeHtml(name)}</h1><p>${escapeHtml(description)}</p>${children.length?`<ul>${children.map(child=>`<li><a href="${escapeHtml(child.url)}">${escapeHtml(child.name)}</a></li>`).join('')}</ul>`:''}</main></noscript>`);
     return reply.code(publicPage ? 200 : segments[0]==='acceso'||segments[0]==='panel' ? 200 : 404).type('text/html; charset=utf-8').send(shell);
   });
 }

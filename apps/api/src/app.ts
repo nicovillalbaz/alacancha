@@ -437,17 +437,22 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const organizationId = uuid((request.params as { id: string }).id);
     const { rows: [media] } = await pool.query(`SELECT m.filename,m.content_type FROM organizations o
       JOIN media m ON m.organization_id=o.id AND m.id=o.logo_id
-      WHERE o.id=$1 AND o.status='active' AND EXISTS (
+      WHERE o.id=$1 AND o.status='active' AND (EXISTS (
         SELECT 1 FROM tournaments t JOIN editions ed ON ed.organization_id=t.organization_id AND ed.tournament_id=t.id
         JOIN categories c ON c.organization_id=ed.organization_id AND c.edition_id=ed.id
         JOIN rule_versions r ON r.organization_id=c.organization_id AND r.category_id=c.id AND r.status='published'
-        WHERE t.organization_id=o.id AND t.status='published' AND ed.status='published' AND c.status='published')`, [organizationId]);
+        WHERE t.organization_id=o.id AND t.status='published' AND ed.status='published' AND c.status='published')
+      OR EXISTS (SELECT 1 FROM tournaments t JOIN editions ed ON ed.organization_id=t.organization_id AND ed.tournament_id=t.id
+        JOIN categories c ON c.organization_id=ed.organization_id AND c.edition_id=ed.id
+        JOIN fixture_position_blueprints b ON b.organization_id=c.organization_id AND b.category_id=c.id
+        JOIN fixture_position_publications p ON p.organization_id=b.organization_id AND p.blueprint_id=b.id
+        WHERE t.organization_id=o.id))`, [organizationId]);
     if (!media) fail(404, 'NOT_FOUND', 'No hay logo público para esta organización.');
     if (!/^[0-9a-f-]+\.(png|jpg|webp)$/.test(media.filename)) fail(500, 'INVALID_FILE', 'No se pudo abrir el archivo.');
     return reply.type(media.content_type).send(await readFile(resolve(config.mediaDir, media.filename)));
   });
 
-  const tournamentRows = `SELECT t.id,t.name,t.timezone,t.status,(t.emblem_id IS NOT NULL) has_emblem,e.id edition_id,e.name edition_name,c.id category_id,c.name category_name,c.preset,c.team_limit,r.version rule_version,r.revision rule_revision,r.status rule_status,r.rules || jsonb_build_object('maxBenchStaff',COALESCE(r.rules->'maxBenchStaff','0'::jsonb),'substitutions',COALESCE(r.rules->'substitutions','null'::jsonb),'eligibility',COALESCE(r.rules->'eligibility','null'::jsonb),'advanced',COALESCE(r.rules->'advanced','null'::jsonb),'initialPhase',COALESCE(r.rules->'initialPhase','null'::jsonb)) rules
+  const tournamentRows = `SELECT t.id,t.name,t.public_slug,t.timezone,t.status,(t.emblem_id IS NOT NULL) has_emblem,e.id edition_id,e.name edition_name,c.id category_id,c.name category_name,c.preset,c.team_limit,r.version rule_version,r.revision rule_revision,r.status rule_status,r.rules || jsonb_build_object('maxBenchStaff',COALESCE(r.rules->'maxBenchStaff','0'::jsonb),'substitutions',COALESCE(r.rules->'substitutions','null'::jsonb),'eligibility',COALESCE(r.rules->'eligibility','null'::jsonb),'advanced',COALESCE(r.rules->'advanced','null'::jsonb),'initialPhase',COALESCE(r.rules->'initialPhase','null'::jsonb)) rules
     FROM tournaments t JOIN editions e ON e.organization_id=t.organization_id AND e.tournament_id=t.id
     JOIN categories c ON c.organization_id=e.organization_id AND c.edition_id=e.id
     JOIN LATERAL (SELECT version,revision,status,rules FROM rule_versions rv WHERE rv.organization_id=c.organization_id AND rv.category_id=c.id AND ($3::boolean=false OR rv.status='published') ORDER BY version DESC LIMIT 1) r ON true
@@ -464,6 +469,21 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const result = await pool.query(tournamentRows, [organizationId, uuid(tournamentId), false]);
     if (!result.rowCount) fail(404, 'NOT_FOUND', 'No se encontró el torneo en esta organización.');
     return result.rows;
+  });
+  app.patch('/api/v1/organizations/:id/tournaments/:tournamentId/public-slug', async (request) => {
+    const {id,tournamentId}=request.params as {id:string;tournamentId:string};
+    const organizationId=uuid(id),tournament=uuid(tournamentId),actor=await organizationAccess(request,organizationId,true);
+    const {slug}=z.object({slug:z.string().trim().min(3).max(60).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)}).strict().parse(request.body);
+    return transaction(pool,async client=>{
+      const {rows:[current]}=await client.query('SELECT public_slug FROM tournaments WHERE organization_id=$1 AND id=$2 FOR UPDATE',[organizationId,tournament]);
+      if(!current)fail(404,'NOT_FOUND','No se encontró este torneo.');
+      const {rowCount:organizationAlias}=await client.query('SELECT 1 FROM organizations WHERE public_slug=$1',[slug]);
+      if(organizationAlias)fail(409,'SLUG_TAKEN','Ese enlace ya está en uso.');
+      if(current.public_slug===slug)return {slug,reused:true};
+      await client.query('UPDATE tournaments SET public_slug=$1 WHERE organization_id=$2 AND id=$3',[slug,organizationId,tournament]);
+      await audit(client,actor.user_id,organizationId,'tournament.public_slug_changed',tournament,'Enlace público actualizado',{slug:current.public_slug},{slug});
+      return {slug,reused:false};
+    });
   });
   app.post('/api/v1/organizations/:id/tournaments/:tournamentId/emblem', async (request, reply) => {
     const { id, tournamentId } = request.params as { id: string; tournamentId: string };
@@ -742,29 +762,39 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       });
     });
   }
+  const publicTournamentCondition = `(t.status='published' AND EXISTS (SELECT 1 FROM editions ed JOIN categories c ON c.organization_id=ed.organization_id AND c.edition_id=ed.id
+    JOIN rule_versions r ON r.organization_id=c.organization_id AND r.category_id=c.id AND r.status='published'
+    WHERE ed.organization_id=t.organization_id AND ed.tournament_id=t.id AND ed.status='published' AND c.status='published'))
+    OR EXISTS (SELECT 1 FROM editions pe JOIN categories pc ON pc.organization_id=pe.organization_id AND pc.edition_id=pe.id
+    JOIN fixture_position_blueprints pb ON pb.organization_id=pc.organization_id AND pb.category_id=pc.id
+    JOIN fixture_position_publications pp ON pp.organization_id=pb.organization_id AND pp.blueprint_id=pb.id
+    WHERE pe.organization_id=t.organization_id AND pe.tournament_id=t.id)`;
   app.get('/api/v1/public/organizations', async () => {
-    const { rows } = await pool.query(`SELECT o.id,o.name,o.public_slug,(o.logo_id IS NOT NULL) has_logo,count(DISTINCT t.id)::int tournament_count
-      FROM organizations o JOIN tournaments t ON t.organization_id=o.id AND (t.status='published' OR EXISTS (SELECT 1 FROM editions pe JOIN categories pc ON pc.organization_id=pe.organization_id AND pc.edition_id=pe.id JOIN fixture_position_blueprints pb ON pb.organization_id=pc.organization_id AND pb.category_id=pc.id JOIN fixture_position_publications pp ON pp.organization_id=pb.organization_id AND pp.blueprint_id=pb.id WHERE pe.organization_id=t.organization_id AND pe.tournament_id=t.id))
-      WHERE o.status='active' AND EXISTS (
-        SELECT 1 FROM editions ed JOIN categories c ON c.organization_id=ed.organization_id AND c.edition_id=ed.id
-        JOIN rule_versions r ON r.organization_id=c.organization_id AND r.category_id=c.id AND r.status='published'
-        WHERE ed.organization_id=t.organization_id AND ed.tournament_id=t.id AND ed.status='published' AND c.status='published'
-      ) OR o.status='active' AND EXISTS (SELECT 1 FROM editions pe JOIN categories pc ON pc.organization_id=pe.organization_id AND pc.edition_id=pe.id JOIN fixture_position_blueprints pb ON pb.organization_id=pc.organization_id AND pb.category_id=pc.id JOIN fixture_position_publications pp ON pp.organization_id=pb.organization_id AND pp.blueprint_id=pb.id WHERE pe.organization_id=t.organization_id AND pe.tournament_id=t.id) GROUP BY o.id ORDER BY o.name,o.id LIMIT 500`);
+    const { rows } = await pool.query(`SELECT o.id,o.name,o.public_slug,(o.logo_id IS NOT NULL) has_logo,count(*)::int tournament_count,
+      CASE WHEN count(*)=1 THEN (array_agg(t.id))[1] ELSE NULL END single_tournament_id,
+      CASE WHEN count(*)=1 THEN max(t.public_slug) ELSE NULL END single_tournament_slug
+      FROM organizations o JOIN tournaments t ON t.organization_id=o.id
+      WHERE o.status='active' AND (${publicTournamentCondition})
+      GROUP BY o.id ORDER BY o.name,o.id LIMIT 500`);
     return rows;
   });
   app.get('/api/v1/public/tournaments', async (request) => {
     const { q } = z.object({ q: z.string().trim().max(80).default('') }).strict().parse(request.query);
     const term = q.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
-    const { rows } = await pool.query(`SELECT t.id,t.name,o.id organization_id,o.name organization_name,o.public_slug organization_slug
+    const { rows } = await pool.query(`SELECT t.id,t.name,t.public_slug,(t.emblem_id IS NOT NULL) has_emblem,o.id organization_id,o.name organization_name,o.public_slug organization_slug
       FROM tournaments t JOIN organizations o ON o.id=t.organization_id
       WHERE o.status='active'
         AND ($1='' OR position($1 in translate(lower(t.name),'áéíóúüñ','aeiouun'))>0)
-        AND ((t.status='published' AND EXISTS (SELECT 1 FROM editions ed JOIN categories c ON c.organization_id=ed.organization_id AND c.edition_id=ed.id
-          JOIN rule_versions r ON r.organization_id=c.organization_id AND r.category_id=c.id AND r.status='published'
-          WHERE ed.organization_id=t.organization_id AND ed.tournament_id=t.id AND ed.status='published' AND c.status='published'))
-          OR EXISTS (SELECT 1 FROM editions pe JOIN categories pc ON pc.organization_id=pe.organization_id AND pc.edition_id=pe.id JOIN fixture_position_blueprints pb ON pb.organization_id=pc.organization_id AND pb.category_id=pc.id JOIN fixture_position_publications pp ON pp.organization_id=pb.organization_id AND pp.blueprint_id=pb.id WHERE pe.organization_id=t.organization_id AND pe.tournament_id=t.id))
+        AND (${publicTournamentCondition})
       ORDER BY t.created_at DESC,t.id LIMIT 100`, [term]);
     return rows;
+  });
+  app.get('/api/v1/public/tournaments/by-slug/:slug', async (request) => {
+    const slug=z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).parse((request.params as {slug:string}).slug);
+    const {rows:[found]}=await pool.query(`SELECT t.id,t.name,t.public_slug,t.organization_id,o.public_slug organization_slug FROM tournaments t
+      JOIN organizations o ON o.id=t.organization_id WHERE t.public_slug=$1 AND o.status='active' AND (${publicTournamentCondition})`,[slug]);
+    if(!found)fail(404,'NOT_FOUND','No se encontró este torneo público.');
+    return found;
   });
   app.get('/api/v1/public/organizations/:id/tournaments', async (request) => {
     const organizationId = uuid((request.params as { id: string }).id);
@@ -777,7 +807,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
   });
   app.get('/api/v1/public/organizations/:id/draws', async (request) => {
     const organizationId = uuid((request.params as { id: string }).id);
-    const { rows } = await pool.query(`SELECT DISTINCT ON (t.id) t.id tournament_id,t.name tournament_name,(t.emblem_id IS NOT NULL) has_emblem,c.id category_id,c.name category_name,pp.revision,pp.snapshot,pp.published_at
+    const { rows } = await pool.query(`SELECT DISTINCT ON (t.id) t.id tournament_id,t.name tournament_name,t.public_slug,(t.emblem_id IS NOT NULL) has_emblem,c.id category_id,c.name category_name,pp.revision,pp.snapshot,pp.published_at
       FROM fixture_position_publications pp JOIN fixture_position_blueprints bp ON bp.organization_id=pp.organization_id AND bp.id=pp.blueprint_id
       JOIN categories c ON c.organization_id=bp.organization_id AND c.id=bp.category_id JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id
       JOIN tournaments t ON t.organization_id=ed.organization_id AND t.id=ed.tournament_id JOIN organizations o ON o.id=t.organization_id

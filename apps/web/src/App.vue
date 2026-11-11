@@ -33,8 +33,8 @@ interface AccessDraft { status: AccessState; reason: string; version: number }
 interface LinkResult { url: string; expiresInHours: number }
 interface TokenInfo { name: string; username: string; organization_name: string | null; purpose: 'invite' | 'recovery'; has_password: boolean; currentUser: CurrentUser | null }
 interface PublicFixtureDay { id: string; ordinal: number; tournament_id:string; edition_name: string; tournament_name: string; matches: Array<{ id: string; category_id:string; category_name: string; home_name: string; away_name: string; home_team_id:string; away_team_id:string; venue_name: string; court_label: string; match_date: string; match_time: string; result: { status:'provisional'|'official'; score:{home:number;away:number};shootout:{home:number;away:number};players:Array<{side:'home'|'away';name:string;shirtNumber:number|null}>;events:Array<{id:string;kind:string;side:'home'|'away'|'unknown';period:string|null;minute:number|null;cardLabel:string|null;cardColor:string|null;name:string;relatedName:string|null}> }|null }> }
-interface PublicCatalogItem {id:string;name:string;organization_id:string;organization_name:string;organization_slug:string}
-interface PublicOrganizationItem {id:string;name:string;public_slug:string;has_logo:boolean;tournament_count:number}
+interface PublicCatalogItem {id:string;name:string;public_slug:string|null;organization_id:string;organization_name:string;organization_slug:string}
+interface PublicOrganizationItem {id:string;name:string;public_slug:string;has_logo:boolean;tournament_count:number;single_tournament_id:string|null;single_tournament_slug:string|null}
 interface PublicOrganization {id:string;name:string;accent:string;logo_id:string|null;public_slug:string}
 interface MatchAssignment {id:string;match_id:string;duty:'capture'|'review';membership_id:string;name:string;member_status:string;category_id:string;home_name:string;away_name:string;day_ordinal:number|null}
 interface OperatorSummary {id:string;name:string;username:string;status:string}
@@ -51,6 +51,8 @@ function routeFromLocation(){
   const segments=location.pathname.split('/').filter(Boolean);
   if(!segments.length)return 'publico';
   if(segments.length===1&&['acceso','panel'].includes(segments[0]))return segments[0];
+  const mount=document.getElementById('app')?.dataset;
+  if(mount?.publicOrganizationId&&mount.publicPath===location.pathname&&segments.length<=2)return `publico/${mount.publicOrganizationId}${mount.publicTournamentId?`/${mount.publicTournamentId}`:''}`;
   if(segments.length<=2&&/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(segments[0])&&(!segments[1]||/^[0-9a-f-]{36}$/i.test(segments[1])))return `portal/${segments.join('/')}`;
   return 'publico';
 }
@@ -174,7 +176,7 @@ async function createScopedFlyer(){if(!user.value?.organizationId||!selectedTour
   void (async()=>{for(let attempt=0;attempt<20;attempt++){if(route.value!==atRoute)return;const current=flyers.value.find(row=>row.id===item.id);if(current?.status==='ready'||current?.status==='failed')return;await new Promise(resolve=>setTimeout(resolve,1500));if(route.value!==atRoute)return;try{await loadFlyers();}catch{return;}}})();
 }
 async function publishFlyer(item:FlyerItem){if(!user.value?.organizationId)return;await perform(async()=>{await api(`/organizations/${user.value!.organizationId}/flyers/${item.id}/publication`,'POST',{publicVisible:!item.publicVisible,reason:'Revisión de difusión del organizador'});await loadFlyers();notify(item.publicVisible?'Flyer ocultado.':'Flyer publicado.');});}
-function sharePublicLink(){if(publicOrganization.value){const slug=publicOrganization.value.public_slug;void copyLink(`${window.location.origin}${slug?`/${slug}${parts.value[2]?`/${parts.value[2]}`:''}`:`/#/publico/${publicOrganization.value.id}${parts.value[2]?`/${parts.value[2]}`:''}`}`);}}
+function sharePublicLink(){if(publicOrganization.value){const alias=publicCatalog.value.find(item=>item.id===parts.value[2])?.public_slug;const slug=publicOrganization.value.public_slug;void copyLink(`${window.location.origin}${alias?`/${alias}`:slug?`/${slug}${parts.value[2]?`/${parts.value[2]}`:''}`:`/#/publico/${publicOrganization.value.id}${parts.value[2]?`/${parts.value[2]}`:''}`}`);}}
 const referees=ref<Array<{id:string;name:string;archived_at:string|null}>>([]),newRefereeName=ref(''),refereeArchiveReason=ref('');
 const scheduleDraft = reactive({ matchdayId: '', venueId: '', courtLabel: '', date: '', time: '', durationMinutes: 60, refereeId:'', refereeName: '', reason: '' });
 const manualMatchId = ref('');
@@ -354,10 +356,11 @@ function normalize(value: string) { return value.toLocaleLowerCase('es').normali
 function initials(value: string) { return value.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase(); }
 function publicTeam(teamId:string){return publicTeams.value.find(team=>team.id===teamId);}
 function publicTeamByName(name:string,categoryId:string){return publicTeams.value.find(team=>team.category_id===categoryId&&team.name===name);}
-function go(path: string) {
-  const target=path==='publico'?'/':path==='acceso'?'/acceso':path==='panel'?'/panel':path.startsWith('publico/')?(()=>{const [,organizationId,tournamentId]=path.split('/');const slug=publicOrganization.value?.id===organizationId?publicOrganization.value.public_slug:publicOrganizations.value.find(item=>item.id===organizationId)?.public_slug||publicCatalog.value.find(item=>item.organization_id===organizationId)?.organization_slug;return slug?`/${slug}${tournamentId?`/${tournamentId}`:''}`:`/#/${path}`;})():`/#/${path}`;
+function go(path: string, preferredAlias = '') {
+  const target=path==='publico'?'/':path==='acceso'?'/acceso':path==='panel'?'/panel':path.startsWith('publico/')?(()=>{const [,organizationId,tournamentId]=path.split('/');const alias=preferredAlias||publicCatalog.value.find(item=>item.id===tournamentId)?.public_slug||publicOrganizations.value.find(item=>item.id===organizationId&&item.single_tournament_id===tournamentId)?.single_tournament_slug;if(alias)return `/${alias}`;const slug=publicOrganization.value?.id===organizationId?publicOrganization.value.public_slug:publicOrganizations.value.find(item=>item.id===organizationId)?.public_slug||publicCatalog.value.find(item=>item.organization_id===organizationId)?.organization_slug;return slug?`/${slug}${tournamentId?`/${tournamentId}`:''}`:`/#/${path}`;})():`/#/${path}`;
   history.pushState(null,'',target);route.value=path;window.scrollTo(0,0);
 }
+function openPublicOrganization(id:string){const item=publicOrganizations.value.find(row=>row.id===id);go(item?.tournament_count===1&&item.single_tournament_id?`publico/${id}/${item.single_tournament_id}`:`publico/${id}`,item?.single_tournament_slug||'');}
 function focusContent() { document.querySelector<HTMLElement>('#contenido')?.focus(); }
 function jumpToSection(id: string) { const target = document.getElementById(id); target?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' }); target?.querySelector<HTMLElement>('input:not([type="hidden"]),button')?.focus({ preventScroll: true }); }
 function openTeamAction(action: 'admin'|'commission'|'staff'|'category') { teamAction.value = teamAction.value === action ? null : action; if (teamAction.value) nextTick(() => jumpToSection(`${action === 'category' ? 'another-category' : action === 'admin' ? 'team-admin' : action}-form`)); }
@@ -1232,8 +1235,9 @@ async function loadView(force = false) {
     if (parts.value[0] === 'portal') {
       publicOrganizations.value=await api<PublicOrganizationItem[]>('/public/organizations');
       const selected=publicOrganizations.value.find(item=>item.public_slug===parts.value[1]);
-      if(!selected)throw new RequestError('No se encontró esta organización.', 'NOT_FOUND', 404);
-      const tournamentId=parts.value[2]||'';
+      if(!selected){const tournament=await api<{id:string;organization_id:string}>(`/public/tournaments/by-slug/${encodeURIComponent(parts.value[1]||'')}`);route.value=`publico/${tournament.organization_id}/${tournament.id}`;return;}
+      const tournamentId=parts.value[2]||(selected.tournament_count===1?selected.single_tournament_id||'':'');
+      if(!parts.value[2]&&tournamentId&&selected.single_tournament_slug)history.replaceState(null,'',`/${selected.single_tournament_slug}`);
       route.value=`publico/${selected.id}${tournamentId?`/${tournamentId}`:''}`;
       return;
     }
@@ -1242,7 +1246,7 @@ async function loadView(force = false) {
       if(!parts.value[1]){publicOrganizations.value=await api<PublicOrganizationItem[]>('/public/organizations');setPublicPageMeta('A la cancha · Torneos','Encontrá organizaciones, torneos, partidos, resultados y estadísticas.',`${location.origin}/`);return;}
       const [result, published, brackets,sharedFlyers,draws] = await Promise.all([api<{ organization: PublicOrganization; tournaments: TournamentSummary[]; teams: typeof publicTeams.value; sponsors: typeof publicSponsors.value }>(`/public/organizations/${parts.value[1]}/tournaments`), api<PublicFixtureDay[]>(`/public/organizations/${parts.value[1]}/fixture`), api<PublicBracket[]>(`/public/organizations/${parts.value[1]}/brackets`),api<typeof publicFlyers.value>(`/public/organizations/${parts.value[1]}/flyers`),api<PublicDraw[]>(`/public/organizations/${parts.value[1]}/draws`)]);
       publicDraws.value=draws;
-      publicCatalog.value=[...new Map([...result.tournaments.map(item=>[item.id,{id:item.id,name:item.name,organization_id:parts.value[1],organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const),...draws.map(item=>[item.tournament_id,{id:item.tournament_id,name:item.tournament_name,organization_id:parts.value[1],organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const)].map(item=>[item[0],item[1]])).values()];
+      publicCatalog.value=[...new Map([...result.tournaments.map(item=>[item.id,{id:item.id,name:item.name,public_slug:item.public_slug||null,organization_id:parts.value[1],organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const),...draws.map(item=>[item.tournament_id,{id:item.tournament_id,name:item.tournament_name,public_slug:item.public_slug||null,organization_id:parts.value[1],organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const)].map(item=>[item[0],item[1]])).values()];
       const tournamentId=parts.value[2];
       if(tournamentId&&!result.tournaments.some(item=>item.id===tournamentId)&&!draws.some(item=>item.tournament_id===tournamentId))throw new RequestError('Este torneo todavía no está publicado.','NOT_FOUND',404);
       publicOrganization.value = result.organization; publicTournaments.value = tournamentId?result.tournaments.filter(item=>item.id===tournamentId):result.tournaments; publicTeams.value = result.teams.filter(team=>publicTournaments.value.some(item=>item.category_id===team.category_id)); publicSponsors.value = result.sponsors.filter(sponsor=>!tournamentId||sponsor.tournament_id===tournamentId);
@@ -1250,7 +1254,8 @@ async function loadView(force = false) {
       const publicName=tournamentId?(publicTournament.value?.name||draws.find(item=>item.tournament_id===tournamentId)?.tournament_name):(result.organization as unknown as {name:string}|null)?.name||'Torneos';
       const title=tournamentId?`${publicName} · ${result.organization.name}`:`${publicName} · Torneos`;
       const description=tournamentId?`Partidos, fixture, clasificación y goleadores de ${publicName}.`:`Torneos, partidos, resultados y estadísticas de ${publicName}.`;
-      const canonical=`${location.origin}/${result.organization.public_slug}${tournamentId?`/${tournamentId}`:''}`;
+      const alias=tournamentId?publicCatalog.value.find(item=>item.id===tournamentId)?.public_slug:null;
+      const canonical=`${location.origin}${alias?`/${alias}`:`/${result.organization.public_slug}${tournamentId?`/${tournamentId}`:''}`}`;
       const hasEmblem=publicTournament.value?.has_emblem&&publicTournament.value.status==='published'||draws.some(item=>item.tournament_id===tournamentId&&item.has_emblem);
       const image=hasEmblem?`${location.origin}/api/v1/public/organizations/${result.organization.id}/tournaments/${tournamentId}/emblem`:result.organization.logo_id?`${location.origin}/api/v1/public/organizations/${result.organization.id}/logo`:'';
       setPublicPageMeta(title,description,canonical,image);
@@ -1453,7 +1458,7 @@ onUnmounted(() => { publicResultsStream?.close();privateMatchStream?.close();win
         </form>
       </template>
       <template v-else-if="parts[0] === 'publico' && !parts[1]">
-        <PublicDirectory :organizations="publicOrganizations" :loading="loading" :error="error" @select="id => go(`publico/${id}`)" @select-tournament="(organizationId, tournamentId) => go(`publico/${organizationId}/${tournamentId}`)" />
+        <PublicDirectory :organizations="publicOrganizations" :loading="loading" :error="error" @select="openPublicOrganization" @select-tournament="(organizationId, tournamentId, slug) => go(`publico/${organizationId}/${tournamentId}`, slug || '')" />
       </template>
       <template v-else-if="parts[0] === 'publico'">
         <PublicPositionPortal v-if="publicDraws.length && (parts[2] ? publicDraws.some(item=>item.tournament_id===parts[2]) : !publicTournaments.length)" :organization="publicOrganization" :draws="publicDraws" :selected-tournament-id="parts[2]||''" @navigate="go" />

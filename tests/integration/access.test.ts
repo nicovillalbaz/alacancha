@@ -283,7 +283,7 @@ test('limitación de intentos responde sin revelar si el usuario existe', async 
 });
 test('migración repetible y seed rechazado fuera de las bases locales autorizadas', async () => {
   await migrate(pool);
-  const { rows: [count] } = await pool.query('SELECT count(*)::int total FROM schema_migrations'); assert.equal(count.total, 47);
+  const { rows: [count] } = await pool.query('SELECT count(*)::int total FROM schema_migrations'); assert.equal(count.total, 48);
   await assert.rejects(seed(pool, 'postgresql://no:sinuso@127.0.0.1:55461/produccion'), /solo se permiten/);
 });
 
@@ -778,6 +778,11 @@ test('T04: plan privado por posiciones conserva Fechas/Jornadas y resuelve el so
 test('T04/T08: el plan parcial se publica sin resultados ni asignaciones inventadas', async () => {
   const tournament=await newTournament(ids.a,{...fiveRules,points:{win:2,draw:1,loss:0},initialPhase:null,competitionPlan:null});
   const {categoryId,tournamentId}=tournament.response.json();
+  const publicSlug=`copa-${randomUUID().replaceAll('-','').slice(0,12)}`;
+  const slugPath=`/organizations/${ids.a}/tournaments/${tournamentId}/public-slug`;
+  assert.equal((await request(adminB,'PATCH',slugPath,{slug:publicSlug})).statusCode,403);
+  assert.equal((await request(teamA,'PATCH',slugPath,{slug:publicSlug})).statusCode,403);
+  assert.equal((await request(adminA,'PATCH',slugPath,{slug:publicSlug})).statusCode,200);
   const base=`/organizations/${ids.a}/categories/${categoryId}/fixture/blueprint`;
   assert.equal((await request(adminA,'POST',base,fcfsPositionPlan)).statusCode,201);
   const entries:string[]=[];
@@ -791,6 +796,9 @@ test('T04/T08: el plan parcial se publica sin resultados ni asignaciones inventa
   assert.equal((await request(adminB,'POST',`${base}/publish-draw`,{expectedRevision:plan.blueprint.revision})).statusCode,403);
   assert.equal((await request(teamA,'POST',`${base}/publish-draw`,{expectedRevision:plan.blueprint.revision})).statusCode,403);
   assert.equal((await request(adminA,'POST',`${base}/publish-draw`,{expectedRevision:plan.blueprint.revision})).statusCode,200);
+  const alias=(await app.inject(`/api/v1/public/tournaments/by-slug/${publicSlug}`));
+  assert.equal(alias.statusCode,200,alias.body);assert.equal(alias.json().id,tournamentId);
+  assert.equal((await app.inject(`/api/v1/public/tournaments/by-slug/absent-${publicSlug}`)).statusCode,404);
   const publicPath=`/api/v1/public/organizations/${ids.a}/draws`;
   const snapshot=(await app.inject({method:'GET',url:publicPath})).json().find((row:{tournament_id:string})=>row.tournament_id===tournamentId).snapshot;
   assert.equal(snapshot.slots.length,10);

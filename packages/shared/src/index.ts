@@ -205,7 +205,7 @@ export const categoryAddSchema = z.object({
 }).strict();
 export const ruleEditSchema = z.object({ rules: ruleSchema, expectedRevision: z.number().int().positive(), reason: z.string().trim().min(3).max(300) }).strict();
 export const publishSchema = z.object({ reason: z.string().trim().min(3).max(300), expectedRevision: z.number().int().positive(), fixedFormatConfirmed:z.boolean().optional() }).strict();
-export interface TournamentSummary { id: string; name: string; timezone: string; status: 'draft' | 'published'; has_emblem: boolean; edition_id: string; edition_name: string; category_id: string; category_name: string; preset: typeof rulePresets[number]; team_limit: number | null; rule_version: number; rule_revision: number; rule_status: 'draft' | 'published'; rules: RuleConfig }
+export interface TournamentSummary { id: string; name: string; public_slug?: string | null; timezone: string; status: 'draft' | 'published'; has_emblem: boolean; edition_id: string; edition_name: string; category_id: string; category_name: string; preset: typeof rulePresets[number]; team_limit: number | null; rule_version: number; rule_revision: number; rule_status: 'draft' | 'published'; rules: RuleConfig }
 export const teamCreateSchema = z.object({ requestId: z.uuid(), name: z.string().trim().min(2).max(120), color: z.string().regex(/^#[0-9a-fA-F]{6}$/), categoryId: z.uuid() }).strict();
 export const teamRenameSchema = z.object({ name: z.string().trim().min(2).max(120) }).strict();
 export const teamEntrySchema = z.object({ categoryId: z.uuid() }).strict();

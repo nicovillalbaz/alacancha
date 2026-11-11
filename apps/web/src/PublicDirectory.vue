@@ -3,9 +3,9 @@ import { computed, onUnmounted, ref, watch } from 'vue';
 import Icon from './Icon.vue';
 
 type OrganizationItem = { id: string; name: string; public_slug: string; has_logo: boolean; tournament_count: number };
-type TournamentItem = { id: string; name: string; organization_id: string; organization_name: string };
+type TournamentItem = { id: string; name: string; public_slug: string | null; has_emblem: boolean; organization_id: string; organization_name: string };
 const props = defineProps<{ organizations: OrganizationItem[]; loading: boolean; error: string }>();
-const emit = defineEmits<{ select: [organizationId: string]; selectTournament: [organizationId: string, tournamentId: string] }>();
+const emit = defineEmits<{ select: [organizationId: string]; selectTournament: [organizationId: string, tournamentId: string, slug: string | null] }>();
 const query = ref('');
 const tournaments = ref<TournamentItem[]>([]);
 const searching = ref(false);
@@ -55,7 +55,7 @@ onUnmounted(() => { clearTimeout(searchTimer); searchController?.abort(); });
       <p v-if="query && organizations.length" class="directory-group">Organizaciones</p>
       <button v-for="item in organizations" :key="item.id" type="button" class="directory-row" @click="emit('select', item.id)"><img v-if="item.has_logo" class="directory-logo" :src="`/api/v1/public/organizations/${item.id}/logo`" alt=""><span v-else class="directory-mark">{{ item.name.trim().slice(0, 1).toLocaleUpperCase('es') }}</span><span class="directory-name"><strong>{{ item.name }}</strong><small>{{ item.tournament_count }} {{ item.tournament_count === 1 ? 'torneo' : 'torneos' }}</small></span><Icon name="arrow" /></button>
       <p v-if="query && tournaments.length" class="directory-group">Torneos</p>
-      <button v-for="item in tournaments" :key="item.id" type="button" class="directory-row" @click="emit('selectTournament', item.organization_id, item.id)"><span class="directory-mark tournament"><Icon name="trophy" /></span><span class="directory-name"><strong>{{ item.name }}</strong><small>{{ item.organization_name }}</small></span><Icon name="arrow" /></button>
+      <button v-for="item in tournaments" :key="item.id" type="button" class="directory-row" @click="emit('selectTournament', item.organization_id, item.id, item.public_slug)"><img v-if="item.has_emblem" class="directory-logo" :src="`/api/v1/public/organizations/${item.organization_id}/tournaments/${item.id}/emblem`" alt=""><span v-else class="directory-mark tournament"><Icon name="trophy" /></span><span class="directory-name"><strong>{{ item.name }}</strong><small>{{ item.organization_name }}</small></span><Icon name="arrow" /></button>
       <p v-if="!loading && !error && !searching && !organizations.length && !tournaments.length && !searchError" class="directory-state">{{ query ? 'Sin resultados.' : 'Aún no hay torneos publicados.' }}</p>
     </div>
   </div>

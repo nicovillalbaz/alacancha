@@ -48,3 +48,26 @@ test('Analytics requiere ID válido y solo se inserta en páginas públicas', as
     assert.doesNotMatch((await app.inject('/acceso')).body,/gtag\/js/);
   } finally {await app.close();await rm(directory,{recursive:true,force:true});}
 });
+
+test('alias de torneo abre directo, conserva SEO y redirige enlaces largos', async () => {
+  const directory=await mkdtemp(join(tmpdir(),'torneos-alias-'));
+  const tournamentId='33333333-3333-4333-8333-333333333333';
+  const page={organization_id:'11111111-1111-4111-8111-111111111111',organization_name:'Federación Caacupeña',public_slug:'federacion-larga',has_logo:true,tournament_id:tournamentId,tournament_name:'Copa Caacupé',tournament_slug:'fcfs-copacaacupe',has_emblem:true,official:false};
+  const pool={query:async()=>({rows:[page]})} as unknown as DatabasePool;
+  const app=Fastify();
+  try{
+    await writeFile(join(directory,'index.html'),'<html><head><title>Inicio</title></head><body><div id="app"></div></body></html>');
+    registerPublicWebRoutes(app,pool,'https://torneos.example',directory);
+    const direct=await app.inject('/fcfs-copacaacupe');
+    assert.equal(direct.statusCode,200);
+    assert.match(direct.body,/<title>Copa Caacupé · Federación Caacupeña<\/title>/);
+    assert.match(direct.body,/data-public-tournament-id="33333333-3333-4333-8333-333333333333"/);
+    assert.match(direct.body,/rel="canonical" href="https:\/\/torneos.example\/fcfs-copacaacupe"/);
+    assert.match(direct.body,/og:image/);
+    for(const oldPath of ['/federacion-larga',`/federacion-larga/${tournamentId}`]){
+      const old=await app.inject(oldPath);assert.equal(old.statusCode,308);assert.equal(old.headers.location,'https://torneos.example/fcfs-copacaacupe');
+    }
+    const root=await app.inject('/');assert.match(root.body,/href="\/fcfs-copacaacupe"/);
+    const sitemap=await app.inject('/sitemap.xml');assert.match(sitemap.body,/fcfs-copacaacupe/);assert.doesNotMatch(sitemap.body,/federacion-larga/);
+  }finally{await app.close();await rm(directory,{recursive:true,force:true});}
+});
