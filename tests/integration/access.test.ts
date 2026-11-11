@@ -2341,3 +2341,36 @@ test('T08: campeón de final ida y vuelta usa el global de dos actas aprobadas',
  }} as any;
  const champion=await loadFlyerSource(fake,org,'champion',back,'square',1,null);assert.equal(champion.title,'Azul');assert.deepEqual(champion.score,{home:2,away:3});assert.equal(champion.relatedApprovalId,approvalA);assert.equal(champion.approvalId,approvalB);
 });
+
+test('contraseña: cada cuenta cambia la propia; solo superadmin cambia la ajena', async () => {
+  const userId = randomUUID();
+  const account = username(`clave-${randomUUID().slice(0, 6)}`);
+  const nextPassword = 'ClaveNuevaLocal!2026';
+  const adminPassword = 'ClaveAdminLocal!2026';
+  await pool.query('INSERT INTO users(id,username,display_name,password_hash) VALUES($1,$2,$3,$4)', [userId, account, 'Operador de clave sintético', await hashPassword(password)]);
+  await pool.query("INSERT INTO memberships(id,organization_id,user_id,role,status) VALUES($1,$2,$3,'operator','active')", [randomUUID(), ids.b, userId]);
+  const first = await login(account, password, ids.b);
+  const second = await login(account, password, ids.b);
+  assert.equal((await app.inject({ method: 'POST', url: '/api/v1/auth/password', payload: { password: nextPassword } })).statusCode, 401);
+  assert.equal((await request(adminA, 'POST', `/admin/users/${userId}/password`, { password: adminPassword })).statusCode, 403);
+  assert.equal((await request(first, 'POST', '/auth/password', { password: 'corta' })).statusCode, 400);
+  assert.equal((await request(first, 'POST', '/auth/password', { password: nextPassword, organization_id: ids.a })).statusCode, 400);
+  const changed = await request(first, 'POST', '/auth/password', { password: nextPassword });
+  assert.equal(changed.statusCode, 200, changed.body);
+  assert.equal((await request(first, 'GET', '/auth/me')).statusCode, 200);
+  assert.equal((await request(second, 'GET', '/auth/me')).statusCode, 401);
+  const oldLogin = await app.inject({ method: 'POST', url: '/api/v1/auth/login', payload: { username: account, password }, remoteAddress: '203.0.113.180' });
+  assert.equal(oldLogin.statusCode, 401);
+  const current = await login(account, nextPassword, ids.b);
+  const reset = await request(owner, 'POST', `/admin/users/${userId}/password`, { password: adminPassword });
+  assert.equal(reset.statusCode, 200, reset.body);
+  assert.equal((await request(first, 'GET', '/auth/me')).statusCode, 401);
+  assert.equal((await request(current, 'GET', '/auth/me')).statusCode, 401);
+  assert.equal((await request(owner, 'GET', '/auth/me')).statusCode, 200);
+  await login(account, adminPassword, ids.b);
+  const { rows: [stored] } = await pool.query('SELECT password_hash FROM users WHERE id=$1', [userId]);
+  assert.match(stored.password_hash, /^\$argon2id\$/);
+  const { rows: logs } = await pool.query("SELECT action,before_data,after_data FROM audit_logs WHERE resource_id=$1 AND action IN ('password.changed','password.reset_by_admin') ORDER BY created_at", [userId]);
+  assert.equal(logs.length, 2);
+  assert.ok(logs.every((row) => row.before_data === null && row.after_data === null));
+});

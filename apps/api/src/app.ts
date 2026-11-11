@@ -258,6 +258,21 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     reply.clearCookie('torneos_session', { path: '/' });
     return reply.code(204).send();
   });
+  app.post('/api/v1/auth/password', { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } }, async (request) => {
+    const actor = requireAuth(request);
+    const { password } = z.object({ password: passwordSchema }).strict().parse(request.body);
+    await transaction(pool, async (client) => {
+      const { rows: [account] } = await client.query('SELECT id FROM users WHERE id=$1 AND disabled_at IS NULL FOR UPDATE', [actor.user_id]);
+      if (!account) fail(401, 'SESSION_REQUIRED', 'Volvé a ingresar para continuar.');
+      const { rowCount: activeSession } = await client.query('SELECT 1 FROM sessions WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL AND expires_at>now() FOR UPDATE', [actor.session_id, actor.user_id]);
+      if (!activeSession) fail(401, 'SESSION_REQUIRED', 'Volvé a ingresar para continuar.');
+      await client.query('UPDATE users SET password_hash=$1 WHERE id=$2', [await hashPassword(password), actor.user_id]);
+      await client.query('UPDATE sessions SET revoked_at=now() WHERE user_id=$1 AND id<>$2 AND revoked_at IS NULL', [actor.user_id, actor.session_id]);
+      await client.query("UPDATE invitations SET revoked_at=now() WHERE user_id=$1 AND purpose='recovery' AND used_at IS NULL AND revoked_at IS NULL", [actor.user_id]);
+      await audit(client, actor.user_id, null, 'password.changed', actor.user_id, 'Contraseña cambiada desde la cuenta');
+    });
+    return { updated: true };
+  });
   app.post('/api/v1/auth/context', async (request) => {
     const auth = requireAuth(request);
     const { organizationId } = z.object({ organizationId: z.uuid() }).strict().parse(request.body);
@@ -334,6 +349,21 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       await audit(client, actor.user_id, null, 'recovery.requested', userId, reason);
       return newInvitation(client, actor.user_id, userId, null, 'recovery');
     });
+  });
+  app.post('/api/v1/admin/users/:id/password', { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } }, async (request) => {
+    const actor = requireOwner(request);
+    const userId = uuid((request.params as { id: string }).id);
+    const { password } = z.object({ password: passwordSchema }).strict().parse(request.body);
+    if (userId === actor.user_id) fail(409, 'USE_OWN_ACCOUNT', 'Cambiá tu contraseña desde Cuenta.');
+    await transaction(pool, async (client) => {
+      const { rows: [account] } = await client.query('SELECT id FROM users WHERE id=$1 AND platform_admin=false FOR UPDATE', [userId]);
+      if (!account) fail(404, 'NOT_FOUND', 'No se encontró la cuenta.');
+      await client.query('UPDATE users SET password_hash=$1 WHERE id=$2', [await hashPassword(password), userId]);
+      await client.query('UPDATE sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL', [userId]);
+      await client.query("UPDATE invitations SET revoked_at=now() WHERE user_id=$1 AND purpose='recovery' AND used_at IS NULL AND revoked_at IS NULL", [userId]);
+      await audit(client, actor.user_id, null, 'password.reset_by_admin', userId, 'Contraseña cambiada por superadmin');
+    });
+    return { updated: true };
   });
   app.get('/api/v1/admin/audit', async (request) => { requireOwner(request); return (await pool.query(`SELECT a.id,a.action,a.reason,a.before_data,a.after_data,a.created_at,u.display_name actor,o.name organization_name FROM audit_logs a JOIN users u ON u.id=a.actor_id LEFT JOIN organizations o ON o.id=a.organization_id ORDER BY a.created_at DESC,a.id LIMIT 100`)).rows; });
 

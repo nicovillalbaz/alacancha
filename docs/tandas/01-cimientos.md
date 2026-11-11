@@ -4,6 +4,8 @@
 
 **Estado vigente 28/10/2026:** implementación técnica local y verificaciones completadas en el alcance del [acta funcional](../evidencias/t01-base-funcional.md). Aceptación de uso/física y puertas operativas abiertas; T01 no cerrada. [Arranque y accesos de muestra](../runbooks/desarrollo-local.md).
 
+**Incremento 11/11/2026:** cambio directo de contraseña propia y por superadmin en código local, con revocación de sesiones y auditoría. [Evidencia y límites](../evidencias/t01-cambio-contrasena-2026-11-11.md).
+
 | Ticket | Estado local | Evidencia/pendiente |
 |---|---|---|
 | T01-01 | Implementado | Monorepo, lockfile, Git local, configuración, PostgreSQL nativo y health/readiness; sin contenedores. |

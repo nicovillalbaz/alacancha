@@ -1,8 +1,8 @@
 # Web pública y flyers en un VPS, sin Docker
 
-Preparación para un futuro piloto; no autoriza migrar datos reales ni publicar el servicio.
+El acceso HTTPS provisional está activo; esto no autoriza importar datos reales ni iniciar el piloto.
 
-**Instalación del 11/11/2026:** [evidencia del VPS](../evidencias/t09-vps-preparado-2026-11-11.md). El dominio aún no existe: los servicios están en loopback y el firewall solo permite SSH. No abrir el login por HTTP público.
+**Instalación del 11/11/2026:** [preparación del VPS](../evidencias/t09-vps-preparado-2026-11-11.md) y [publicación HTTPS provisional](../evidencias/t09-vps-https-2026-11-11.md). `alacancha.webs.vc` apunta al VPS; Caddy escucha en 80/443 y redirige HTTP a HTTPS. La API y PostgreSQL permanecen en loopback. La URL es provisional y no fija la marca.
 
 ## Archivos operativos del VPS
 

@@ -220,6 +220,9 @@ const loading = ref(false), busy = ref(false), error = ref(''), success = ref(''
 const errorCode = ref('');
 const login = reactive({ username: '', password: '' });
 const showPassword = ref(false);
+const passwordDraft = ref('');
+const ownPasswordOpen = ref(false);
+const adminPasswordTarget = ref('');
 const search = ref(''), statusFilter = ref('Todos'), organizationSearch = ref('');
 const createDraft = reactive({ name: '', administratorName: '', username: '' });
 const creationRequestId = ref(crypto.randomUUID());
@@ -345,7 +348,7 @@ const navigation = computed(() => user.value?.platformAdmin ? [
   ['administradores', 'Administradores', 'users'], ['organizaciones', 'Organizaciones', 'grid'], ['actividad', 'Actividad', 'file'], ['cuenta', 'Cuenta', 'account'],
 ] : canManageTournaments() ? [['torneos', 'Torneo', 'trophy'], ['cuenta', 'Cuenta', 'account']] : user.value?.memberships.some(item=>item.organization_id===user.value?.organizationId && item.role==='operator' && item.status==='active') ? [['mis-partidos', 'Partidos', 'ball'], ['cuenta', 'Cuenta', 'account']] : [['equipos', 'Mi equipo', 'users'], ['cuenta', 'Cuenta', 'account']]);
 const memberReasons = ['Habilitación revisada', 'Solicitado por responsable', 'Revisión administrativa'];
-const actionNames: Record<string, string> = { 'organization.created': 'Organización creada', 'membership.access_changed': 'Acceso del administrador', 'organization.access_changed': 'Acceso de la organización', 'organization.brand_changed': 'Datos actualizados', 'organization.logo_changed': 'Logo actualizado', 'invitation.created': 'Invitación generada', 'invite.accepted': 'Invitación aceptada', 'recovery.created': 'Recuperación generada', 'recovery.requested': 'Recuperación solicitada', 'recovery.accepted': 'Cuenta recuperada' };
+const actionNames: Record<string, string> = { 'organization.created': 'Organización creada', 'membership.access_changed': 'Acceso del administrador', 'organization.access_changed': 'Acceso de la organización', 'organization.brand_changed': 'Datos actualizados', 'organization.logo_changed': 'Logo actualizado', 'invitation.created': 'Invitación generada', 'invite.accepted': 'Invitación aceptada', 'recovery.created': 'Recuperación generada', 'recovery.requested': 'Recuperación solicitada', 'recovery.accepted': 'Cuenta recuperada', 'password.changed': 'Contraseña cambiada', 'password.reset_by_admin': 'Contraseña cambiada por superadmin' };
 function normalize(value: string) { return value.toLocaleLowerCase('es').normalize('NFD').replace(/\p{Diacritic}/gu, ''); }
 function initials(value: string) { return value.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase(); }
 function publicTeam(teamId:string){return publicTeams.value.find(team=>team.id===teamId);}
@@ -1336,6 +1339,22 @@ async function signIn() {
   });
 }
 async function signOut() { await perform(async () => { await api('/auth/logout', 'POST');clearPrivate(); user.value = null; login.password = ''; go('publico'); }); }
+function toggleOwnPassword() { ownPasswordOpen.value = !ownPasswordOpen.value; passwordDraft.value = ''; }
+function toggleAdminPassword(userId: string) { adminPasswordTarget.value = adminPasswordTarget.value === userId ? '' : userId; passwordDraft.value = ''; }
+async function changeOwnPassword() {
+  await perform(async () => {
+    await api('/auth/password', 'POST', { password: passwordDraft.value });
+    passwordDraft.value = ''; ownPasswordOpen.value = false;
+    notify('Contraseña actualizada. Las otras sesiones se cerraron.');
+  });
+}
+async function changeAdminPassword(userId: string) {
+  await perform(async () => {
+    await api(`/admin/users/${userId}/password`, 'POST', { password: passwordDraft.value });
+    passwordDraft.value = ''; adminPasswordTarget.value = '';
+    notify('Contraseña actualizada. Las sesiones de esa cuenta se cerraron.');
+  });
+}
 async function createOrganization() {
   await perform(async () => { createResult.value = await api('/admin/organizations', 'POST', { ...createDraft, requestId: creationRequestId.value }); await loadAdmin(); notify('Organización creada. El administrador queda pendiente de habilitación.'); });
 }
@@ -1410,6 +1429,8 @@ function dateLabel(value: string) { return new Intl.DateTimeFormat('es-PY', { da
 const routeChanged = () => { route.value = routeFromLocation(); };
 const connectionChanged = () => { online.value = navigator.onLine; if(online.value && queuedCapture.value.length) void syncCaptureQueue(); };
 watch(route, (next, previous) => { success.value = ''; publishPreviewCategory.value = ''; showRuleEditor.value = next.startsWith('categoria/') && next.endsWith('/tarjetas'); if (next.startsWith('planilla/') && next !== previous) lineupSearch.value = ''; if (next.startsWith('fixture/') && next !== previous) fixtureSeedOrder.value = []; if (next.startsWith('equipo/') && next !== previous) { teamAction.value = null; teamTab.value='players'; } if (next.startsWith('jugador/') && next !== previous) playerTab.value='record'; if (next.startsWith('disciplina/') && next !== previous) {disciplineTab.value='cases';disciplineSettingsTab.value='case';} if (next.startsWith('partido/') && next !== previous) matchTab.value='events'; void loadView().then(async()=>{if(next.endsWith('/tarjetas')){await nextTick(); document.getElementById('rule-cards')?.scrollIntoView({block:'start'});}}); if(!next.endsWith('/tarjetas'))window.scrollTo(0, 0); });
+watch(route, () => { passwordDraft.value = ''; ownPasswordOpen.value = false; adminPasswordTarget.value = ''; });
+watch([route, user], async () => { await nextTick(); document.querySelector<HTMLElement>('.bottom-nav a[aria-current="page"]')?.scrollIntoView({ inline: 'center', block: 'nearest' }); }, { flush: 'post' });
 onMounted(() => { window.addEventListener('hashchange', routeChanged); window.addEventListener('popstate', routeChanged); window.addEventListener('online', connectionChanged); window.addEventListener('offline', connectionChanged); loadView(); });
 onUnmounted(() => { publicResultsStream?.close();privateMatchStream?.close();window.removeEventListener('hashchange', routeChanged); window.removeEventListener('popstate', routeChanged); window.removeEventListener('online', connectionChanged); window.removeEventListener('offline', connectionChanged); clearTimeout(toastTimer); });
 </script>
@@ -1492,7 +1513,7 @@ onUnmounted(() => { publicResultsStream?.close();privateMatchStream?.close();win
 
       <div v-else-if="user.platformAdmin && parts[0] === 'administrador' && selectedMember" class="form-page">
         <a href="#/administradores" class="back"><Icon name="back" />Administradores</a><div class="heading"><div><h1 tabindex="-1">{{ selectedMember.name }}</h1><p>{{ selectedMember.organization_name }}</p></div><span class="badge" :class="selectedMember.status">{{ accessLabels[selectedMember.status] }}</span></div>
-        <section class="panel pad"><div class="row"><span class="avatar">{{ initials(selectedMember.name) }}</span><div><strong>{{ roleLabels[selectedMember.role] }}</strong><p class="small muted">{{ selectedMember.username }}</p></div></div><a class="btn primary full mt" :href="`#/acceso-administrador/${selectedMember.id}`">Cambiar acceso<Icon name="shield" /></a><div class="action-grid mt"><a class="btn" :href="`#/invitar/${selectedMember.id}`"><Icon name="copy" />Invitación</a><a class="btn" :href="`#/recuperar/${selectedMember.id}`"><Icon name="lock" />Recuperar cuenta</a><a class="btn" :href="`#/organizacion/${selectedMember.organization_id}`"><Icon name="grid" />Organización</a></div></section>
+        <section class="panel pad"><div class="row"><span class="avatar">{{ initials(selectedMember.name) }}</span><div><strong>{{ roleLabels[selectedMember.role] }}</strong><p class="small muted">{{ selectedMember.username }}</p></div></div><a class="btn primary full mt" :href="`#/acceso-administrador/${selectedMember.id}`">Cambiar acceso<Icon name="shield" /></a><div class="action-grid mt"><a class="btn" :href="`#/invitar/${selectedMember.id}`"><Icon name="copy" />Invitación</a><button type="button" class="btn" :aria-expanded="adminPasswordTarget === selectedMember.user_id" @click="toggleAdminPassword(selectedMember.user_id)"><Icon name="lock" />Cambiar contraseña</button><a class="btn" :href="`#/organizacion/${selectedMember.organization_id}`"><Icon name="grid" />Organización</a></div><form v-if="adminPasswordTarget === selectedMember.user_id" class="stack mt" @submit.prevent="changeAdminPassword(selectedMember.user_id)"><div class="field"><label for="admin-new-password">Nueva contraseña</label><input id="admin-new-password" v-model="passwordDraft" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></div><p class="small muted">Se cerrarán sus sesiones en todas las organizaciones.</p><div class="row wrap"><button class="btn primary" :disabled="busy">{{ busy ? 'Guardando…' : 'Guardar' }}</button><button type="button" class="btn" :disabled="busy" @click="toggleAdminPassword(selectedMember.user_id)">Cancelar</button></div></form></section>
       </div>
 
       <div v-else-if="user.platformAdmin && ['acceso-administrador', 'estado-organizacion'].includes(parts[0]) && accessTarget && accessDraft" class="form-page">
@@ -1917,7 +1938,7 @@ onUnmounted(() => { publicResultsStream?.close();privateMatchStream?.close();win
       </template>
 
       <template v-else-if="parts[0] === 'cuenta'">
-        <div class="form-page"><div class="heading"><div><h1 tabindex="-1">Cuenta</h1></div></div><section class="panel pad"><div class="row"><span class="avatar">{{ initials(user.name) }}</span><div><h2>{{ user.name }}</h2><p class="small muted">{{ user.username }}</p></div></div><dl class="key-values"><div v-if="user.organizationId"><dt>Organización actual</dt><dd>{{ currentOrgName }}</dd></div></dl><a v-if="!user.platformAdmin && user.memberships.length > 1" href="#/organizaciones" class="btn full">Cambiar organización</a><button class="btn full mt" :disabled="busy" @click="signOut"><Icon name="exit" />Cerrar sesión</button></section></div>
+        <div class="form-page"><div class="heading"><div><h1 tabindex="-1">Cuenta</h1></div></div><section class="panel pad"><div class="row"><span class="avatar">{{ initials(user.name) }}</span><div><h2>{{ user.name }}</h2><p class="small muted">{{ user.username }}</p></div></div><dl class="key-values"><div v-if="user.organizationId"><dt>Organización actual</dt><dd>{{ currentOrgName }}</dd></div></dl><a v-if="!user.platformAdmin && user.memberships.length > 1" href="#/organizaciones" class="btn full">Cambiar organización</a><button type="button" class="btn full mt" :aria-expanded="ownPasswordOpen" @click="toggleOwnPassword"><Icon name="lock" />Cambiar contraseña</button><form v-if="ownPasswordOpen" class="stack mt" @submit.prevent="changeOwnPassword"><div class="field"><label for="own-new-password">Nueva contraseña</label><input id="own-new-password" v-model="passwordDraft" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></div><div class="row wrap"><button class="btn primary" :disabled="busy">{{ busy ? 'Guardando…' : 'Guardar' }}</button><button type="button" class="btn" :disabled="busy" @click="toggleOwnPassword">Cancelar</button></div></form><button class="btn full mt" :disabled="busy" @click="signOut"><Icon name="exit" />Cerrar sesión</button></section></div>
       </template>
       <section v-else-if="!loading" class="panel empty"><Icon /><h1 tabindex="-1">No se puede abrir esta pantalla</h1><p>Revisá tu acceso o volvé al inicio.</p><a class="btn" :href="`#/${user.platformAdmin ? 'administradores' : 'inicio'}`">Volver al inicio</a></section>
     </main>
