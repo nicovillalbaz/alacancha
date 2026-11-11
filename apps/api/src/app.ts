@@ -9,6 +9,7 @@ import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { createPool, transaction, audit, type DatabasePool } from '@torneos/db';
+import type { ServerResponse } from 'node:http';
 import { accessSchema, organizationSchema, loginSchema, brandSchema, tokenSchema, acceptSchema, passwordSchema, tournamentSetupSchema, categoryAddSchema, ruleSchema, ruleEditSchema, publishSchema, teamCreateSchema, teamRenameSchema, teamEntrySchema, teamAdminSchema, teamPersonSchema, teamPublicationSchema, venueCreateSchema, sponsorCreateSchema, sponsorPublicationSchema, playerDraftSchema, goodFaithSubmitSchema, goodFaithReviewSchema, playerDocumentLabelSchema, playerEvidenceReviewSchema, movementDeclareSchema, restrictionCreateSchema, calendarDateSchema, draftMatchSchema, lineupSaveSchema, lineupTransitionSchema, lineupReviewSchema, playerImportPreviewSchema, playerImportCommitSchema, playerIdentityEditSchema, playerReuseSchema, matchdayCreateSchema, fixtureScheduleSchema, matchdayPublishSchema, positionBlueprintSchema, matchEventSchema, matchEventVoidSchema, matchPeriodCodes, projectMatchJournal, roundRobin, drawGroups, knockoutBracket, previewCompetitionBracket, type PlayerDraftInput, type CurrentUser, type MatchCaptureView, type MatchJournalEvent } from '@torneos/shared';
 import { digest, opaqueToken, csrfFor, safeEquals, hashPassword, verifyPassword, documentFingerprint, encryptDocument, decryptDocument, normalizeDocument } from './security.ts';
 import type { Config } from './config.ts';
@@ -57,6 +58,9 @@ const requireOwner = (request: FastifyRequest): Auth => {
 export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
   const pool = suppliedPool || createPool(config.databaseUrl);
   const app = Fastify({ logger: false, bodyLimit: 64 * 1024, trustProxy: config.production ? '127.0.0.1' : false });
+  const openStreams = new Set<ServerResponse>();
+  const trackStream = (stream: ServerResponse) => { openStreams.add(stream); stream.once('close', () => openStreams.delete(stream)); };
+  app.addHook('preClose', async () => { for (const stream of openStreams) stream.end(); });
   app.decorateRequest('auth', null);
   await app.register(cookie);
   await app.register(rateLimit, { global: false });
@@ -2355,6 +2359,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       WHERE p.organization_id=$1 GROUP BY p.blueprint_id,b.category_id`;
     const drawVersions=new Map<string,number>((await pool.query(drawVersionsSql,[organizationId])).rows.map(item=>[item.blueprint_id,item.revision]));
     reply.hijack();reply.raw.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache, no-transform','Connection':'keep-alive','X-Accel-Buffering':'no'});
+    trackStream(reply.raw);
     reply.raw.write('event: ready\ndata: {}\n\n');
     let cursor=new Date().toISOString(),lastId='00000000-0000-0000-0000-000000000000';
     let running=false,closed=false;
@@ -2719,6 +2724,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const {id,matchId}=request.params as {id:string;matchId:string};const organizationId=uuid(id),match=uuid(matchId);
     await captureAccess(request,organizationId,match,'read');
     reply.hijack();reply.raw.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache, no-transform','Connection':'keep-alive','X-Accel-Buffering':'no'});
+    trackStream(reply.raw);
     reply.raw.write('event: ready\ndata: {}\n\n');
     let cursor=new Date().toISOString(),lastId='00000000-0000-0000-0000-000000000000',running=false,closed=false;
     const poll=async()=>{if(running||closed)return;running=true;try{

@@ -2426,6 +2426,9 @@ test('T04/T08: una página pública abierta recibe el sorteo publicado sin recar
     }
     assert.match(received,/event: draw/);
     assert.match(received,new RegExp(categoryId));
+    const closingAt=Date.now();
+    await streamApp.close();
+    assert.ok(Date.now()-closingAt<3000,'El servidor debe cerrar SSE sin agotar el tiempo de reinicio.');
   }finally{
     clearTimeout(timeout);
     controller.abort();
