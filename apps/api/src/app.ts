@@ -107,6 +107,11 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     if (!result.rowCount || auth.organization_id !== organizationId || (write && result.rows[0].role !== 'tournament_admin')) fail(403, 'SCOPE_DENIED', 'No tenés permiso para operar en esta organización.');
     return auth;
   }
+  async function organizationBrandAccess(request: FastifyRequest, organizationId: string, write = false) {
+    const auth = requireAuth(request);
+    if (auth.platform_admin) return requireOwner(request);
+    return organizationAccess(request, organizationId, write);
+  }
   async function teamAccess(request: FastifyRequest, organizationId: string, entryId: string, organizerOnly = false) {
     const auth = await organizationAccess(request, organizationId);
     const { rows: [membership] } = await pool.query("SELECT id,role FROM memberships WHERE user_id=$1 AND organization_id=$2 AND status='active'", [auth.user_id, organizationId]);
@@ -402,7 +407,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     if (!organization) fail(404, 'NOT_FOUND', 'No se encontró la organización.'); return organization;
   });
   app.patch('/api/v1/organizations/:id/branding', async (request) => {
-    const id = uuid((request.params as { id: string }).id); const actor = await organizationAccess(request, id, true); const input = brandSchema.parse(request.body);
+    const id = uuid((request.params as { id: string }).id); const actor = await organizationBrandAccess(request, id, true); const input = brandSchema.parse(request.body);
     return transaction(pool, async (client) => {
       const { rows: [organization] } = await client.query('SELECT id,name,accent,version FROM organizations WHERE id=$1 FOR UPDATE', [id]);
       if (!organization || organization.version !== input.version) fail(409, 'STALE_VERSION', 'Los datos cambiaron en otra pantalla. Actualizá antes de guardar.');
@@ -411,7 +416,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     });
   });
   app.post('/api/v1/organizations/:id/logo', async (request, reply) => {
-    const id = uuid((request.params as { id: string }).id); const actor = await organizationAccess(request, id, true);
+    const id = uuid((request.params as { id: string }).id); const actor = await organizationBrandAccess(request, id, true);
     const file = await request.file(); if (!file) fail(400, 'FILE_REQUIRED', 'Elegí una imagen PNG, JPG o WebP.');
     const data = await file!.toBuffer();
     const { contentType, extension } = imageFormat(data, file!.mimetype);
@@ -427,7 +432,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     return reply.code(201).send({ id: mediaId });
   });
   app.get('/api/v1/organizations/:id/logo', async (request, reply) => {
-    const id = uuid((request.params as { id: string }).id); await organizationAccess(request, id);
+    const id = uuid((request.params as { id: string }).id); await organizationBrandAccess(request, id);
     const { rows: [media] } = await pool.query('SELECT m.filename,m.content_type FROM media m JOIN organizations o ON o.logo_id=m.id AND o.id=m.organization_id WHERE o.id=$1', [id]);
     if (!media) fail(404, 'NOT_FOUND', 'Esta organización todavía no tiene logo.');
     if (!/^[0-9a-f-]+\.(png|jpg|webp)$/.test(media.filename)) fail(500, 'INVALID_FILE', 'No se pudo abrir el archivo.');

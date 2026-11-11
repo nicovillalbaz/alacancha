@@ -213,6 +213,20 @@ test('logo de organización: carga propia, acceso cruzado y lectura pública', a
   }
   assert.deepEqual((await app.inject(publicPath)).rawPayload, image);
   assert.equal((await app.inject(`/api/v1/public/organizations/${ids.b}/logo`)).statusCode, 404);
+  const ownerDownload = await request(owner, 'GET', `/organizations/${ids.a}/logo`);
+  assert.equal(ownerDownload.statusCode, 200);
+  assert.deepEqual(ownerDownload.rawPayload, image);
+  const ownerUpload = await app.inject({ method: 'POST', url: `/api/v1/organizations/${ids.a}/logo`, headers: { ...headers(owner), 'content-type': `multipart/form-data; boundary=${boundary}` }, payload });
+  assert.equal(ownerUpload.statusCode, 201, ownerUpload.body);
+});
+
+test('marca de organización: superadmin puede editarla sin heredar datos del torneo', async () => {
+  const {rows:[current]}=await pool.query('SELECT name,version FROM organizations WHERE id=$1',[ids.a]);
+  const changed=await request(owner,'PATCH',`/organizations/${ids.a}/branding`,{name:current.name,accent:'#165D46',version:current.version});
+  assert.equal(changed.statusCode,200,changed.body);
+  assert.equal(changed.json().accent,'#165D46');
+  assert.equal((await request(adminB,'PATCH',`/organizations/${ids.a}/branding`,{name:current.name,accent:'#165D46',version:changed.json().version})).statusCode,403);
+  assert.equal((await request(teamA,'PATCH',`/organizations/${ids.a}/branding`,{name:current.name,accent:'#165D46',version:changed.json().version})).statusCode,403);
 });
 test('T02: emblema de torneo privado hasta publicar y aislado por organización', async () => {
   const tournament = await newTournament();

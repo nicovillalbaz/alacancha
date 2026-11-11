@@ -14,7 +14,7 @@ for(const name of sources){
       const pathNode=node.arguments[0],handler=node.arguments.at(-1);
       if(pathNode&&ts.isStringLiteral(pathNode)&&handler){
         const route=pathNode.text,body=handler.getText(file);
-        const access=route.startsWith('/api/v1/public/')||publicPaths.has(route)?'public-or-token':/\b(?:organizationAccess|teamAccess|teamScope|captureAccess|requireAuth|requireOwner|access)\s*\(/.test(body)?'guarded':'REVIEW';
+        const access=route.startsWith('/api/v1/public/')||publicPaths.has(route)?'public-or-token':/\b(?:organizationAccess|organizationBrandAccess|teamAccess|teamScope|captureAccess|requireAuth|requireOwner|access)\s*\(/.test(body)?'guarded':'REVIEW';
         routes.push({method:node.expression.name.text.toUpperCase(),path:route,file:name,line:file.getLineAndCharacterOfPosition(node.getStart(file)).line+1,access});
       }
     }
