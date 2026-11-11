@@ -2418,6 +2418,11 @@ test('T04/T08: una página pública abierta recibe el sorteo publicado sin recar
     assert.match(decoder.decode(first.value),/event: ready/);
     const published=await request(adminA,'POST',`${base}/publish-draw`,{expectedRevision:plan.blueprint.revision});
     assert.equal(published.statusCode,200,published.body);
+    const publicPlayers=`/api/v1/public/organizations/${ids.a}/draws/${categoryId}/teams/${team.json().entryId}/players`;
+    const roster=await app.inject({method:'GET',url:publicPlayers});
+    assert.equal(roster.statusCode,200,roster.body);
+    assert.deepEqual(roster.json(),[]);
+    assert.equal((await app.inject({method:'GET',url:publicPlayers.replace(ids.a,ids.b)})).statusCode,404);
     let received='';
     while(!received.includes(`"categoryId":"${categoryId}"`)){
       const chunk=await reader.read();

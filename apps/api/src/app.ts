@@ -834,6 +834,24 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const names=await playerStatNames(pool,organizationId,state.playerTotals.map(player=>player.registrationId));
     return {available:true,competition:state.competition,results:state.results,matches:state.matches.filter(match=>match.day_status==='published'),players:state.playerTotals.filter(player=>names.get(player.registrationId)?.publicName).map(player=>({...player,name:names.get(player.registrationId)!.name})),defense:state.defense,titleTie:state.titleTie,titleExtra:state.titleExtra&&state.titleExtra.dayStatus==='published'?state.titleExtra:state.titleExtra?.decision==='no_extra'?state.titleExtra:null};
   });
+  app.get('/api/v1/public/organizations/:id/draws/:categoryId/teams/:entryId/players',async request=>{
+    const {id,categoryId,entryId}=request.params as {id:string;categoryId:string;entryId:string};
+    const organizationId=uuid(id),category=uuid(categoryId),entry=uuid(entryId);
+    const {rows:[publication]}=await pool.query(`SELECT p.snapshot FROM fixture_position_publications p
+      JOIN fixture_position_blueprints b ON b.organization_id=p.organization_id AND b.id=p.blueprint_id
+      JOIN organizations o ON o.id=p.organization_id AND o.status='active'
+      WHERE p.organization_id=$1 AND b.category_id=$2 ORDER BY p.revision DESC LIMIT 1`,[organizationId,category]);
+    const publicTeams=publication?.snapshot?.teams as Array<{entry_id:string}>|undefined;
+    if(!publicTeams?.some(team=>team.entry_id===entry))fail(404,'TEAM_NOT_PUBLIC','No se encontró el equipo público.');
+    const {rows}=await pool.query(`SELECT p.given_names,p.family_names FROM player_registrations pr
+      JOIN team_entries e ON e.organization_id=pr.organization_id AND e.id=pr.entry_id
+      JOIN players p ON p.organization_id=pr.organization_id AND p.id=pr.player_id
+      JOIN player_publications pub ON pub.organization_id=pr.organization_id AND pub.registration_id=pr.id AND pub.visible
+      WHERE pr.organization_id=$1 AND pr.entry_id=$2 AND e.category_id=$3 AND e.status='active'
+        AND pr.status<>'rejected' AND pr.reverted_at IS NULL
+      ORDER BY p.given_names,p.family_names,pr.id LIMIT 500`,[organizationId,entry,category]);
+    return rows.map(player=>({name:`${player.given_names} ${player.family_names}`}));
+  });
   app.get('/api/v1/public/organizations/:id/draws/teams/:teamId/shield', async (request, reply) => {
     const { id, teamId } = request.params as { id:string; teamId:string };
     const organizationId=uuid(id),team=uuid(teamId);

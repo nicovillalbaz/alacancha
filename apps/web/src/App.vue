@@ -21,6 +21,7 @@ const BracketView = lazyScreen(() => import('./BracketView.vue'));
 const FanPortal = lazyScreen(() => import('./FanPortal.vue'));
 const TournamentWorkspace = lazyScreen(() => import('./TournamentWorkspace.vue'));
 const PositionBlueprint = lazyScreen(() => import('./PositionBlueprint.vue'));
+const PositionMatches = lazyScreen(() => import('./PositionMatches.vue'));
 const PositionStatistics = lazyScreen(() => import('./PositionStatistics.vue'));
 const PublicPositionPortal = lazyScreen(() => import('./PublicPositionPortal.vue'));
 const FlyerSettings = lazyScreen(() => import('./FlyerSettings.vue'));
@@ -496,7 +497,7 @@ async function loadTournamentSection() {
     workspaceBlueprint.value = { ...(await api<PositionBlueprintView>(`/organizations/${organizationId}/categories/${categoryId}/fixture/blueprint`)), categoryId };
     workspaceCompetition.value=workspaceBlueprint.value.blueprint?await api<PositionCompetitionView>(`/organizations/${organizationId}/categories/${categoryId}/fixture/blueprint/competition`):null;
   }
-  if (['equipos','pagos','estadisticas','fixture'].includes(tournamentSection.value)) await loadTeams();
+  if (['equipos','pagos','estadisticas','fixture','partidos'].includes(tournamentSection.value)) await loadTeams();
   if (tournamentSection.value === 'multas' && canManageTournaments()) {
     const results = await Promise.all(categories.map(async category => [category.category_id, await api<DisciplineCase[]>(`/organizations/${organizationId}/categories/${category.category_id}/discipline/cases`)] as const));
     workspaceCases.value = Object.fromEntries(results);
@@ -1594,6 +1595,7 @@ onUnmounted(() => { publicResultsStream?.close();privateMatchStream?.close();win
         <PaymentsWorkspace v-if="parts[0] === 'torneo' && tournamentSection === 'pagos' && canManageTournaments()" :key="selectedTournament.id" :organization-id="user.organizationId!" :tournament-id="selectedTournament.id" :teams="tournamentEntries" :categories="tournamentCategories" :initial-entry-id="parts[3] === 'tarifas' ? '' : parts[3]" :show-rates="parts[3] === 'tarifas'" :csrf-token="user.csrfToken" />
         <FixtureDayEditor v-else-if="parts[0] === 'torneo' && tournamentSection === 'fixture' && parts[3] && canManageTournaments()" :tournament="selectedTournament" :categories="tournamentCategories" :entries="tournamentEntries" :days="tournamentDays" :day-id="parts[3]" :focus-match-id="parts[4]" :venues="tournamentResources.venues" :official-match-ids="workspaceOfficialMatchIds" :organization-id="user.organizationId!" :csrf-token="user.csrfToken" @refresh="loadTournamentSection" />
         <PositionBlueprint v-else-if="parts[0] === 'torneo' && tournamentSection === 'fixture' && workspaceBlueprint.blueprint && workspaceBlueprint.categoryId === selectedTournament.category_id" :view="workspaceBlueprint" :competition="workspaceCompetition" :entries="tournamentEntries" :can-manage="canManageTournaments()" :organization-id="user.organizationId!" :category-id="selectedTournament.category_id" :tournament-id="selectedTournament.id" :csrf-token="user.csrfToken" @refresh="loadTournamentSection" />
+        <PositionMatches v-else-if="parts[0] === 'torneo' && tournamentSection === 'partidos' && workspaceBlueprint.blueprint && workspaceBlueprint.categoryId === selectedTournament.category_id" :view="workspaceBlueprint" :competition="workspaceCompetition" :entries="tournamentEntries" :organization-id="user.organizationId!" :category-id="selectedTournament.category_id" :tournament-id="selectedTournament.id" />
         <PositionStatistics v-else-if="parts[0]==='torneo' && tournamentSection==='estadisticas' && workspaceBlueprint.blueprint && workspaceBlueprint.categoryId===selectedTournament.category_id" :view="workspaceBlueprint" :competition="workspaceCompetition" :entries="tournamentEntries" :organization-id="user.organizationId!" :can-manage="canManageTournaments()" @decide-title-extra="decideTitleExtra" @decide-tiebreak="decidePositionTiebreak" />
         <TournamentWorkspace v-else-if="parts[0] === 'torneo'" :tournament="selectedTournament" :categories="tournamentCategories" :entries="tournamentEntries" :days="tournamentDays" :official-match-ids="workspaceOfficialMatchIds" :scores="workspaceScores" :cases="workspaceCases" :stats="workspaceStats" :brackets="workspaceBrackets" :position-blueprint="workspaceBlueprint" :position-competition="workspaceCompetition" :section="tournamentSection" :day-id="parts[3]" :can-manage="canManageTournaments()" :organization-id="user.organizationId!" :csrf-token="user.csrfToken" @refresh="loadView(true)" />
         <template v-if="parts[0] === 'torneo' && tournamentSection === 'ajustes'">
