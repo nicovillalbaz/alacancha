@@ -9,7 +9,7 @@ const open=ref(false),tab=ref('events');
 const players=computed(()=>props.match.result?.players?.length?props.match.result.players:[...new Map((props.match.result?.events||[]).filter(event=>event.name!=='Jugador').map(event=>[`${event.side}:${event.name}`,{name:event.name,side:event.side,shirtNumber:null}])).values()]);
 const id=`public-match-${props.match.id}`;
 function initials(name:string){return name.split(/\s+/).slice(0,2).map(part=>part[0]||'').join('').toUpperCase();}
-function eventName(event:Event){return event.cardLabel||({goal:'Gol',penalty:'Penal',own_goal:'Autogol',yellow:'Amarilla',second_yellow:'Segunda amarilla',red:'Roja',custom_card:'Tarjeta',substitution:'Cambio',incident:'Incidencia',shootout_goal:'Penal convertido',shootout_miss:'Penal fallado'} as Record<string,string>)[event.kind]||'Evento';}
+function eventName(event:Event){return event.cardLabel||({goal:'Gol',penalty:'Gol de penal',penalty_miss:'Penal errado',own_goal:'Autogol',yellow:'Amarilla',second_yellow:'Segunda amarilla',red:'Roja',custom_card:'Tarjeta',substitution:'Cambio',incident:'Incidencia',shootout_goal:'Penal convertido',shootout_miss:'Penal fallado'} as Record<string,string>)[event.kind]||'Evento';}
 </script>
 <template>
   <div class="public-match">

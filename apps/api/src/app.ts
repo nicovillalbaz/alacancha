@@ -91,6 +91,14 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     }
   });
   app.setErrorHandler((error, request, reply) => {
+    const failureInfo = (typeof error === 'object' && error !== null ? error : {}) as { code?: string; statusCode?: number };
+    const status = error instanceof ZodError ? 400 : error instanceof ApiError ? error.statusCode : failureInfo.code === '23505' ? 409 : failureInfo.statusCode && failureInfo.statusCode < 500 ? failureInfo.statusCode : 500;
+    const code = error instanceof ZodError ? 'INVALID_INPUT' : error instanceof ApiError ? error.code : failureInfo.code === '23505' ? 'ALREADY_EXISTS' : failureInfo.statusCode === 429 ? 'TOO_MANY_ATTEMPTS' : 'REQUEST_FAILED';
+    const route = (request.routeOptions.url || '(unmatched)').slice(0,180);
+    const safeMessage = error instanceof ApiError ? error.message.slice(0,500) : error instanceof ZodError ? error.issues[0]?.message?.slice(0,500) : null;
+    void pool.query('INSERT INTO technical_error_logs(id,source,organization_id,actor_id,request_id,operation,method,status_code,error_code,error_type,message) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+      [randomUUID(),'api',request.auth?.organization_id||null,request.auth?.user_id||null,String(request.id).slice(0,100),route,request.method,status,code,error instanceof Error?error.name:'Unknown',safeMessage]
+    ).catch(logError=>console.error(JSON.stringify({event:'technical_error_log_failed',requestId:request.id,errorType:logError instanceof Error?logError.name:'Unknown'})));
     if (error instanceof ZodError) return reply.code(400).send({ code: 'INVALID_INPUT', message: error.issues[0]?.message || 'Revisá los datos ingresados.' });
     if (error instanceof ApiError) return reply.code(error.statusCode).send({ code: error.code, message: error.message });
     const failure = (typeof error === 'object' && error !== null ? error : {}) as { code?: string; statusCode?: number };
@@ -99,6 +107,11 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     if (failure.statusCode === 413) return reply.code(413).send({ code: 'FILE_TOO_LARGE', message: 'La imagen debe pesar como máximo 2 MB.' });
     if (!failure.statusCode || failure.statusCode >= 500) console.error(JSON.stringify({ event: 'request_failed', requestId: request.id, method: request.method, route: request.routeOptions.url || '(unmatched)', errorType: error instanceof Error ? error.name : 'Unknown', errorCode: failure.code || null }));
     return reply.code(failure.statusCode && failure.statusCode < 500 ? failure.statusCode : 500).send({ code: 'REQUEST_FAILED', message: 'No se pudo completar la operación. Tus datos del formulario se conservan.' });
+  });
+  app.get('/api/v1/admin/error-logs',async request=>{
+    requireOwner(request);
+    const {rows}=await pool.query('SELECT id,occurred_at,source,organization_id,request_id,operation,method,status_code,error_code,error_type,message,resource_id FROM technical_error_logs ORDER BY occurred_at DESC,id DESC LIMIT 100');
+    return rows;
   });
 
   async function currentUser(auth: Auth): Promise<CurrentUser> {
@@ -459,7 +472,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
         WHERE t.organization_id=o.id))`, [organizationId]);
     if (!media) fail(404, 'NOT_FOUND', 'No hay logo público para esta organización.');
     if (!/^[0-9a-f-]+\.(png|jpg|webp)$/.test(media.filename)) fail(500, 'INVALID_FILE', 'No se pudo abrir el archivo.');
-    return reply.type(media.content_type).send(await readFile(resolve(config.mediaDir, media.filename)));
+    return reply.header('Cache-Control','public, max-age=60, stale-while-revalidate=300').type(media.content_type).send(await readFile(resolve(config.mediaDir, media.filename)));
   });
 
   const tournamentRows = `SELECT t.id,t.name,t.public_slug,t.timezone,t.status,(t.emblem_id IS NOT NULL) has_emblem,e.id edition_id,e.name edition_name,c.id category_id,c.name category_name,c.preset,c.team_limit,r.version rule_version,r.revision rule_revision,r.status rule_status,r.rules || jsonb_build_object('maxBenchStaff',COALESCE(r.rules->'maxBenchStaff','0'::jsonb),'substitutions',COALESCE(r.rules->'substitutions','null'::jsonb),'eligibility',COALESCE(r.rules->'eligibility','null'::jsonb),'advanced',COALESCE(r.rules->'advanced','null'::jsonb),'initialPhase',COALESCE(r.rules->'initialPhase','null'::jsonb)) rules
@@ -584,7 +597,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
         WHERE ed.organization_id=t.organization_id AND ed.tournament_id=t.id))`, [organizationId, tournament]);
     if (!media) fail(404, 'NOT_FOUND', 'No hay emblema público para este torneo.');
     if (!/^[0-9a-f-]+\.(png|jpg|webp)$/.test(media.filename)) fail(500, 'INVALID_FILE', 'No se pudo abrir el archivo.');
-    return reply.type(media.content_type).send(await readFile(resolve(config.mediaDir, media.filename)));
+    return reply.header('Cache-Control','public, max-age=60, stale-while-revalidate=300').type(media.content_type).send(await readFile(resolve(config.mediaDir, media.filename)));
   });
   app.post('/api/v1/organizations/:id/tournaments', async (request, reply) => {
     const organizationId = uuid((request.params as { id: string }).id);
@@ -861,7 +874,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       WHERE t.organization_id=$1 AND t.id=$2 AND EXISTS (SELECT 1 FROM fixture_position_publications p WHERE p.organization_id=t.organization_id AND (p.snapshot->'slots' @> jsonb_build_array(jsonb_build_object('team_id',t.id)) OR p.snapshot->'teams' @> jsonb_build_array(jsonb_build_object('team_id',t.id))) LIMIT 1)`,[organizationId,team]);
     if(!media)fail(404,'NOT_FOUND','No hay escudo público para este equipo.');
     if(!/^[0-9a-f-]+\.(png|jpg|webp)$/.test(media.filename))fail(500,'INVALID_FILE','No se pudo abrir el archivo.');
-    return reply.type(media.content_type).send(await readFile(resolve(config.mediaDir,media.filename)));
+    return reply.header('Cache-Control','public, max-age=60, stale-while-revalidate=300').type(media.content_type).send(await readFile(resolve(config.mediaDir,media.filename)));
   });
 
   app.get('/api/v1/organizations/:id/categories', async (request) => {
@@ -1125,7 +1138,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const { rows: [media] } = await pool.query(`SELECT m.filename,m.content_type FROM teams t JOIN media m ON m.organization_id=t.organization_id AND m.id=t.shield_id JOIN team_entries e ON e.organization_id=t.organization_id AND e.team_id=t.id JOIN categories c ON c.organization_id=e.organization_id AND c.id=e.category_id JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id JOIN tournaments tr ON tr.organization_id=ed.organization_id AND tr.id=ed.tournament_id JOIN organizations o ON o.id=t.organization_id WHERE t.organization_id=$1 AND t.id=$2 AND o.status='active' AND e.status='active' AND e.public_visible AND c.status='published' AND ed.status='published' AND tr.status='published' LIMIT 1`, [organizationId, team]);
     if (!media) fail(404, 'NOT_FOUND', 'No hay escudo público para este equipo.');
     if (!/^[0-9a-f-]+\.(png|jpg|webp)$/.test(media.filename)) fail(500, 'INVALID_FILE', 'No se pudo abrir el archivo.');
-    return reply.type(media.content_type).send(await readFile(resolve(config.mediaDir, media.filename)));
+    return reply.header('Cache-Control','public, max-age=60, stale-while-revalidate=300').type(media.content_type).send(await readFile(resolve(config.mediaDir, media.filename)));
   });
   for (const kind of ['commission','staff'] as const) {
     const table = kind === 'commission' ? 'commission_members' : 'team_staff';
@@ -2713,7 +2726,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const {score,shootout,unattributedGoals}=projectMatchJournal(events,record.home_entry_id,record.away_entry_id);
     const { rows: [rule] } = await pool.query('SELECT rules FROM rule_versions WHERE organization_id=$1 AND category_id=(SELECT category_id FROM draft_matches WHERE organization_id=$1 AND id=$2) AND version=$3', [organizationId, matchId, record.rule_version]);
     const periods = ruleSchema.safeParse(rule?.rules);
-    const allowedKinds:MatchCaptureView['allowedKinds']=['goal','penalty','own_goal','incident','shootout_goal','shootout_miss'];
+    const allowedKinds:MatchCaptureView['allowedKinds']=['goal','penalty','penalty_miss','own_goal','incident','shootout_goal','shootout_miss'];
     allowedKinds.push('yellow','second_yellow','red','substitution');
     const customCards = periods.success ? periods.data.advanced?.discipline.customCards || [] : [];
     if (customCards.length) allowedKinds.push('custom_card');

@@ -1,4 +1,4 @@
-export type MatchEventKind = 'goal' | 'penalty' | 'own_goal' | 'yellow' | 'second_yellow' | 'red' | 'custom_card' | 'substitution' | 'incident' | 'shootout_goal' | 'shootout_miss' | 'void';
+export type MatchEventKind = 'goal' | 'penalty' | 'penalty_miss' | 'own_goal' | 'yellow' | 'second_yellow' | 'red' | 'custom_card' | 'substitution' | 'incident' | 'shootout_goal' | 'shootout_miss' | 'void';
 export interface MatchJournalEvent {
   id: string;
   sequence: number;

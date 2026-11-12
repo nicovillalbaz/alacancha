@@ -292,7 +292,7 @@ test('limitación de intentos responde sin revelar si el usuario existe', async 
 });
 test('migración repetible y seed rechazado fuera de las bases locales autorizadas', async () => {
   await migrate(pool);
-  const { rows: [count] } = await pool.query('SELECT count(*)::int total FROM schema_migrations'); assert.equal(count.total, 48);
+  const { rows: [count] } = await pool.query('SELECT count(*)::int total FROM schema_migrations'); assert.equal(count.total, 50);
   await assert.rejects(seed(pool, 'postgresql://no:sinuso@127.0.0.1:55461/produccion'), /solo se permiten/);
 });
 
@@ -332,6 +332,14 @@ test('Pagos: tarifas por torneo, multa pendiente, cobro parcial, ingresos, salid
   const changed=await request(adminA,'POST',`${root}/rates`,{yellowGuaranies:15000,redGuaranies:60000,customCardRates});assert.equal(changed.statusCode,200,changed.body);assert.equal(changed.json().version,2);
   assert.deepEqual((await request(adminA,'GET',root)).json().rates.customCardRates,customCardRates);
   assert.equal((await request(adminA,'GET',root)).json().entries.find((item:any)=>item.id===charge.json().id).amount_guaranies,50000);
+  assert.equal((await request(adminB,'POST',`${root}/cards`,{categoryId,label:'Verde',color:'#168040',suspensionMatches:0,amountGuaranies:7000})).statusCode,403);
+  assert.equal((await request(adminA,'POST',`${root}/cards`,{categoryId,label:'Verde',color:'#168040',suspensionMatches:0,amountGuaranies:7000})).json().code,'RULES_DRAFT');
+  const published=await request(adminA,'POST',`/organizations/${ids.a}/categories/${categoryId}/rules/publish`,{expectedRevision:1,reason:'Reglamento inicial confirmado'});assert.equal(published.statusCode,200,published.body);
+  const added=await request(adminA,'POST',`${root}/cards`,{categoryId,label:'Verde',color:'#168040',suspensionMatches:0,amountGuaranies:7000});assert.equal(added.statusCode,200,added.body);
+  const key=`${categoryId}:${added.json().code}`;
+  const cardBook=(await request(adminA,'GET',root)).json();assert.equal(cardBook.rates.customCardRates[key],7000);assert.equal(cardBook.cards.find((card:any)=>card.key===key)?.label,'Verde');
+  assert.equal((await request(adminA,'POST',`${root}/cards`,{categoryId,label:'Verde',color:'#168040',suspensionMatches:0,amountGuaranies:7000})).json().code,'CARD_EXISTS');
+  assert.equal((await request(adminA,'POST',`${root}/cards`,{categoryId:other.response.json().categoryId,label:'Naranja',color:'#ff8800',suspensionMatches:0,amountGuaranies:1})).statusCode,404);
 });
 test('T02: un administrador crea un borrador con reglas propias y otro tenant no lo consulta ni edita', async () => {
   const { body, response } = await newTournament();

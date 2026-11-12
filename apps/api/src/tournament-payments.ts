@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { audit, transaction, type DatabasePool } from '@torneos/db';
+import { ruleSchema } from '@torneos/shared';
 
 type Actor = { user_id: string };
 type Access = (request: FastifyRequest, organizationId: string, write?: boolean) => Promise<Actor>;
@@ -19,6 +20,7 @@ const entryInput = z.object({
   occurredOn: z.iso.date(),
 }).strict();
 const voidInput = z.object({ reason: z.string().trim().min(3).max(300) }).strict();
+const cardInput = z.object({ categoryId:id, label:z.string().trim().min(2).max(40), color:z.string().regex(/^#[0-9a-fA-F]{6}$/), suspensionMatches:z.number().int().min(0).max(50), amountGuaranies:z.number().int().min(0).max(1000000000) }).strict();
 
 export function registerTournamentPaymentRoutes(app: FastifyInstance, pool: DatabasePool, access: Access, fail: Reject) {
   const root='/api/v1/organizations/:id/tournaments/:tournamentId/payments';
@@ -32,17 +34,46 @@ export function registerTournamentPaymentRoutes(app: FastifyInstance, pool: Data
   }
   app.get(root,async request=>{
     const {organizationId,tournamentId}=await scope(request);
-    const [{rows:[rate]},{rows:entries}]=await Promise.all([
+    const [{rows:[rate]},{rows:entries},{rows:cardRules}]=await Promise.all([
       pool.query('SELECT version,yellow_guaranies,red_guaranies,custom_card_rates FROM tournament_payment_rates WHERE organization_id=$1 AND tournament_id=$2 ORDER BY version DESC LIMIT 1',[organizationId,tournamentId]),
       pool.query(`SELECT m.id,m.kind,m.category,m.entry_id,m.linked_charge_id,m.amount_guaranies,m.description,to_char(m.occurred_on,'YYYY-MM-DD') occurred_on,m.created_at,m.voided_at,m.void_reason,t.name team_name
         FROM tournament_money_entries m LEFT JOIN team_entries te ON te.organization_id=m.organization_id AND te.id=m.entry_id
         LEFT JOIN teams t ON t.organization_id=te.organization_id AND t.id=te.team_id
         WHERE m.organization_id=$1 AND m.tournament_id=$2 ORDER BY m.occurred_on DESC,m.created_at DESC,m.id DESC`,[organizationId,tournamentId]),
+      pool.query(`SELECT c.id category_id,c.name category_name,r.rules FROM categories c JOIN editions e ON e.organization_id=c.organization_id AND e.id=c.edition_id
+        JOIN LATERAL (SELECT rules FROM rule_versions WHERE organization_id=c.organization_id AND category_id=c.id AND status='published' ORDER BY version DESC LIMIT 1) r ON true
+        WHERE c.organization_id=$1 AND e.tournament_id=$2`,[organizationId,tournamentId]),
     ]);
     const active=entries.filter(row=>!row.voided_at);
     const paid=new Map<string,number>();
     for(const row of active)if(row.kind==='income'&&row.linked_charge_id)paid.set(row.linked_charge_id,(paid.get(row.linked_charge_id)||0)+row.amount_guaranies);
-    return {rates:{version:rate?.version||0,yellowGuaranies:rate?.yellow_guaranies||0,redGuaranies:rate?.red_guaranies||0,customCardRates:rate?.custom_card_rates||{}},entries:entries.map(row=>({...row,outstanding_guaranies:row.kind==='charge'&&!row.voided_at?Math.max(0,row.amount_guaranies-(paid.get(row.id)||0)):null})),summary:{incomeGuaranies:active.filter(row=>row.kind==='income').reduce((sum,row)=>sum+row.amount_guaranies,0),expenseGuaranies:active.filter(row=>row.kind==='expense').reduce((sum,row)=>sum+row.amount_guaranies,0),pendingGuaranies:active.filter(row=>row.kind==='charge').reduce((sum,row)=>sum+Math.max(0,row.amount_guaranies-(paid.get(row.id)||0)),0)}};
+    return {rates:{version:rate?.version||0,yellowGuaranies:rate?.yellow_guaranies||0,redGuaranies:rate?.red_guaranies||0,customCardRates:rate?.custom_card_rates||{}},cards:cardRules.flatMap(row=>(row.rules?.advanced?.discipline?.customCards||[]).map((card:{code:string;label:string;color:string})=>({key:`${row.category_id}:${card.code}`,label:card.label,color:card.color,categoryName:row.category_name}))),entries:entries.map(row=>({...row,outstanding_guaranies:row.kind==='charge'&&!row.voided_at?Math.max(0,row.amount_guaranies-(paid.get(row.id)||0)):null})),summary:{incomeGuaranies:active.filter(row=>row.kind==='income').reduce((sum,row)=>sum+row.amount_guaranies,0),expenseGuaranies:active.filter(row=>row.kind==='expense').reduce((sum,row)=>sum+row.amount_guaranies,0),pendingGuaranies:active.filter(row=>row.kind==='charge').reduce((sum,row)=>sum+Math.max(0,row.amount_guaranies-(paid.get(row.id)||0)),0)}};
+  });
+  app.post(`${root}/cards`,async request=>{
+    const {organizationId,tournamentId,actor}=await scope(request),input=cardInput.parse(request.body);
+    return transaction(pool,async client=>{
+      const {rows:[category]}=await client.query(`SELECT c.id FROM categories c JOIN editions e ON e.organization_id=c.organization_id AND e.id=c.edition_id
+        WHERE c.organization_id=$1 AND c.id=$2 AND e.tournament_id=$3 FOR UPDATE OF c`,[organizationId,input.categoryId,tournamentId]);
+      if(!category)fail(404,'CATEGORY_NOT_FOUND','La categoría no pertenece a este torneo.');
+      const {rows:[latest]}=await client.query('SELECT version,status,rules FROM rule_versions WHERE organization_id=$1 AND category_id=$2 ORDER BY version DESC LIMIT 1 FOR UPDATE',[organizationId,input.categoryId]);
+      if(!latest)fail(409,'RULES_MISSING','Guardá primero el reglamento de la categoría.');
+      if(latest.status==='draft')fail(409,'RULES_DRAFT','Hay un reglamento en borrador. Publicalo antes de agregar la tarjeta desde Pagos.');
+      const rules=ruleSchema.parse(latest.rules);
+      if(!rules.advanced)fail(409,'CARD_RULES_MISSING','El reglamento aún no define tarjetas.');
+      const cards=rules.advanced.discipline.customCards||[];
+      if(cards.length>=8)fail(409,'CARD_LIMIT','Ya se configuró el máximo de tarjetas.');
+      if(cards.some(card=>card.label.toLocaleLowerCase('es')===input.label.toLocaleLowerCase('es')))fail(409,'CARD_EXISTS','Esa tarjeta ya existe.');
+      const code=`c_${randomUUID().replaceAll('-','').slice(0,12)}`;
+      rules.advanced.discipline.customCards=[...cards,{code,label:input.label,color:input.color,suspensionMatches:input.suspensionMatches}];
+      ruleSchema.parse(rules);
+      const ruleId=randomUUID();
+      await client.query("INSERT INTO rule_versions(id,organization_id,category_id,version,revision,status,rules,created_by,effective_at) VALUES($1,$2,$3,$4,1,'published',$5,$6,now())",[ruleId,organizationId,input.categoryId,latest.version+1,JSON.stringify(rules),actor.user_id]);
+      const {rows:[rate]}=await client.query('SELECT version,yellow_guaranies,red_guaranies,custom_card_rates FROM tournament_payment_rates WHERE organization_id=$1 AND tournament_id=$2 ORDER BY version DESC LIMIT 1 FOR UPDATE',[organizationId,tournamentId]);
+      const customRates={...(rate?.custom_card_rates||{}),[`${input.categoryId}:${code}`]:input.amountGuaranies};
+      await client.query('INSERT INTO tournament_payment_rates(id,organization_id,tournament_id,version,yellow_guaranies,red_guaranies,custom_card_rates,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[randomUUID(),organizationId,tournamentId,(rate?.version||0)+1,rate?.yellow_guaranies||0,rate?.red_guaranies||0,JSON.stringify(customRates),actor.user_id]);
+      await audit(client,actor.user_id,organizationId,'rules.card_added',ruleId,`Tarjeta ${input.label} agregada`,{ruleVersion:latest.version},{ruleVersion:latest.version+1,code,amountGuaranies:input.amountGuaranies});
+      return {code,label:input.label};
+    });
   });
   app.post(`${root}/rates`,async request=>{
     const {organizationId,tournamentId,actor}=await scope(request),input=ratesInput.parse(request.body);

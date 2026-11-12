@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import type { DatabasePool } from '@torneos/db';
@@ -8,7 +8,28 @@ import { loadFlyerAssets } from '../../api/src/flyer-assets.ts';
 
 const chrome=process.env.CHROME_PATH||(process.platform==='win32'?'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe':'chromium');
 async function run(binary:string,args:string[],timeout=30000){
- await new Promise<void>((ok,bad)=>{const child=spawn(binary,args,{windowsHide:true,stdio:'ignore'});const timer=setTimeout(()=>{child.kill();bad(new Error('Tiempo de generación agotado.'));},timeout);child.on('error',error=>{clearTimeout(timer);bad(error);});child.on('exit',code=>{clearTimeout(timer);code===0?ok():bad(new Error(`El generador terminó con código ${code}.`));});});
+ await new Promise<void>((ok,bad)=>{
+  const child=spawn(binary,args,{windowsHide:true,stdio:['ignore','ignore','pipe']});
+  let diagnostic='',timedOut=false,settled=false;
+  child.stderr?.on('data',(chunk:Buffer)=>{diagnostic=(diagnostic+chunk.toString('utf8')).slice(-1200);});
+  const finish=(error?:Error)=>{if(settled)return;settled=true;clearTimeout(timer);error?bad(error):ok();};
+  const timer=setTimeout(()=>{timedOut=true;child.kill('SIGTERM');},timeout);
+  child.on('error',error=>finish(error));
+  child.on('close',(code,signal)=>{
+   if(timedOut)return finish(new Error('Tiempo de generación agotado.'));
+   if(code===0)return finish();
+   const detail=diagnostic.trim().split('\n').filter(line=>!line.includes('dbus/bus.cc')).at(-1)?.slice(0,300);
+   console.error(JSON.stringify({event:'flyer_renderer_failed',binary,code,signal,detail:detail||null}));
+   finish(Object.assign(new Error(`El generador se detuvo (${signal||`código ${code}`}).`),{signal}));
+  });
+ });
+}
+async function runChrome(args:string[],temp:string){
+ try{await run(chrome,args);}catch(error){
+  const signal=(error as Error&{signal?:string|null}).signal;
+  if(!signal||signal==='SIGTERM')throw error;
+  await run(chrome,args.map(arg=>arg.startsWith('--user-data-dir=')?`--user-data-dir=${join(temp,'chrome-retry')}`:arg));
+ }
 }
 async function awaitFile(path:string){for(let i=0;i<80;i++){try{const item=await stat(path);if(item.size>100)return;}catch{}await new Promise(resolve=>setTimeout(resolve,125));}throw new Error('El archivo no se generó.');}
 function validate(data:Buffer,format:string){
@@ -32,15 +53,15 @@ export async function processFlyerJobs(pool:DatabasePool,mediaDir:string,limit=3
    await writeFile(svgPath,svg,'utf8');const dimension=flyerSizes[job.size_code as FlyerSize];
    if(job.format==='pdf'){
     const html=`<!doctype html><meta charset="utf-8"><style>@page{size:${dimension.width}px ${dimension.height}px;margin:0}html,body{margin:0;width:${dimension.width}px;height:${dimension.height}px;overflow:hidden}img{display:block;width:100%;height:calc(100% - 2px)}</style><img src="data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}">`;
-    await writeFile(htmlPath,html,'utf8');await run(chrome,['--headless','--disable-gpu','--no-first-run',`--user-data-dir=${join(temp,'chrome')}`,'--print-to-pdf-no-header',`--print-to-pdf=${outPath}`,`file:///${htmlPath.replaceAll('\\','/')}`]);
+    await writeFile(htmlPath,html,'utf8');await runChrome(['--headless','--disable-gpu','--disable-dev-shm-usage','--no-first-run',`--user-data-dir=${join(temp,'chrome')}`,'--print-to-pdf-no-header',`--print-to-pdf=${outPath}`,`file:///${htmlPath.replaceAll('\\','/')}`],temp);
    }else{
-    await run(chrome,['--headless','--disable-gpu','--hide-scrollbars','--no-first-run',`--user-data-dir=${join(temp,'chrome')}`,`--window-size=${dimension.width},${dimension.height}`,`--screenshot=${pngPath}`,`file:///${svgPath.replaceAll('\\','/')}`]);
+    await runChrome(['--headless','--disable-gpu','--disable-dev-shm-usage','--hide-scrollbars','--no-first-run',`--user-data-dir=${join(temp,'chrome')}`,`--window-size=${dimension.width},${dimension.height}`,`--screenshot=${pngPath}`,`file:///${svgPath.replaceAll('\\','/')}`],temp);
     if(job.format==='jpg'){await awaitFile(pngPath);await run('ffmpeg',['-loglevel','error','-y','-i',pngPath,'-frames:v','1','-q:v','2',outPath]);}
    }
    await awaitFile(outPath);const data=await readFile(outPath);validate(data,job.format);
    const filename=`flyer-${job.id}.${job.format}`;await writeFile(join(mediaDir,filename),data);
    await client.query("UPDATE flyer_exports SET status='ready',filename=$2,checksum=$3,byte_length=$4,generated_at=now(),error_message=NULL WHERE id=$1 AND status='running'",[job.id,filename,createHash('sha256').update(data).digest('hex'),data.length]);
-  }catch(error){if(job)await client.query("UPDATE flyer_exports SET status='failed',error_message=$2 WHERE id=$1 AND status='running'",[job.id,error instanceof Error?error.message.slice(0,240):'Error de generación']);else throw error;}
+  }catch(error){if(job){const message=error instanceof Error?error.message.slice(0,240):'Error de generación';await client.query("UPDATE flyer_exports SET status='failed',error_message=$2 WHERE id=$1 AND status='running'",[job.id,message]);await client.query('INSERT INTO technical_error_logs(id,source,organization_id,operation,error_code,error_type,message,resource_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[randomUUID(),'worker',job.organization_id,'flyer.generate','FLYER_RENDER_FAILED',error instanceof Error?error.name:'Unknown',message,job.id]).catch(logError=>console.error(JSON.stringify({event:'technical_error_log_failed',resourceId:job.id,errorType:logError instanceof Error?logError.name:'Unknown'})));}else throw error;}
   finally{if(temp&&resolve(temp).startsWith(resolve(mediaDir)+sep))await rm(temp,{recursive:true,force:true});if(job)await client.query('SELECT pg_advisory_unlock(hashtextextended($1::text,0))',[job.id]);client.release();}
  }
  return count;
