@@ -301,3 +301,7 @@ Por corrección del propietario, la plantilla v5 conserva el diámetro ampliado 
 ### 2026-11-12 — T08: blanco en elementos grises del flyer
 
 La plantilla oscura v6 reemplaza los fondos grisáceos de escudos y el texto secundario por blanco. Los trazos de separación y de la cancha usan blanco con baja opacidad. La variante clara conserva sus colores de contraste. Tipos correctos; en el espejo se generaron PNG de Cuartos, Finales y campeón y se revisó visualmente `output/flyers-espejo-2026-11-12/flyer-blanco-v6.png`. Compilación y despliegue en el VPS correctos; cuatro servicios activos y API/web 200. Prueba física en dispositivo pendiente.
+
+### 2026-11-12 — T02/T09: Copa Sanber presentada sin fixture
+
+La Federación San Bernardinense y la Copa Sanber 2026 aparecen en el portal público con categoría Primera, diez equipos, diez escudos y sus logos institucionales. El organizador `usuariofsbfs` tiene acceso propio. La publicación de presentación no muestra reglas aún privadas ni inventa partidos, fechas, grupos o resultados. Se ensayó la carga en una restauración aislada tras respaldar base y medios; después se aplicó en producción. Caacupé conserva su sorteo revisión 38. Tipos, compilación, 193 rutas y 101/101 pruebas correctos. En navegador integrado a 390 px no hubo desbordamiento y la ficha de equipo abrió con lista vacía. [Evidencia](evidencias/t09-copa-sanber-2026-11-12.md). Quedan pendientes la definición del formato y las pruebas físicas en teléfono.
