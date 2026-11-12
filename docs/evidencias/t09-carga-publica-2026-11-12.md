@@ -27,3 +27,5 @@ No se modificaron tablas, datos deportivos ni permisos privados. La caché es so
 ## Verificación
 
 `npm run typecheck` y `npm run build`: correctos. Prueba de integración del plan parcial: alias de torneo, alias de organización, alias inexistente y denegaciones entre organizaciones correctos. Auditoría de rutas: 192/192 clasificadas. Falta medir la mejora de navegación en red móvil y la aceptación física en Android/iOS; no se promete carga instantánea en cualquier conexión.
+
+Despliegue del commit `339382e` en producción y espejo: compilación correcta, cuatro servicios activos. En el VPS, `/ready` respondió 200 en 5 ms y el resolvedor respondió 200 en 67 ms en producción y 68 ms en el espejo. El enlace HTTPS `/fcfs-copacaacupe` respondió 200 en 236 ms desde el VPS. Son muestras puntuales, sin medir descarga de recursos ni renderizado.
