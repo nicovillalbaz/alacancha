@@ -8,8 +8,8 @@ export type FlyerSize = keyof typeof flyerSizes;
 export const flyerKinds = ['match','matchday','result','standings','scorers','scorer','defense','bracket','semifinal','final','champion','notice'] as const;
 export type FlyerKind = typeof flyerKinds[number];
 export const flyerTemplates = [
-  { key: 'forest', version: 5, label: 'Campo oscuro' },
-  { key: 'paper', version: 5, label: 'Pizarra clara' },
+  { key: 'forest', version: 6, label: 'Campo oscuro' },
+  { key: 'paper', version: 6, label: 'Pizarra clara' },
 ] as const;
 export type FlyerTemplateKey = typeof flyerTemplates[number]['key'];
 export type FlyerLine = { left:string; right?:string; sub?:string; side?:'home'|'away'; homeAssetId?:string|null; awayAssetId?:string|null; homeName?:string; awayName?:string };
@@ -45,9 +45,9 @@ function multi(value:string,x:number,y:number,size:number,color:string,maxChars:
 }
 function luminance(hex:string){const rgb=[1,3,5].map(index=>parseInt(hex.slice(index,index+2),16)/255).map(value=>value<=.04045?value/12.92:((value+.055)/1.055)**2.4);return rgb[0]*.2126+rgb[1]*.7152+rgb[2]*.0722;}
 function contrast(a:string,b:string){const x=luminance(a),y=luminance(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05);}
-function imageOrMark(assetId:string|null|undefined,name:string,x:number,y:number,size:number,assets:Record<string,string>,dark:boolean,contentSize=size*.82){
+function imageOrMark(assetId:string|null|undefined,name:string,x:number,y:number,size:number,assets:Record<string,string>,dark:boolean,contentSize=size*.82,circleColor?:string){
   const source=assetId&&assets[assetId];
-  const bg=dark?'#F3F7F4':'#E2EEE8',ink=dark?'#165D46':'#184534';
+  const bg=circleColor||(dark?'#FFFFFF':'#E2EEE8'),ink=dark?'#165D46':'#184534';
   const circle=`<circle cx="${x+size/2}" cy="${y+size/2}" r="${size/2}" fill="${bg}"/>`;
   const inset=(size-contentSize)/2;
   if(source)return `${circle}<image x="${x+inset}" y="${y+inset}" width="${contentSize}" height="${contentSize}" href="${esc(source)}" preserveAspectRatio="xMidYMid meet"/>`;
@@ -56,7 +56,7 @@ function imageOrMark(assetId:string|null|undefined,name:string,x:number,y:number
 }
 export function renderFlyerSvg(snapshot:FlyerSnapshot,sizeCode:FlyerSize,templateKey:FlyerTemplateKey,assets:Record<string,string>={}){
   const {width:w,height:h}=flyerSizes[sizeCode],primary=snapshot.brand?.primaryColor||'#102B2B',rawAccent=snapshot.brand?.accentColor||'#A9E1B9',dark=templateKey==='forest';
-  const bg=dark?primary:'#F5F7F3',ink=contrast(bg,'#F8FBF9')>contrast(bg,'#102B2B')?'#F8FBF9':'#102B2B',muted=dark?(ink==='#F8FBF9'?'#D4E4DC':'#324C45'):'#526760',accent=contrast(bg,rawAccent)>=4.5?rawAccent:ink,panel=dark?(ink==='#F8FBF9'?'#1A3B38':'#E5EEE7'):'#E5EEE7',line=dark?(ink==='#F8FBF9'?'#39615B':'#B2C7BB'):'#CBDAD0';
+  const bg=dark?primary:'#F5F7F3',ink=contrast(bg,'#FFFFFF')>contrast(bg,'#102B2B')?'#FFFFFF':'#102B2B',muted=dark?ink:'#526760',accent=contrast(bg,rawAccent)>=4.5?rawAccent:ink,panel=dark?(ink==='#FFFFFF'?'#1A3B38':'#E5EEE7'):'#E5EEE7',line=dark?ink:'#CBDAD0';
   const b:string[]=[`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`,
     `<rect width="${w}" height="${h}" fill="${bg}"/>`,
     `<path d="M0 0 H${w} V${Math.round(h*.16)} L0 ${Math.round(h*.32)}Z" fill="${dark?rawAccent:primary}" opacity="${dark?.11:.08}"/>`,
@@ -69,7 +69,7 @@ export function renderFlyerSvg(snapshot:FlyerSnapshot,sizeCode:FlyerSize,templat
   const logos=[snapshot.brand?.cupAssetId,snapshot.brand?.organizerAssetId,snapshot.brand?.federationAssetId].filter((id):id is string=>Boolean(id));
   const logoSizes=logos.map((_,index)=>index===0?94:82);
   const logoStart=w-65-logoSizes.reduce((total,value)=>total+value,0)-Math.max(0,logos.length-1)*12;
-  if(logos.length){let x=logoStart;logos.forEach((id,index)=>{const size=logoSizes[index];b.push(imageOrMark(id,'',x,top-40,size,assets,dark,(index===0?72:60)*.82));x+=size+12;});}
+  if(logos.length){let x=logoStart;logos.forEach((id,index)=>{const size=logoSizes[index];b.push(imageOrMark(id,'',x,top-40,size,assets,dark,(index===0?72:60)*.82,'#FFFFFF'));x+=size+12;});}
   else if(snapshot.orgAssetId)b.push(imageOrMark(snapshot.orgAssetId,snapshot.competition,w-110,top-33,70,assets,dark));
   b.push(multi(snapshot.competition,65,top+5,25,muted,Math.max(17,Math.floor(((logos.length?logoStart:w-110)-85)/14)),2,'start',29,750));
   b.push(`<path d="M65 130 H${Math.min(w-65,305)}" stroke="${rawAccent}" stroke-width="6"/>`);
@@ -125,7 +125,7 @@ export function renderFlyerSvg(snapshot:FlyerSnapshot,sizeCode:FlyerSize,templat
     const rows=snapshot.lines,bottom=h-130,available=bottom-345,pair=['matchday','bracket','semifinal','final'].includes(snapshot.kind),slot=pair?Math.min(220,available/Math.max(rows.length,1)):available/Math.max(rows.length,1),topRows=pair?Math.max(340,345+Math.max(0,(available-slot*rows.length)/3)):345;
     rows.forEach((row,index)=>{
       const y=topRows+slot*index;
-      b.push(`<line x1="65" y1="${y+slot-6}" x2="${w-65}" y2="${y+slot-6}" stroke="${line}" stroke-width="2"/>`);
+      b.push(`<line x1="65" y1="${y+slot-6}" x2="${w-65}" y2="${y+slot-6}" stroke="${line}" stroke-width="2"${dark?' opacity=".2"':''}/>`);
       if(pair&&row.homeName&&row.awayName){
         const spacious=slot>=155,logo=spacious?78:Math.max(34,Math.min(56,slot-25));
         if(spacious){

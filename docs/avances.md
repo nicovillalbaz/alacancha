@@ -297,3 +297,7 @@ La plantilla v3 agrandó los tres escudos superiores y resolvió la ubicación d
 ### 2026-11-12 — T08: proporción de escudos y firma
 
 Por corrección del propietario, la plantilla v5 conserva el diámetro ampliado de los círculos de fondo y devuelve los escudos internos a su tamaño original, centrados. La firma se presenta como «Generado por alacancha.top», con el dominio más destacado. No afecta fuentes de datos, permisos ni archivos ya generados. Tipos correctos. En el espejo se generaron y descargaron tres PNG; la muestra de Cuartos se revisó visualmente en `output/flyers-espejo-2026-11-12/flyer-circulos-v5.png`. Compilación en el VPS correcta, cuatro servicios activos, API de producción 200 y sitio 200 después de redirigir a `https://alacancha.top/`. La aceptación física en dispositivos sigue pendiente.
+
+### 2026-11-12 — T08: blanco en elementos grises del flyer
+
+La plantilla oscura v6 reemplaza los fondos grisáceos de escudos y el texto secundario por blanco. Los trazos de separación y de la cancha usan blanco con baja opacidad. La variante clara conserva sus colores de contraste. Pendiente la revisión de un archivo generado en el espejo y despliegue.
