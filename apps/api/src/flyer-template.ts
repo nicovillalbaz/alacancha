@@ -8,8 +8,8 @@ export type FlyerSize = keyof typeof flyerSizes;
 export const flyerKinds = ['match','matchday','result','standings','scorers','scorer','defense','bracket','semifinal','final','champion','notice'] as const;
 export type FlyerKind = typeof flyerKinds[number];
 export const flyerTemplates = [
-  { key: 'forest', version: 4, label: 'Campo oscuro' },
-  { key: 'paper', version: 4, label: 'Pizarra clara' },
+  { key: 'forest', version: 5, label: 'Campo oscuro' },
+  { key: 'paper', version: 5, label: 'Pizarra clara' },
 ] as const;
 export type FlyerTemplateKey = typeof flyerTemplates[number]['key'];
 export type FlyerLine = { left:string; right?:string; sub?:string; side?:'home'|'away'; homeAssetId?:string|null; awayAssetId?:string|null; homeName?:string; awayName?:string };
@@ -75,7 +75,7 @@ export function renderFlyerSvg(snapshot:FlyerSnapshot,sizeCode:FlyerSize,templat
   b.push(`<path d="M65 130 H${Math.min(w-65,305)}" stroke="${rawAccent}" stroke-width="6"/>`);
   b.push(text(snapshot.kicker.toUpperCase(),65,166,23,accent,800));
   b.push(multi(snapshot.title,65,227,Math.min(62,h*.052),ink,29,2,'start',68,900,true));
-  b.push(text('Generado por NAVZ',65,h-31,18,muted,700));
+  b.push(`<text x="65" y="${h-31}" font-family="Bahnschrift, Segoe UI, Arial, sans-serif" font-size="18" fill="${muted}"><tspan font-weight="600">Generado por </tspan><tspan font-size="23" font-weight="800" letter-spacing=".3" fill="${ink}">alacancha.top</tspan></text>`);
   if(snapshot.pageNo>1||snapshot.totalPages>1)b.push(text(`${snapshot.pageNo}/${snapshot.totalPages}`,w-65,h-31,20,muted,700,'end'));
   const hero=['match','result','champion'].includes(snapshot.kind);
   if(hero){

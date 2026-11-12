@@ -1,5 +1,7 @@
 # Avances y evidencias
 
+**12/11/2026 — T09, dominio público:** `alacancha.top` apunta al VPS y responde por HTTPS; `alacancha.webs.vc` redirige con 308 al dominio nuevo conservando ruta y consulta. Caddy, API y worker activos; `/ready`, enlace directo de Copa, manifest, robots y sitemap verificados. `WEB_ORIGIN` y la guarda del importador FCFS usan el dominio nuevo. No hubo migración ni cambio de datos deportivos. [Evidencia](evidencias/t09-dominio-alacancha-top-2026-11-12.md).
+
 **11/11/2026 — T01, cambio de contraseña en código local:** cualquier cuenta iniciada puede cambiar la propia con un campo; el superadmin puede cambiar la ajena desde la ficha. Sesiones anteriores revocadas y auditoría sin secretos. La vista pública no ofrece la acción. Se corrigió la barra móvil a 320 px. **94/94 pruebas, tipos y build correctos**; revisión en teléfono físico y despliegue pendientes. [Evidencia](evidencias/t01-cambio-contrasena-2026-11-11.md).
 
 **11/11/2026 — T09, acceso HTTPS provisional:** `alacancha.webs.vc` resuelve al VPS en FreeDNS, Cloudflare y Google; Caddy emitió certificado y entrega la API y web por HTTPS. Portada, acceso, manifest, service worker, sitemap, API pública y `/ready` respondieron 200 desde fuera al fijar la IP. El router de la red de prueba aún responde `NXDOMAIN`, por lo que esos navegadores no pueden abrir el nombre hasta que actualice su DNS. El catálogo público sigue `[]`, sin datos de muestra ni Copa Caacupé importada. No equivale a piloto: faltan copia externa con restauración completa, revisión legal y aceptación móvil real. [Evidencia](evidencias/t09-vps-https-2026-11-11.md).
@@ -292,6 +294,6 @@ Por confirmación del organizador, se intercambiaron A4–B4 y A2–A3 entre J6 
 
 La plantilla v3 agrandó los tres escudos superiores y resolvió la ubicación del marcador. El generador acepta la categoría del plan por posiciones publicado: cuatro cuartos, seis partidos de Finales y campeón únicamente después de la definición oficial; no inventa semifinales. Se añadieron accesos contextuales al panel del organizador y una prueba de rechazo entre organizaciones. Tipos y compilación correctos; pruebas dirigidas 7/7. En el espejo privado se generaron, descargaron y revisaron visualmente tres PNG reales de 1080 × 1080 (Cuartos, Finales y campeón). Se desplegó código en el VPS; `/ready` de producción y espejo, y portada pública respondieron 200. La base de producción conservó cero flyers de prueba. Aceptación física en dispositivos pendiente.
 
-### 2026-11-12 — T08: proporción de los escudos de cabecera
+### 2026-11-12 — T08: proporción de escudos y firma
 
-Por corrección del propietario, la plantilla v4 conserva el diámetro ampliado de los círculos de fondo y devuelve los escudos internos a su tamaño original, centrados. No afecta fuentes de datos, permisos ni archivos ya generados. La revisión visual y la comprobación de generación se registran por separado.
+Por corrección del propietario, la plantilla v5 conserva el diámetro ampliado de los círculos de fondo y devuelve los escudos internos a su tamaño original, centrados. La firma se presenta como «Generado por alacancha.top», con el dominio más destacado. No afecta fuentes de datos, permisos ni archivos ya generados. La revisión visual y la comprobación de generación se registran por separado.
