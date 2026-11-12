@@ -275,3 +275,7 @@ Pruebas: `npm run typecheck`, `npm run build`, auditoría de 191 rutas sin pendi
 ### 2026-11-12 — T09: Copa de ensayo terminada en el espejo
 
 Estado: escenario sintético completo, privado y separado de la Copa real. Se crearon 20 jugadores y diez listas aprobadas; se cerraron 25 partidos de grupos, cuatro cuartos (dos por penales), seis de Finales y un desempate extra (también por penales). El espejo terminó con 36 actas y 15 jornadas publicadas. Se verificaron sin sesión las dos tablas de grupo, la general, la tabla de Finales, el campeón, las fichas públicas y los 36 partidos. Se generaron y descargaron cuatro flyers finales. Se añadió a la vista pública el nombre del campeón del extra. Producción quedó en cero jugadores, partidos y actas. [Evidencia](evidencias/t09-espejo-copa-completa-2026-11-12.md). Quedan pendientes las pruebas físicas en dispositivos reales.
+
+### 2026-11-12 — T09: reducción de esperas en el portal público
+
+Se midieron las lecturas públicas en el espejo y se eliminó una petición encadenada al resolver el enlace corto. La Copa precarga y reutiliza brevemente el fixture para abrir partidos, conserva la competición al volver a la vista y revalida resultados. El detalle completa su información si se tocó antes de recibir la referencia del partido. Sin migración ni cambio de datos reales. Tipos, compilación, prueba de integración del alias y auditoría de 192 rutas correctos. La medición en móvil y aceptación física siguen pendientes. [Evidencia](evidencias/t09-carga-publica-2026-11-12.md).

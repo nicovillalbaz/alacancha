@@ -1266,14 +1266,11 @@ async function loadView(force = false) {
     if(parts.value[0]!=='partido'){privateMatchStream?.close();privateMatchStream=null;}
     if (parts.value[0] === 'acceso') return;
     if (parts.value[0] === 'portal') {
-      const organizations=await api<PublicOrganizationItem[]>('/public/organizations');
+      const selected=await api<{kind:'organization'|'tournament';organization_id:string;tournament_id?:string;tournament_count?:number;single_tournament_id?:string|null;single_tournament_slug?:string|null}>(`/public/resolve/${encodeURIComponent(viewParts[1]||'')}`);
       if(epoch!==routeEpoch)return;
-      publicOrganizations.value=organizations;
-      const selected=organizations.find(item=>item.public_slug===viewParts[1]);
-      if(!selected){const tournament=await api<{id:string;organization_id:string}>(`/public/tournaments/by-slug/${encodeURIComponent(viewParts[1]||'')}`);if(epoch!==routeEpoch)return;route.value=`publico/${tournament.organization_id}/${tournament.id}`;return;}
-      const tournamentId=viewParts[2]||(selected.tournament_count===1?selected.single_tournament_id||'':'');
-      if(!viewParts[2]&&tournamentId&&selected.single_tournament_slug)history.replaceState(null,'',`/${selected.single_tournament_slug}`);
-      route.value=`publico/${selected.id}${tournamentId?`/${tournamentId}`:''}`;
+      const tournamentId=selected.kind==='tournament'?selected.tournament_id||'':viewParts[2]||(selected.tournament_count===1?selected.single_tournament_id||'':'');
+      if(selected.kind==='organization'&&!viewParts[2]&&tournamentId&&selected.single_tournament_slug)history.replaceState(null,'',`/${selected.single_tournament_slug}`);
+      route.value=`publico/${selected.organization_id}${tournamentId?`/${tournamentId}`:''}`;
       return;
     }
     if (parts.value[0] === 'publico') {

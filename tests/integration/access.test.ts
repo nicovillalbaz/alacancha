@@ -816,6 +816,15 @@ test('T04/T08: el plan parcial se publica sin resultados ni asignaciones inventa
   const alias=(await app.inject(`/api/v1/public/tournaments/by-slug/${publicSlug}`));
   assert.equal(alias.statusCode,200,alias.body);assert.equal(alias.json().id,tournamentId);
   assert.equal((await app.inject(`/api/v1/public/tournaments/by-slug/absent-${publicSlug}`)).statusCode,404);
+  const resolved=(await app.inject(`/api/v1/public/resolve/${publicSlug}`));
+  assert.equal(resolved.statusCode,200,resolved.body);
+  assert.deepEqual(resolved.json(),{kind:'tournament',tournament_id:tournamentId,organization_id:ids.a});
+  assert.equal((await app.inject(`/api/v1/public/resolve/absent-${publicSlug}`)).statusCode,404);
+  const publicOrganization=(await app.inject('/api/v1/public/organizations')).json().find((item:{id:string})=>item.id===ids.a);
+  const resolvedOrganization=await app.inject(`/api/v1/public/resolve/${publicOrganization.public_slug}`);
+  assert.equal(resolvedOrganization.statusCode,200,resolvedOrganization.body);
+  assert.equal(resolvedOrganization.json().kind,'organization');
+  assert.equal(resolvedOrganization.json().organization_id,ids.a);
   const publicPath=`/api/v1/public/organizations/${ids.a}/draws`;
   const snapshot=(await app.inject({method:'GET',url:publicPath})).json().find((row:{tournament_id:string})=>row.tournament_id===tournamentId).snapshot;
   assert.equal(snapshot.slots.length,10);

@@ -812,6 +812,19 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       ORDER BY t.created_at DESC,t.id LIMIT 100`, [term]);
     return rows;
   });
+  app.get('/api/v1/public/resolve/:slug', async (request) => {
+    const slug=z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).parse((request.params as {slug:string}).slug);
+    const {rows:[organization]}=await pool.query(`SELECT o.id organization_id,count(*)::int tournament_count,
+      CASE WHEN count(*)=1 THEN (array_agg(t.id))[1] ELSE NULL END single_tournament_id,
+      CASE WHEN count(*)=1 THEN max(t.public_slug) ELSE NULL END single_tournament_slug
+      FROM organizations o JOIN tournaments t ON t.organization_id=o.id
+      WHERE o.public_slug=$1 AND o.status='active' AND (${publicTournamentCondition}) GROUP BY o.id`,[slug]);
+    if(organization)return {kind:'organization',...organization};
+    const {rows:[tournament]}=await pool.query(`SELECT t.id tournament_id,t.organization_id FROM tournaments t
+      JOIN organizations o ON o.id=t.organization_id WHERE t.public_slug=$1 AND o.status='active' AND (${publicTournamentCondition})`,[slug]);
+    if(!tournament)fail(404,'NOT_FOUND','No se encontró este torneo público.');
+    return {kind:'tournament',...tournament};
+  });
   app.get('/api/v1/public/tournaments/by-slug/:slug', async (request) => {
     const slug=z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).parse((request.params as {slug:string}).slug);
     const {rows:[found]}=await pool.query(`SELECT t.id,t.name,t.public_slug,t.organization_id,o.public_slug organization_slug FROM tournaments t

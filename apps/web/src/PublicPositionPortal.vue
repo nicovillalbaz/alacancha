@@ -10,6 +10,20 @@ type Game={code:string;stage:'groups'|'quarterfinal'|'quadrangular';sporting_rou
 export type PublicDraw={tournament_id:string;tournament_name:string;public_slug:string|null;has_emblem:boolean;category_id:string;category_name:string;revision:number;snapshot:{blueprint:{name:string;opening_first_date:string;opening_second_date:string};slots:Slot[];teams?:Team[];games:Game[]}};
 type Competition={available:boolean;competition?:PositionCompetition;results?:PositionResult[];matches?:Array<{code:string;match_id:string}>;players?:Array<{registrationId:string;entryId:string;goals:number;name:string}>;defense?:Array<{entryId:string;played:number;goalsAgainst:number}>;titleExtra?:{decision:'no_extra'|'extra';matchId:string|null;homeEntryId:string|null;awayEntryId:string|null;score:{home:number;away:number;homePenalties:number;awayPenalties:number}|null;winnerEntryId:string|null}|null};
 type MatchDetail={id:string;home_name:string;away_name:string;match_date:string;match_time:string;result:{score:{home:number;away:number};shootout:{home:number;away:number};events:Array<{id:string;kind:string;period:string|null;name:string;cardLabel:string|null;side:string}>}|null};
+type FixtureDay={matches:MatchDetail[]};
+const competitionCache=new Map<string,Competition>();
+const fixtureCache=new Map<string,{at:number;request:Promise<FixtureDay[]>}>();
+function publicFixture(organization:string,revision:number,drawRevision:number){
+  const key=`${organization}:${revision}:${drawRevision}`,cached=fixtureCache.get(key);
+  if(cached&&Date.now()-cached.at<15_000)return cached.request;
+  const request=fetch(`/api/v1/public/organizations/${organization}/fixture`).then(response=>{
+    if(!response.ok)throw new Error('No se pudo cargar el partido.');
+    return response.json() as Promise<FixtureDay[]>;
+  }).catch(cause=>{if(fixtureCache.get(key)?.request===request)fixtureCache.delete(key);throw cause;});
+  fixtureCache.set(key,{at:Date.now(),request});
+  if(fixtureCache.size>6)fixtureCache.delete(fixtureCache.keys().next().value!);
+  return request;
+}
 const props=defineProps<{organization:{id:string;name:string;logo_id?:string|null}|null;draws:PublicDraw[];selectedTournamentId:string;resultsRevision:number}>();
 const emit=defineEmits<{navigate:[path:string]}>();
 const current=computed(()=>props.draws.find(item=>item.tournament_id===props.selectedTournamentId)||props.draws[0]);
@@ -18,9 +32,11 @@ const selectedRound=ref('F1'),selectedDay=ref(0),selectorOpen=ref(!props.selecte
 const competition=ref<Competition|null>(null),error=ref(''),selectedMatch=ref<MatchDetail|null>(null),selectedGame=ref<Game|null>(null),selectedTeam=ref<Team|null>(null),teamPlayers=ref<Array<{name:string}>>([]),teamLoading=ref(false);
 let epoch=0;
 let loadedCompetitionKey='';
-async function loadCompetition(){const category=current.value?.category_id,organization=props.organization?.id,key=`${organization}:${category}:${current.value?.revision}`,currentEpoch=++epoch;if(key!==loadedCompetitionKey)competition.value=null;error.value='';if(!category||!organization)return;try{const response=await fetch(`/api/v1/public/organizations/${organization}/draws/${category}/competition`);if(!response.ok)throw new Error();const data=await response.json() as Competition;if(currentEpoch===epoch){competition.value=data;loadedCompetitionKey=key;}}catch{if(currentEpoch===epoch)error.value='No se pudieron cargar los resultados.';}}
+let pendingMatchCode='';
+async function loadCompetition(){const category=current.value?.category_id,organization=props.organization?.id,baseKey=`${organization}:${category}:${current.value?.revision}`,key=`${baseKey}:${props.resultsRevision}`,currentEpoch=++epoch;const cached=competitionCache.get(key);competition.value=cached||(baseKey===loadedCompetitionKey?competition.value:null);if(cached)loadedCompetitionKey=baseKey;error.value='';if(!category||!organization)return;try{const response=await fetch(`/api/v1/public/organizations/${organization}/draws/${category}/competition`);if(!response.ok)throw new Error();const data=await response.json() as Competition;if(currentEpoch===epoch){competition.value=data;loadedCompetitionKey=baseKey;competitionCache.set(key,data);if(competitionCache.size>6)competitionCache.delete(competitionCache.keys().next().value!);}}catch{if(currentEpoch===epoch)error.value='No se pudieron cargar los resultados.';}}
 watch(()=>[current.value?.category_id,props.organization?.id,current.value?.revision,props.resultsRevision],loadCompetition,{immediate:true});
-watch(()=>current.value?.tournament_id,()=>{selectedRound.value='F1';selectedDay.value=days.value[0]??0;selectedMatch.value=null;selectedGame.value=null;selectedTeam.value=null;});
+watch(()=>[props.organization?.id,props.resultsRevision,current.value?.revision,tab.value],([organization,revision,drawRevision,activeTab])=>{if(organization&&activeTab==='matches')void publicFixture(String(organization),Number(revision),Number(drawRevision)).catch(()=>{});},{immediate:true});
+watch(()=>current.value?.tournament_id,()=>{selectedRound.value='F1';selectedDay.value=days.value[0]??0;selectedMatch.value=null;selectedGame.value=null;selectedTeam.value=null;pendingMatchCode='';});
 const slots=computed(()=>new Map((current.value?.snapshot.slots||[]).map(slot=>[slot.slot_code,slot])));
 const teams=computed<Team[]>(()=>current.value?.snapshot.teams||current.value?.snapshot.slots.filter(slot=>slot.entry_id&&slot.team_id&&slot.team_name).map(slot=>({entry_id:slot.entry_id!,team_id:slot.team_id!,team_name:slot.team_name!,color:slot.color,has_shield:slot.has_shield}))||[]);
 const byEntry=computed(()=>new Map(teams.value.map(team=>[team.entry_id,team])));
@@ -50,9 +66,10 @@ function dayTitle(value:number){return value===0?'J1/J2 por definir':`Jornada ${
 function dayDate(value:number){if(value===0)return `${date(current.value?.snapshot.blueprint.opening_first_date||null)} / ${date(current.value?.snapshot.blueprint.opening_second_date||null)}`;if(value===1)return date(current.value?.snapshot.blueprint.opening_first_date||null);if(value===2)return date(current.value?.snapshot.blueprint.opening_second_date||null);return date(allGames.value.find(game=>game.jornada_no===value)?.planned_date||null);}
 function rows(table:NonNullable<PositionCompetition['final']>){return table.groups.flatMap(group=>group.teamIds.map(id=>({position:group.position,id,unresolved:group.unresolved,stats:table.totals.find(item=>item.teamId===id)})));}
 function chooseTournament(id:string){selectorOpen.value=false;tab.value='matches';emit('navigate',`publico/${props.organization?.id}/${id}`);}
-async function openMatch(code:string){const game=allGames.value.find(item=>item.code===code);if(!game)return;selectedGame.value=game;selectedMatch.value=null;const id=matches.value.get(code),organization=props.organization?.id,category=current.value?.category_id;if(!id||!organization)return;try{const response=await fetch(`/api/v1/public/organizations/${organization}/fixture`);if(!response.ok)return;const days=await response.json() as Array<{matches:MatchDetail[]}>;if(selectedGame.value?.code===code&&props.organization?.id===organization&&current.value?.category_id===category)selectedMatch.value=days.flatMap(day=>day.matches).find(match=>match.id===id)||null;}catch{/* El cruce planificado sigue disponible. */}}
+async function openMatch(code:string){const game=allGames.value.find(item=>item.code===code);if(!game)return;selectedGame.value=game;selectedMatch.value=null;const id=matches.value.get(code),organization=props.organization?.id,category=current.value?.category_id,revision=props.resultsRevision,drawRevision=current.value?.revision||0;if(!id||!organization){pendingMatchCode=id?'':code;return;}pendingMatchCode='';try{const days=await publicFixture(organization,revision,drawRevision);if(selectedGame.value?.code===code&&props.organization?.id===organization&&current.value?.category_id===category&&props.resultsRevision===revision&&current.value?.revision===drawRevision)selectedMatch.value=days.flatMap(day=>day.matches).find(match=>match.id===id)||null;}catch{/* El cruce planificado sigue disponible. */}}
+watch(matches,available=>{if(pendingMatchCode&&available.has(pendingMatchCode)&&selectedGame.value?.code===pendingMatchCode)void openMatch(pendingMatchCode);});
 async function openTeam(team:Team){selectedTeam.value=team;teamPlayers.value=[];teamLoading.value=true;const organization=props.organization?.id,category=current.value?.category_id;if(!organization||!category){teamLoading.value=false;return;}try{const response=await fetch(`/api/v1/public/organizations/${organization}/draws/${category}/teams/${team.entry_id}/players`);if(response.ok){const players=await response.json() as Array<{name:string}>;if(selectedTeam.value?.entry_id===team.entry_id&&props.organization?.id===organization&&current.value?.category_id===category)teamPlayers.value=players;}}catch{/* La ficha permanece accesible sin jugadores. */}finally{if(selectedTeam.value?.entry_id===team.entry_id)teamLoading.value=false;}}
-function closeMatch(){selectedMatch.value=null;selectedGame.value=null;}
+function closeMatch(){selectedMatch.value=null;selectedGame.value=null;pendingMatchCode='';}
 </script>
 
 <template>
