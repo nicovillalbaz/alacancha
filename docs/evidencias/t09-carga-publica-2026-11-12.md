@@ -21,6 +21,7 @@ El alias público esperaba primero la lista de organizaciones y después consult
 - La Copa precarga el fixture una vez al entrar en Partidos. Los toques reutilizan la petición en curso o la respuesta durante un máximo de 15 segundos. Un evento de resultado usa una revisión nueva; un fallo elimina la entrada y permite reintentar.
 - La competición pública conserva su último dato mientras revalida la misma categoría y reutiliza una copia breve al volver a ella. Un cambio de categoría o de revisión del sorteo no muestra datos de la anterior.
 - Si se toca un cruce antes de que llegue su identificador, la ficha de planificación se abre de inmediato y completa el detalle cuando llega.
+- El indicador global del panel aparece solo si la carga supera 180 ms. El estado de carga real sigue activo desde el primer instante para impedir estados vacíos y acciones prematuras; al cambiar rápido de ruta, el temporizador anterior se cancela.
 
 No se modificaron tablas, datos deportivos ni permisos privados. La caché es solo de lectura y en memoria del navegador.
 

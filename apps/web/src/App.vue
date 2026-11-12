@@ -225,7 +225,8 @@ const publicOrganization = ref<PublicOrganization | null>(null);
 const publicTeams = ref<Array<{ id: string; entry_id:string; name: string; color: string; has_shield: boolean; category_id: string }>>([]);
 const activity = ref<Audit[]>([]);
 const technicalErrors=ref<TechnicalError[]>([]),activityTab=ref<'changes'|'errors'>('changes');
-const loading = ref(false), busy = ref(false), error = ref(''), success = ref(''), online = ref(navigator.onLine);
+const loading = ref(false), loadingVisual = ref(false), busy = ref(false), error = ref(''), success = ref(''), online = ref(navigator.onLine);
+let loadingTimer:ReturnType<typeof setTimeout>|null=null;
 const errorCode = ref('');
 const login = reactive({ username: '', password: '' });
 const showPassword = ref(false);
@@ -1260,7 +1261,9 @@ async function chooseOrganization(id: string) {
 async function loadView(force = false) {
   const epoch = ++routeEpoch;
   const viewParts = [...parts.value];
-  error.value = ''; loading.value = true;
+  error.value = ''; loading.value = true; loadingVisual.value=false;
+  if(loadingTimer)clearTimeout(loadingTimer);
+  loadingTimer=setTimeout(()=>{if(epoch===routeEpoch&&loading.value)loadingVisual.value=true;},180);
   try {
     if(parts.value[0]!=='publico'){publicResultsStream?.close();publicResultsStream=null;}
     if(parts.value[0]!=='partido'){privateMatchStream?.close();privateMatchStream=null;}
@@ -1385,7 +1388,7 @@ async function loadView(force = false) {
     if(epoch!==routeEpoch)return;
     if (failure instanceof RequestError && failure.status === 401) { clearPrivate(); user.value = null; go('acceso'); error.value = 'Tu sesión terminó. Ingresá de nuevo.'; }
     else error.value = failure instanceof Error ? failure.message : 'No se pudo abrir la pantalla.';
-  } finally { if (epoch === routeEpoch) loading.value = false; }
+  } finally { if (epoch === routeEpoch) {if(loadingTimer)clearTimeout(loadingTimer);loadingTimer=null;loading.value = false;loadingVisual.value=false;} }
   await nextTick(); document.querySelector<HTMLElement>('h1')?.focus({ preventScroll: true });
 }
 async function signIn() {
@@ -1489,7 +1492,7 @@ watch(route, (next, previous) => { success.value = ''; publishPreviewCategory.va
 watch(route, () => { passwordDraft.value = ''; ownPasswordOpen.value = false; adminPasswordTarget.value = ''; });
 watch([route, user], async () => { await nextTick(); document.querySelector<HTMLElement>('.bottom-nav a[aria-current="page"]')?.scrollIntoView({ inline: 'center', block: 'nearest' }); }, { flush: 'post' });
 onMounted(() => { window.addEventListener('hashchange', routeChanged); window.addEventListener('popstate', routeChanged); window.addEventListener('online', connectionChanged); window.addEventListener('offline', connectionChanged); loadView(); });
-onUnmounted(() => { publicResultsStream?.close();privateMatchStream?.close();window.removeEventListener('hashchange', routeChanged); window.removeEventListener('popstate', routeChanged); window.removeEventListener('online', connectionChanged); window.removeEventListener('offline', connectionChanged); clearTimeout(toastTimer); });
+onUnmounted(() => { publicResultsStream?.close();privateMatchStream?.close();window.removeEventListener('hashchange', routeChanged); window.removeEventListener('popstate', routeChanged); window.removeEventListener('online', connectionChanged); window.removeEventListener('offline', connectionChanged); clearTimeout(toastTimer);if(loadingTimer)clearTimeout(loadingTimer); });
 </script>
 
 <template>
@@ -1547,7 +1550,7 @@ onUnmounted(() => { publicResultsStream?.close();privateMatchStream?.close();win
       <a v-if="!user.platformAdmin && user.organizationId && parts[0] === 'inicio'" class="btn full" href="#/bandeja">Abrir bandeja de revisión<Icon name="arrow" /></a>
       <div v-if="!online" class="notice amber" role="status">Sin conexión. Tus cambios del formulario se conservan; guardá cuando vuelva la conexión.</div>
       <div v-if="error" class="notice error" role="alert"><div><p>{{ error }}</p><button v-if="errorCode === 'STALE_VERSION' && parts[0] === 'organizacion' && selectedOrg" type="button" class="btn mt" :disabled="busy" @click="refreshBrand(selectedOrg.id)">Actualizar datos sin borrar mi edición</button></div></div>
-      <div v-if="loading && !(parts[0]==='torneo' && workspaceBlueprint.blueprint && workspaceBlueprint.categoryId===selectedTournament?.category_id && ['fixture','partidos','estadisticas'].includes(tournamentSection))" class="loading" role="status">Cargando…</div>
+      <div v-if="loadingVisual && !(parts[0]==='torneo' && workspaceBlueprint.blueprint && workspaceBlueprint.categoryId===selectedTournament?.category_id && ['fixture','partidos','estadisticas'].includes(tournamentSection))" class="loading" role="status">Cargando…</div>
 
       <template v-if="user.platformAdmin && parts[0] === 'administradores'">
         <div class="heading"><div><h1 tabindex="-1">Administradores</h1><p>Personas y acceso a sus organizaciones</p></div><a href="#/nueva-organizacion" class="btn primary"><Icon name="plus" />Agregar</a></div>
