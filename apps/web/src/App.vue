@@ -610,6 +610,7 @@ async function advanceFixture() {
 }
 async function loadCapture() {
   capture.value = null; capturePreview.value=null; captureStartBlocked.value=false; pendingCapture.value = null; pendingCaptureUndo.value = null; lastCaptureTap = { key: '', at: 0 };
+  queuedCapture.value=[];queueError.value='';captureHistory.value=[];
   privateMatchStream?.close();privateMatchStream=null;
   const matchId=parts.value[2];
   if (!user.value?.organizationId || !matchId) return;
@@ -683,6 +684,8 @@ async function startCapture() {
     }
     capture.value = await api<MatchCaptureView>(`/organizations/${user.value!.organizationId}/matches/${parts.value[2]}/record/start`, 'POST', {});
     captureTeamId.value = capture.value.home.entryId;
+    await loadMatchAssignments();
+    if(canManageTournaments())operators.value=await api<OperatorSummary[]>(`/organizations/${user.value!.organizationId}/operators`);
     watchCaptureChanges();
     notify('Partido listo para cargar.');
   });

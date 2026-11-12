@@ -10,6 +10,7 @@ En producción, un enlace de Fixture o Estadísticas construía `#/partido/<id d
 - Al abrir un partido sin acta se muestran los equipos, escudos, fecha y estado de la jornada. El organizador puede volver a la edición del partido. Si la jornada está en borrador, una acción explícita publica esa jornada y abre la carga; no se inicia un acta automáticamente al visitarla.
 - Una jornada de la Copa basada en el plan por posiciones admite publicación con la fecha prevista, aunque aún no tenga hora o sede. Los demás formatos conservan su validación previa. El inicio del acta en servidor sigue exigiendo jornada y reglamento publicados.
 - El planillero asignado a una jornada aún no publicada recibe un estado claro, sin llamadas fallidas a `record` y `record/start`.
+- Cambiar de partido vacía los eventos locales y el historial visibles del partido anterior antes de cargar los del actual; al iniciar una nueva acta se actualizan las asignaciones disponibles.
 - Estadísticas de esta Copa consulta plan, competencia y equipos, omitiendo la carga de todas las jornadas, cuadros y estadísticas privadas que esa vista no usa. El indicador general «Cargando…» se oculta cuando el plan de la categoría ya está representado.
 
 ## Permisos, estados y verificación
