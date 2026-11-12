@@ -90,13 +90,14 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       if (typeof received !== 'string' || !safeEquals(received, csrfFor(config.appSecret, request.auth.rawToken))) fail(403, 'CSRF_REQUIRED', 'Actualizá la pantalla e intentá de nuevo.');
     }
   });
-  app.setErrorHandler((error, _request, reply) => {
+  app.setErrorHandler((error, request, reply) => {
     if (error instanceof ZodError) return reply.code(400).send({ code: 'INVALID_INPUT', message: error.issues[0]?.message || 'Revisá los datos ingresados.' });
     if (error instanceof ApiError) return reply.code(error.statusCode).send({ code: error.code, message: error.message });
     const failure = (typeof error === 'object' && error !== null ? error : {}) as { code?: string; statusCode?: number };
     if (failure.code === '23505') return reply.code(409).send({ code: 'ALREADY_EXISTS', message: 'Ese usuario o asignación ya existe. Revisá los datos.' });
     if (failure.statusCode === 429) return reply.code(429).send({ code: 'TOO_MANY_ATTEMPTS', message: 'Hubo demasiados intentos. Esperá unos minutos antes de volver a intentar.' });
     if (failure.statusCode === 413) return reply.code(413).send({ code: 'FILE_TOO_LARGE', message: 'La imagen debe pesar como máximo 2 MB.' });
+    if (!failure.statusCode || failure.statusCode >= 500) console.error(JSON.stringify({ event: 'request_failed', requestId: request.id, method: request.method, route: request.routeOptions.url || '(unmatched)', errorType: error instanceof Error ? error.name : 'Unknown', errorCode: failure.code || null }));
     return reply.code(failure.statusCode && failure.statusCode < 500 ? failure.statusCode : 500).send({ code: 'REQUEST_FAILED', message: 'No se pudo completar la operación. Tus datos del formulario se conservan.' });
   });
 

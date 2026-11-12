@@ -1,7 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import { createPool } from '@torneos/db';
 import { migrate } from '../../packages/db/src/migrate.ts';
 import { seed } from '../../packages/db/src/seed.ts';
@@ -17,6 +16,7 @@ import { bestRemainingTie, qualifiedEntries, tieWinner } from '../../apps/api/sr
 import { hashPassword, digest, decryptDocument } from '../../apps/api/src/security.ts';
 import { rankStandings, roundRobin, drawGroups, knockoutBracket, ruleSchema, previewCompetitionBracket, projectMatchJournal, deriveOfficialStatistics, type RankedMatch, type CurrentUser, type RuleConfig, type MatchJournalEvent } from '@torneos/shared';
 import { fcfsPositionPlan } from '../../scripts/fcfs-position-plan.ts';
+import { routeInventory } from '../../scripts/audit-routes.ts';
 
 const databaseUrl = process.env.TEST_DATABASE_URL!;
 if (!databaseUrl || new URL(databaseUrl).pathname !== '/torneos_test' || new URL(databaseUrl).hostname !== '127.0.0.1') throw new Error('Pruebas restringidas a torneos_test en este PC.');
@@ -82,34 +82,29 @@ test('superadmin no hereda permiso para leer datos privados del torneo', async (
   assert.equal((await request(adminA,'GET',`/organizations/${ids.a}/teams`)).statusCode,200);
 });
 test('todas las rutas privadas declaradas rechazan solicitudes anónimas', async () => {
-  const publicPaths=new Set(['/health','/ready','/api/v1/auth/login','/api/v1/invitations/inspect','/api/v1/invitations/accept']);
+  assert.ok(routeInventory.length>=189,`El inventario solo encontró ${routeInventory.length} rutas.`);
   let checked=0;
-  for(const file of ['app.ts','discipline.ts','flyers.ts','fixture-progress-routes.ts','fixture-referees-routes.ts','private-exports.ts']){
-    const source=await readFile(new URL(`../../apps/api/src/${file}`,import.meta.url),'utf8');
-    for(const match of source.matchAll(/app\.(get|post|patch|put|delete)\('([^']+)'/g)){
-      const [,method,path]=match;
-      if(path.startsWith('/api/v1/public/')||publicPaths.has(path))continue;
-      const url=path.replace(/:[^/]+/g,'00000000-0000-4000-8000-000000000000');
-      const response=await app.inject({method:method.toUpperCase() as 'GET'|'POST'|'PATCH'|'PUT'|'DELETE',url,payload:method==='get'?undefined:{}});
-      assert.ok(response.statusCode>=400&&response.statusCode<500,`${method.toUpperCase()} ${path}: HTTP ${response.statusCode}`);
-      checked++;
-    }
+  for(const {method,path,access} of routeInventory){
+    assert.ok(path,`Ruta no resuelta: ${method}`);
+    assert.ok(app.hasRoute({method:method as 'GET'|'POST'|'PATCH'|'PUT'|'DELETE',url:path}),`Ruta ausente en Fastify: ${method} ${path}`);
+    if(access!=='guarded')continue;
+    const url=path.replace(/:[^/]+/g,'00000000-0000-4000-8000-000000000000');
+    const response=await app.inject({method:method as 'GET'|'POST'|'PATCH'|'PUT'|'DELETE',url,payload:method==='GET'?undefined:{}});
+    assert.ok(response.statusCode>=400&&response.statusCode<500,`${method} ${path}: HTTP ${response.statusCode}`);
+    checked++;
   }
-  assert.ok(checked>=100,`Solo se revisaron ${checked} rutas privadas.`);
+  assert.ok(checked>=162,`Solo se revisaron ${checked} rutas privadas.`);
 });
 test('ninguna ruta de organización concede acceso cruzado o por ser superadmin', async () => {
   let checked=0;
-  for(const file of ['app.ts','discipline.ts','flyers.ts','fixture-progress-routes.ts','fixture-referees-routes.ts','private-exports.ts']){
-    const source=await readFile(new URL(`../../apps/api/src/${file}`,import.meta.url),'utf8');
-    for(const match of source.matchAll(/app\.(get|post|patch|put|delete)\('([^']+)'/g)){
-      const [,method,path]=match;if(!path.startsWith('/api/v1/organizations/:id'))continue;
-      const url=path.replace('/organizations/:id',`/organizations/${ids.b}`).replace(/:[^/]+/g,'00000000-0000-4000-8000-000000000000');
-      const response=await app.inject({method:method.toUpperCase() as 'GET'|'POST'|'PATCH'|'PUT'|'DELETE',url,headers:headers(adminA),payload:method==='get'?undefined:{}});
-      assert.ok(response.statusCode>=400&&response.statusCode<500,`${method.toUpperCase()} ${path}: HTTP ${response.statusCode}`);
-      checked++;
-    }
+  for(const {method,path} of routeInventory){
+    if(!path?.startsWith('/api/v1/organizations/:id'))continue;
+    const url=path.replace('/organizations/:id',`/organizations/${ids.b}`).replace(/:[^/]+/g,'00000000-0000-4000-8000-000000000000');
+    const response=await app.inject({method:method as 'GET'|'POST'|'PATCH'|'PUT'|'DELETE',url,headers:headers(adminA),payload:method==='GET'?undefined:{}});
+    assert.ok(response.statusCode>=400&&response.statusCode<500,`${method} ${path}: HTTP ${response.statusCode}`);
+    checked++;
   }
-  assert.ok(checked>=90,`Solo se revisaron ${checked} rutas entre organizaciones.`);
+  assert.ok(checked>=149,`Solo se revisaron ${checked} rutas entre organizaciones.`);
   assert.equal((await request(owner,'GET',`/organizations/${ids.a}/teams`)).statusCode,403);
 });
 test('organization_id enviado en el cuerpo no autoriza ni altera el ámbito', async () => {

@@ -1254,27 +1254,32 @@ async function chooseOrganization(id: string) {
 }
 async function loadView(force = false) {
   const epoch = ++routeEpoch;
+  const viewParts = [...parts.value];
   error.value = ''; loading.value = true;
   try {
     if(parts.value[0]!=='publico'){publicResultsStream?.close();publicResultsStream=null;}
     if(parts.value[0]!=='partido'){privateMatchStream?.close();privateMatchStream=null;}
     if (parts.value[0] === 'acceso') return;
     if (parts.value[0] === 'portal') {
-      publicOrganizations.value=await api<PublicOrganizationItem[]>('/public/organizations');
-      const selected=publicOrganizations.value.find(item=>item.public_slug===parts.value[1]);
-      if(!selected){const tournament=await api<{id:string;organization_id:string}>(`/public/tournaments/by-slug/${encodeURIComponent(parts.value[1]||'')}`);route.value=`publico/${tournament.organization_id}/${tournament.id}`;return;}
-      const tournamentId=parts.value[2]||(selected.tournament_count===1?selected.single_tournament_id||'':'');
-      if(!parts.value[2]&&tournamentId&&selected.single_tournament_slug)history.replaceState(null,'',`/${selected.single_tournament_slug}`);
+      const organizations=await api<PublicOrganizationItem[]>('/public/organizations');
+      if(epoch!==routeEpoch)return;
+      publicOrganizations.value=organizations;
+      const selected=organizations.find(item=>item.public_slug===viewParts[1]);
+      if(!selected){const tournament=await api<{id:string;organization_id:string}>(`/public/tournaments/by-slug/${encodeURIComponent(viewParts[1]||'')}`);if(epoch!==routeEpoch)return;route.value=`publico/${tournament.organization_id}/${tournament.id}`;return;}
+      const tournamentId=viewParts[2]||(selected.tournament_count===1?selected.single_tournament_id||'':'');
+      if(!viewParts[2]&&tournamentId&&selected.single_tournament_slug)history.replaceState(null,'',`/${selected.single_tournament_slug}`);
       route.value=`publico/${selected.id}${tournamentId?`/${tournamentId}`:''}`;
       return;
     }
     if (parts.value[0] === 'publico') {
       publicOrganization.value = null; publicTournaments.value = []; publicTeams.value = []; publicSponsors.value = []; publicFixture.value = []; publicBrackets.value = []; publicStatistics.value = {}; publicFlyers.value=[]; publicDraws.value=[];
-      if(!parts.value[1]){publicOrganizations.value=await api<PublicOrganizationItem[]>('/public/organizations');setPublicPageMeta('A la cancha · Torneos','Encontrá organizaciones, torneos, partidos, resultados y estadísticas.',`${location.origin}/`);return;}
-      const [result, published, brackets,sharedFlyers,draws] = await Promise.all([api<{ organization: PublicOrganization; tournaments: TournamentSummary[]; teams: typeof publicTeams.value; sponsors: typeof publicSponsors.value }>(`/public/organizations/${parts.value[1]}/tournaments`), api<PublicFixtureDay[]>(`/public/organizations/${parts.value[1]}/fixture`), api<PublicBracket[]>(`/public/organizations/${parts.value[1]}/brackets`),api<typeof publicFlyers.value>(`/public/organizations/${parts.value[1]}/flyers`),api<PublicDraw[]>(`/public/organizations/${parts.value[1]}/draws`)]);
+      if(!viewParts[1]){const organizations=await api<PublicOrganizationItem[]>('/public/organizations');if(epoch!==routeEpoch)return;publicOrganizations.value=organizations;setPublicPageMeta('A la cancha · Torneos','Encontrá organizaciones, torneos, partidos, resultados y estadísticas.',`${location.origin}/`);return;}
+      const organizationId=viewParts[1];
+      const [result, published, brackets,sharedFlyers,draws] = await Promise.all([api<{ organization: PublicOrganization; tournaments: TournamentSummary[]; teams: typeof publicTeams.value; sponsors: typeof publicSponsors.value }>(`/public/organizations/${organizationId}/tournaments`), api<PublicFixtureDay[]>(`/public/organizations/${organizationId}/fixture`), api<PublicBracket[]>(`/public/organizations/${organizationId}/brackets`),api<typeof publicFlyers.value>(`/public/organizations/${organizationId}/flyers`),api<PublicDraw[]>(`/public/organizations/${organizationId}/draws`)]);
+      if(epoch!==routeEpoch)return;
       publicDraws.value=draws;
-      publicCatalog.value=[...new Map([...result.tournaments.map(item=>[item.id,{id:item.id,name:item.name,public_slug:item.public_slug||null,organization_id:parts.value[1],organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const),...draws.map(item=>[item.tournament_id,{id:item.tournament_id,name:item.tournament_name,public_slug:item.public_slug||null,organization_id:parts.value[1],organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const)].map(item=>[item[0],item[1]])).values()];
-      const tournamentId=parts.value[2];
+      publicCatalog.value=[...new Map([...result.tournaments.map(item=>[item.id,{id:item.id,name:item.name,public_slug:item.public_slug||null,organization_id:organizationId,organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const),...draws.map(item=>[item.tournament_id,{id:item.tournament_id,name:item.tournament_name,public_slug:item.public_slug||null,organization_id:organizationId,organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const)].map(item=>[item[0],item[1]])).values()];
+      const tournamentId=viewParts[2];
       if(tournamentId&&!result.tournaments.some(item=>item.id===tournamentId)&&!draws.some(item=>item.tournament_id===tournamentId))throw new RequestError('Este torneo todavía no está publicado.','NOT_FOUND',404);
       publicOrganization.value = result.organization; publicTournaments.value = tournamentId?result.tournaments.filter(item=>item.id===tournamentId):result.tournaments; publicTeams.value = result.teams.filter(team=>publicTournaments.value.some(item=>item.category_id===team.category_id)); publicSponsors.value = result.sponsors.filter(sponsor=>!tournamentId||sponsor.tournament_id===tournamentId);
       publicFixture.value = tournamentId?published.filter(day=>day.tournament_id===tournamentId):published; publicBrackets.value = tournamentId?brackets.filter(item=>item.tournament_id===tournamentId):brackets;publicFlyers.value=tournamentId?sharedFlyers.filter(item=>item.tournamentId===tournamentId):sharedFlyers;
@@ -1286,13 +1291,15 @@ async function loadView(force = false) {
       const hasEmblem=publicTournament.value?.has_emblem&&publicTournament.value.status==='published'||draws.some(item=>item.tournament_id===tournamentId&&item.has_emblem);
       const image=hasEmblem?`${location.origin}/api/v1/public/organizations/${result.organization.id}/tournaments/${tournamentId}/emblem`:result.organization.logo_id?`${location.origin}/api/v1/public/organizations/${result.organization.id}/logo`:'';
       setPublicPageMeta(title,description,canonical,image);
-      const statResults = await Promise.allSettled(result.tournaments.map(item => api<PublicStats>(`/public/organizations/${parts.value[1]}/categories/${item.category_id}/statistics`)));
+      const statResults = await Promise.allSettled(result.tournaments.map(item => api<PublicStats>(`/public/organizations/${organizationId}/categories/${item.category_id}/statistics`)));
+      if(epoch!==routeEpoch)return;
       publicStatistics.value = Object.fromEntries(result.tournaments.flatMap((item, index) => statResults[index].status === 'fulfilled' ? [[item.category_id, statResults[index].value]] : []));
-      publicResultsStream?.close();publicResultsStream=new EventSource(`/api/v1/public/organizations/${parts.value[1]}/results/stream`);
-      const refreshResults=()=>{void api<PublicFixtureDay[]>(`/public/organizations/${parts.value[1]}/fixture`).then(days=>{if(parts.value[0]==='publico')publicFixture.value=tournamentId?days.filter(day=>day.tournament_id===tournamentId):days;}).catch(()=>{});void Promise.allSettled(publicTournaments.value.map(item=>api<PublicStats>(`/public/organizations/${parts.value[1]}/categories/${item.category_id}/statistics`))).then(results=>{if(parts.value[0]==='publico')publicStatistics.value=Object.fromEntries(publicTournaments.value.flatMap((item,index)=>results[index].status==='fulfilled'?[[item.category_id,results[index].value]]:[]));});};
-      const drawOrganizationId=parts.value[1];
+      publicResultsStream?.close();publicResultsStream=new EventSource(`/api/v1/public/organizations/${organizationId}/results/stream`);
+      const currentPublicView=()=>epoch===routeEpoch&&parts.value[0]==='publico'&&parts.value[1]===organizationId&&parts.value[2]===tournamentId;
+      const refreshResults=()=>{void api<PublicFixtureDay[]>(`/public/organizations/${organizationId}/fixture`).then(days=>{if(currentPublicView())publicFixture.value=tournamentId?days.filter(day=>day.tournament_id===tournamentId):days;}).catch(()=>{});void Promise.allSettled(publicTournaments.value.map(item=>api<PublicStats>(`/public/organizations/${organizationId}/categories/${item.category_id}/statistics`))).then(results=>{if(currentPublicView())publicStatistics.value=Object.fromEntries(publicTournaments.value.flatMap((item,index)=>results[index].status==='fulfilled'?[[item.category_id,results[index].value]]:[]));});};
+      const drawOrganizationId=organizationId;
       const refreshDraws=()=>{void api<PublicDraw[]>(`/public/organizations/${drawOrganizationId}/draws`).then(latest=>{
-        if(parts.value[0]!=='publico'||parts.value[1]!==drawOrganizationId)return;
+        if(!currentPublicView())return;
         if(latest.some(item=>(publicDraws.value.find(current=>current.category_id===item.category_id)?.revision||0)>item.revision))return;
         publicDraws.value=latest;
       }).catch(()=>{});};
@@ -1370,6 +1377,7 @@ async function loadView(force = false) {
       if (parts.value[0] === 'organizacion' && parts.value[1] && parts.value[1] !== user.value.organizationId) throw new RequestError('Elegí primero una organización a la que tengas acceso.');
     }
   } catch (failure) {
+    if(epoch!==routeEpoch)return;
     if (failure instanceof RequestError && failure.status === 401) { clearPrivate(); user.value = null; go('acceso'); error.value = 'Tu sesión terminó. Ingresá de nuevo.'; }
     else error.value = failure instanceof Error ? failure.message : 'No se pudo abrir la pantalla.';
   } finally { if (epoch === routeEpoch) loading.value = false; }
