@@ -970,6 +970,23 @@ test('T04/T08: el sorteo completo se publica por versión y queda visible sin se
   await pool.query('UPDATE match_records SET approval_id=$3 WHERE organization_id=$1 AND match_id=$2',[ids.a,extraMatchId,extraApproval]);
   assert.equal((await request(adminA,'GET',`${base}/competition`)).json().titleExtra.winnerEntryId,titlePair[0]);
   assert.equal((await request(adminA,'POST',extraPath,{decision:'no_extra'})).json().code,'TITLE_EXTRA_ACTIVE');
+  const flyerPath=`/organizations/${ids.a}/flyers/preview`;
+  assert.equal((await request(adminA,'POST',flyerPath,{kind:'bracket',sourceId:categoryId,size:'square',pageNo:1,note:null,template:'forest'})).statusCode,409);
+  const {rows:stageDays}=await pool.query(`SELECT md.id,md.ordinal FROM matchdays md JOIN categories c ON c.organization_id=md.organization_id AND c.edition_id=md.edition_id
+    WHERE md.organization_id=$1 AND c.id=$2 AND md.ordinal BETWEEN 10 AND 14 ORDER BY md.ordinal`,[ids.a,categoryId]);
+  assert.equal(stageDays.length,5);
+  for(const day of stageDays){
+    const preview=await request(adminA,'GET',`/organizations/${ids.a}/matchdays/${day.id}/preview`);
+    assert.deepEqual(preview.json().missing,[]);
+    assert.equal((await request(adminA,'POST',`/organizations/${ids.a}/matchdays/${day.id}/publish`,{expectedRevision:preview.json().revision,reason:'Publicación de etapa sintética'})).statusCode,201);
+  }
+  const quarters=await loadFlyerSource(pool,ids.a,'bracket',categoryId,'square',1,null);
+  const finals=await loadFlyerSource(pool,ids.a,'final',categoryId,'square',1,null);
+  assert.equal(quarters.title,'Cuartos de final');assert.equal(quarters.lines.length,4);
+  assert.equal(finals.title,'Finales');assert.equal(finals.lines.length,6);
+  assert.match(renderFlyerSvg(quarters,'square','forest'),/Cuartos de final/);
+  assert.equal((await request(adminB,'POST',flyerPath,{kind:'final',sourceId:categoryId,size:'square',pageNo:1,note:null,template:'forest'})).statusCode,403);
+  assert.equal((await request(adminA,'POST',flyerPath,{kind:'champion',sourceId:categoryId,size:'square',pageNo:1,note:null,template:'forest'})).statusCode,409);
 });
 
 test('T04/T05: una jornada de Copa con fecha prevista se publica y abre el acta sin hora ni sede',async()=>{
@@ -2420,6 +2437,7 @@ test('T08: campeón de final ida y vuelta usa el global de dos actas aprobadas',
  const backMatch={...firstMatch,id:back,home_entry_id:b,away_entry_id:a,home_name:'Blanco',away_name:'Azul',match_date:'2026-11-08',match_time:'18:00'};
  const fake={query:async(sql:string,params:any[])=>{
   if(sql.includes('FROM organizations WHERE'))return {rows:[{name:'Liga',logo_id:null}]};
+  if(sql.includes('FROM fixture_position_blueprints b JOIN categories'))return {rows:[]};
   if(sql.includes('SELECT matchday_id FROM draft_matches'))return {rows:[{matchday_id:params[1]===back?backDay:firstDay}]};
   if(sql.includes('FROM matchdays md'))return {rows:[{id:params[1],ordinal:1,revision:1,snapshot:[params[1]===backDay?backMatch:firstMatch],edition_name:'Temporada',tournament_name:'Copa'}]};
   if(sql.includes('SELECT id FROM team_entries WHERE'))return {rows:[{id:a},{id:b}]};

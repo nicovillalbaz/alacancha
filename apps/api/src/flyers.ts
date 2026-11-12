@@ -27,7 +27,11 @@ export function registerFlyerRoutes(app:FastifyInstance,pool:DatabasePool,mediaD
    scorer:'SELECT ed.tournament_id id FROM player_registrations pr JOIN team_entries e ON e.organization_id=pr.organization_id AND e.id=pr.entry_id JOIN categories c ON c.organization_id=e.organization_id AND c.id=e.category_id JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id WHERE pr.organization_id=$1 AND pr.id=$2'
   };
   const query=lookup[snap.kind]||lookup[['result','champion'].includes(snap.kind)?'match':['scorers','defense'].includes(snap.kind)?'standings':'bracket'];
-  const {rows:[reference]}=await pool.query(query,[org,snap.sourceId]);if(!reference)return snap;
+  let {rows:[reference]}=await pool.query(query,[org,snap.sourceId]);
+  if(!reference&&['bracket','final','champion'].includes(snap.kind)){
+   ({rows:[reference]}=await pool.query('SELECT ed.tournament_id id FROM categories c JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id WHERE c.organization_id=$1 AND c.id=$2',[org,snap.sourceId]));
+  }
+  if(!reference)return snap;
   const {rows:[settings]}=await pool.query(`SELECT coalesce(s.primary_color,'#102B2B') primary_color,coalesce(s.accent_color,'#A9E1B9') accent_color,
     coalesce(s.cup_logo_id,t.emblem_id) cup_asset_id,coalesce(s.organizer_logo_id,o.logo_id) organizer_asset_id,s.federation_logo_id federation_asset_id
     FROM tournaments t JOIN organizations o ON o.id=t.organization_id LEFT JOIN tournament_flyer_settings s ON s.organization_id=t.organization_id AND s.tournament_id=t.id
@@ -68,7 +72,7 @@ export function registerFlyerRoutes(app:FastifyInstance,pool:DatabasePool,mediaD
    LEFT JOIN matchdays md ON md.organization_id=f.organization_id AND md.id=f.source_id AND f.kind='matchday'
    LEFT JOIN draft_matches dm ON dm.organization_id=f.organization_id AND dm.id=f.source_id AND f.kind IN ('match','result','champion')
    LEFT JOIN matchdays match_day ON match_day.organization_id=dm.organization_id AND match_day.id=dm.matchday_id
-   LEFT JOIN categories cat ON cat.organization_id=f.organization_id AND cat.id=f.source_id AND f.kind IN ('standings','scorers','defense')
+   LEFT JOIN categories cat ON cat.organization_id=f.organization_id AND cat.id=f.source_id AND f.kind IN ('standings','scorers','defense','bracket','final','champion')
    LEFT JOIN fixture_phases phase ON phase.organization_id=f.organization_id AND phase.id=f.source_id AND f.kind IN ('bracket','semifinal','final')
    LEFT JOIN categories phase_cat ON phase_cat.organization_id=phase.organization_id AND phase_cat.id=phase.category_id
    LEFT JOIN editions ed ON ed.organization_id=f.organization_id AND ed.id=coalesce(md.edition_id,match_day.edition_id,cat.edition_id,phase_cat.edition_id)

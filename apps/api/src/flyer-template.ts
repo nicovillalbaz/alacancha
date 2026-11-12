@@ -8,8 +8,8 @@ export type FlyerSize = keyof typeof flyerSizes;
 export const flyerKinds = ['match','matchday','result','standings','scorers','scorer','defense','bracket','semifinal','final','champion','notice'] as const;
 export type FlyerKind = typeof flyerKinds[number];
 export const flyerTemplates = [
-  { key: 'forest', version: 2, label: 'Campo oscuro' },
-  { key: 'paper', version: 2, label: 'Pizarra clara' },
+  { key: 'forest', version: 3, label: 'Campo oscuro' },
+  { key: 'paper', version: 3, label: 'Pizarra clara' },
 ] as const;
 export type FlyerTemplateKey = typeof flyerTemplates[number]['key'];
 export type FlyerLine = { left:string; right?:string; sub?:string; side?:'home'|'away'; homeAssetId?:string|null; awayAssetId?:string|null; homeName?:string; awayName?:string };
@@ -66,9 +66,11 @@ export function renderFlyerSvg(snapshot:FlyerSnapshot,sizeCode:FlyerSize,templat
     `<rect x="0" y="0" width="${w}" height="12" fill="${rawAccent}"/>`];
   const top=76;
   const logos=[snapshot.brand?.cupAssetId,snapshot.brand?.organizerAssetId,snapshot.brand?.federationAssetId].filter((id):id is string=>Boolean(id));
-  if(logos.length)logos.forEach((id,index)=>b.push(imageOrMark(id,'',w-92-(logos.length-1-index)*83,top-32,index===0?72:60,assets,dark)));
+  const logoSizes=logos.map((_,index)=>index===0?94:82);
+  const logoStart=w-65-logoSizes.reduce((total,value)=>total+value,0)-Math.max(0,logos.length-1)*12;
+  if(logos.length){let x=logoStart;logos.forEach((id,index)=>{const size=logoSizes[index];b.push(imageOrMark(id,'',x,top-40,size,assets,dark));x+=size+12;});}
   else if(snapshot.orgAssetId)b.push(imageOrMark(snapshot.orgAssetId,snapshot.competition,w-110,top-33,70,assets,dark));
-  b.push(multi(snapshot.competition,65,top+5,25,muted,Math.max(17,Math.floor((w-175-logos.length*80)/14)),2,'start',29,750));
+  b.push(multi(snapshot.competition,65,top+5,25,muted,Math.max(17,Math.floor(((logos.length?logoStart:w-110)-85)/14)),2,'start',29,750));
   b.push(`<path d="M65 130 H${Math.min(w-65,305)}" stroke="${rawAccent}" stroke-width="6"/>`);
   b.push(text(snapshot.kicker.toUpperCase(),65,166,23,accent,800));
   b.push(multi(snapshot.title,65,227,Math.min(62,h*.052),ink,29,2,'start',68,900,true));
@@ -76,6 +78,13 @@ export function renderFlyerSvg(snapshot:FlyerSnapshot,sizeCode:FlyerSize,templat
   if(snapshot.pageNo>1||snapshot.totalPages>1)b.push(text(`${snapshot.pageNo}/${snapshot.totalPages}`,w-65,h-31,20,muted,700,'end'));
   const hero=['match','result','champion'].includes(snapshot.kind);
   if(hero){
+    if(snapshot.kind==='champion'&&snapshot.home&&!snapshot.away){
+      const logoSize=Math.min(285,h*.27),logoY=Math.max(315,h*.34);
+      b.push(imageOrMark(snapshot.home.assetId,snapshot.home.name,(w-logoSize)/2,logoY,logoSize,assets,dark));
+      b.push(multi(snapshot.home.name,w/2,logoY+logoSize+80,49,ink,28,2,'middle',57,900));
+      b.push(multi(snapshot.subline,w/2,logoY+logoSize+160,29,accent,46,2,'middle',36,750));
+      b.push('</svg>');return b.join('');
+    }
     const logoSize=Math.min(250,h*.19),logoY=Math.max(300,h*.31);
     if(snapshot.home)b.push(imageOrMark(snapshot.home.assetId,snapshot.home.name,145,logoY,logoSize,assets,dark));
     if(snapshot.away)b.push(imageOrMark(snapshot.away.assetId,snapshot.away.name,w-145-logoSize,logoY,logoSize,assets,dark));
@@ -119,20 +128,18 @@ export function renderFlyerSvg(snapshot:FlyerSnapshot,sizeCode:FlyerSize,templat
       if(pair&&row.homeName&&row.awayName){
         const spacious=slot>=155,logo=spacious?78:Math.max(34,Math.min(56,slot-25));
         if(spacious){
-          if(row.right)b.push(text(row.right,w-88,y+35,29,accent,850,'end',true));
           b.push(imageOrMark(row.homeAssetId||null,row.homeName,85,y+53,logo,assets,dark));
           b.push(multi(row.homeName,85+logo+15,y+100,33,ink,18,2,'start',36,780));
-          b.push(text('VS',w/2,y+104,28,accent,900,'middle',true));
+          b.push(text(row.right||'VS',w/2,y+104,28,accent,900,'middle',true));
           b.push(imageOrMark(row.awayAssetId||null,row.awayName,w*.55,y+53,logo,assets,dark));
           b.push(multi(row.awayName,w*.55+logo+15,y+100,33,ink,18,2,'start',36,780));
           if(row.sub)b.push(multi(row.sub,85+logo+15,y+170,21,muted,68,1,'start',22,600));
         }else{
           b.push(imageOrMark(row.homeAssetId||null,row.homeName,85,y+11,logo,assets,dark));
           b.push(multi(row.homeName,85+logo+13,y+Math.min(46,slot*.43),Math.max(21,Math.min(28,slot*.25)),ink,18,1,'start',25,700));
-          b.push(text('VS',w*.47,y+Math.min(46,slot*.43),22,accent,800,'middle'));
+          b.push(text(row.right||'VS',w*.47,y+Math.min(46,slot*.43),22,accent,800,'middle'));
           b.push(imageOrMark(row.awayAssetId||null,row.awayName,w*.52,y+11,logo,assets,dark));
           b.push(multi(row.awayName,w*.52+logo+13,y+Math.min(46,slot*.43),Math.max(21,Math.min(28,slot*.25)),ink,18,1,'start',25,700));
-          if(row.right)b.push(text(row.right,w-90,y+Math.min(46,slot*.43),22,accent,800,'end'));
           if(row.sub&&slot>=85)b.push(multi(row.sub,85+logo+13,y+Math.min(79,slot*.72),18,muted,72,1,'start',20,500));
         }
         return;

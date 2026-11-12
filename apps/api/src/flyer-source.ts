@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { DatabasePool } from '@torneos/db';
 import { categoryStatistics, playerStatNames, withDocumentedTiebreaks } from './statistics.ts';
 import { flyerSizes, type FlyerKind, type FlyerSize, type FlyerSnapshot } from './flyer-template.ts';
+import { positionCompetitionState } from './position-competition.ts';
 
 export class FlyerSourceError extends Error { constructor(public statusCode:number,public code:string,message:string){super(message);} }
 const missing=():never=>{throw new FlyerSourceError(404,'SOURCE_NOT_PUBLIC','La fuente todavía no está publicada o dejó de estar visible.');};
@@ -29,6 +30,50 @@ function linesPage<T>(items:T[],size:FlyerSize,pageNo:number){const per=flyerSiz
 export async function loadFlyerSource(pool:DatabasePool,org:string,kind:FlyerKind,sourceId:string,size:FlyerSize,pageNo:number,note:string|null):Promise<FlyerSnapshot>{
  const organization=await base(pool,org);
  const snapshot:FlyerSnapshot={kind,sourceId,title:'',kicker:'',competition:organization.name,subline:'',footer:'',lines:[],note,orgAssetId:organization.logo_id,entryIds:[],scorerRegistrationIds:[],matchdayId:null,sourceRevision:null,approvalId:null,pageNo,totalPages:1};
+ if(['bracket','final','champion'].includes(kind)){
+  const {rows:[position]}=await pool.query(`SELECT b.id,b.revision,p.revision published_revision,c.name category_name,ed.name edition_name,t.name tournament_name
+    FROM fixture_position_blueprints b JOIN categories c ON c.organization_id=b.organization_id AND c.id=b.category_id
+    JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id
+    JOIN tournaments t ON t.organization_id=ed.organization_id AND t.id=ed.tournament_id
+    JOIN LATERAL (SELECT revision FROM fixture_position_publications WHERE organization_id=b.organization_id AND blueprint_id=b.id ORDER BY revision DESC LIMIT 1) p ON true
+    WHERE b.organization_id=$1 AND b.category_id=$2 AND c.status='published' AND ed.status='published' AND t.status='published'`,[org,sourceId]);
+  if(position){
+   if(position.revision!==position.published_revision)conflict('Publicá el sorteo actualizado antes de generar este flyer.');
+   const state=await positionCompetitionState(pool,org,sourceId,true);
+   if(!state)return missing();
+   if(!state.rulesPublished)return conflict('Publicá el reglamento antes de generar este flyer.');
+   const {rows:teams}=await pool.query(`SELECT e.id,t.name,t.shield_id FROM team_entries e JOIN teams t ON t.organization_id=e.organization_id AND t.id=e.team_id
+     WHERE e.organization_id=$1 AND e.category_id=$2 AND e.status='active' AND e.public_visible`,[org,sourceId]);
+   const byId=new Map<string,{name:string;shield_id:string|null}>(teams.map(team=>[team.id,team]));
+   if(kind==='champion'){
+    if(pageNo!==1)missing();
+    if(state.competition.official.quadrangular!==6||!state.competition.final)return conflict('El campeón requiere los seis resultados oficiales de Finales.');
+    const first=state.competition.final.groups[0];
+    const tableWinner=first&&!first.unresolved&&first.teamIds.length===1?first.teamIds[0]:null;
+    const winner=state.titleExtra?.decision==='extra'?state.titleExtra.dayStatus==='published'?state.titleExtra.winnerEntryId:null:
+      state.titleTie.length===1||state.titleExtra?.decision==='no_extra'?tableWinner:null;
+    if(!winner||!byId.has(winner))conflict('El título todavía necesita una decisión oficial.');
+    Object.assign(snapshot,{title:'Campeón',kicker:position.tournament_name,competition:position.edition_name,
+      subline:position.category_name,home:{name:byId.get(winner)!.name,assetId:byId.get(winner)!.shield_id},entryIds:[winner],sourceRevision:position.revision});
+    return snapshot;
+   }
+   const stage=kind==='bracket'?'quarterfinal':'quadrangular';
+   const games=state.games.filter(game=>game.stage===stage&&state.matches.some(match=>match.code===game.code&&match.day_status==='published'));
+   if(!games.length)conflict(kind==='bracket'?'Los cuartos todavía no están publicados.':'Los partidos de Finales todavía no están publicados.');
+   const ids=games.flatMap(game=>{const pair=state.competition.participants[game.code];return [pair?.homeEntryId,pair?.awayEntryId].filter((id):id is string=>!!id);});
+   if(!await visible(pool,org,ids))missing();
+   const resultByCode=new Map(state.results.map(result=>[result.code,result]));
+   const page=linesPage(games,size,pageNo);
+   Object.assign(snapshot,{title:kind==='bracket'?'Cuartos de final':'Finales',kicker:position.tournament_name,competition:position.edition_name,
+    subline:position.category_name,sourceRevision:position.revision,totalPages:page.total,entryIds:[...new Set(ids)],
+    lines:page.items.map(game=>{const pair=state.competition.participants[game.code],home=byId.get(pair?.homeEntryId||''),away=byId.get(pair?.awayEntryId||''),result=resultByCode.get(game.code);
+      const label=kind==='bracket'?`Llave ${game.code.slice(2)}`:`Final ${game.sporting_round.slice(-1)}`;
+      const penalties=result&&result.homeGoals===result.awayGoals&&(result.homePenalties||result.awayPenalties)?` · Penales ${result.homePenalties}:${result.awayPenalties}`:'';
+      return {left:`${home?.name||'Por definir'} vs ${away?.name||'Por definir'}`,homeName:home?.name||'Por definir',awayName:away?.name||'Por definir',
+       homeAssetId:home?.shield_id||null,awayAssetId:away?.shield_id||null,right:result?`${result.homeGoals}:${result.awayGoals}`:undefined,sub:label+penalties};})});
+   return snapshot;
+  }
+ }
  if(kind==='match'||kind==='result'||kind==='champion'){
   const {rows:[reference]}=await pool.query('SELECT matchday_id FROM draft_matches WHERE organization_id=$1 AND id=$2',[org,sourceId]);if(!reference?.matchday_id)missing();
   const publication=await day(pool,org,reference.matchday_id);const match=publication.snapshot.find(item=>item.id===sourceId);if(!match)return missing();
