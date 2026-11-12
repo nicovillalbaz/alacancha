@@ -300,4 +300,4 @@ Por corrección del propietario, la plantilla v5 conserva el diámetro ampliado 
 
 ### 2026-11-12 — T08: blanco en elementos grises del flyer
 
-La plantilla oscura v6 reemplaza los fondos grisáceos de escudos y el texto secundario por blanco. Los trazos de separación y de la cancha usan blanco con baja opacidad. La variante clara conserva sus colores de contraste. Pendiente la revisión de un archivo generado en el espejo y despliegue.
+La plantilla oscura v6 reemplaza los fondos grisáceos de escudos y el texto secundario por blanco. Los trazos de separación y de la cancha usan blanco con baja opacidad. La variante clara conserva sus colores de contraste. Tipos correctos; en el espejo se generaron PNG de Cuartos, Finales y campeón y se revisó visualmente `output/flyers-espejo-2026-11-12/flyer-blanco-v6.png`. Compilación y despliegue en el VPS correctos; cuatro servicios activos y API/web 200. Prueba física en dispositivo pendiente.
