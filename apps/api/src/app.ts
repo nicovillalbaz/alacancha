@@ -2402,6 +2402,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const organizationId=uuid((request.params as {id:string}).id);
     const {rowCount:active}=await pool.query("SELECT 1 FROM organizations WHERE id=$1 AND status='active'",[organizationId]);
     if(!active) fail(404,'NOT_FOUND','No se encontró el torneo público.');
+    const streamStartedAt=new Date().toISOString();
     const drawVersionsSql=`SELECT p.blueprint_id,b.category_id,max(p.revision)::int revision FROM fixture_position_publications p
       JOIN fixture_position_blueprints b ON b.organization_id=p.organization_id AND b.id=p.blueprint_id
       WHERE p.organization_id=$1 GROUP BY p.blueprint_id,b.category_id`;
@@ -2409,7 +2410,8 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     reply.hijack();reply.raw.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache, no-transform','Connection':'keep-alive','X-Accel-Buffering':'no'});
     trackStream(reply.raw);
     reply.raw.write('event: ready\ndata: {}\n\n');
-    let cursor=new Date().toISOString(),lastId='00000000-0000-0000-0000-000000000000';
+    let cursor=streamStartedAt,lastId='00000000-0000-0000-0000-000000000000';
+    let fixtureCursor=cursor,fixtureLastId=lastId;
     let running=false,closed=false;
     const poll=async()=>{if(running||closed)return;running=true;try{
       const {rows}=await pool.query(`SELECT x.id,x.match_id,x.created_at::text created_text FROM match_record_outbox x
@@ -2424,6 +2426,10 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
         AND md.status='published' AND he.public_visible AND ae.public_visible AND c.status='published' AND ed.status='published' AND t.status='published'
         ORDER BY x.created_at,x.id LIMIT 100`,[organizationId,cursor,lastId]);
       for(const item of rows){reply.raw.write(`event: result\ndata: ${JSON.stringify({matchId:item.match_id})}\n\n`);cursor=item.created_text;lastId=item.id;}
+      const {rows:fixtures}=await pool.query(`SELECT id,created_at::text created_text FROM fixture_outbox
+        WHERE organization_id=$1 AND (created_at,id)>($2::timestamptz,$3::uuid)
+        ORDER BY created_at,id LIMIT 100`,[organizationId,fixtureCursor,fixtureLastId]);
+      for(const item of fixtures){reply.raw.write('event: fixture\ndata: {}\n\n');fixtureCursor=item.created_text;fixtureLastId=item.id;}
       const {rows:draws}=await pool.query(drawVersionsSql,[organizationId]);
       for(const item of draws)if(item.revision>(drawVersions.get(item.blueprint_id)||0)){
         reply.raw.write(`event: draw\ndata: ${JSON.stringify({categoryId:item.category_id,revision:item.revision})}\n\n`);

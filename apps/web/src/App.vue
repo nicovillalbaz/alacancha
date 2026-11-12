@@ -1312,8 +1312,11 @@ async function loadView(force = false) {
         publicDraws.value=latest;
       }).catch(()=>{});};
       publicResultsStream.addEventListener('result',()=>{if(positionPortal)publicResultsRevision.value++;else refreshResults();});
+      publicResultsStream.addEventListener('fixture',()=>{if(positionPortal)publicResultsRevision.value++;else refreshResults();});
       publicResultsStream.addEventListener('draw',refreshDraws);
-      publicResultsStream.addEventListener('ready',()=>{if(!positionPortal)refreshResults();refreshDraws();});
+      let streamReady=false,streamInterrupted=false;
+      publicResultsStream.addEventListener('error',()=>{if(positionPortal&&!streamInterrupted)publicResultsRevision.value++;streamInterrupted=true;});
+      publicResultsStream.addEventListener('ready',()=>{if(positionPortal&&(streamReady||streamInterrupted))publicResultsRevision.value++;else if(!positionPortal)refreshResults();streamReady=true;streamInterrupted=false;refreshDraws();});
       return;
     }
     if(parts.value[0]==='panel'){

@@ -1926,7 +1926,19 @@ test('T04: jornada multicategoría, conflictos, publicación única y reprograma
   assert.equal('referee_name' in (await app.inject(publicPath)).json().find((day: { id: string }) => day.id === dayId).matches[0], false);
   assert.equal((await request(adminA, 'PATCH', path(sameTeamLater.id), { ...slot('16:00', 'Cancha B'), matchdayId: dayId })).json().code, 'MATCHDAY_PUBLISHED');
   const { rows: [before] } = await pool.query("SELECT count(*)::int total FROM fixture_outbox o JOIN matchday_publications p ON p.id=o.publication_id WHERE p.matchday_id=$1", [dayId]); assert.equal(before.total, 1);
-  const revised = await request(adminA, 'PATCH', path(one.id), { ...slot('15:00', 'Cancha A', 'Lluvia sintética, se cambia el horario'), expectedRevision: 1 });
+  const fixtureStream=await buildApp(config,pool),fixtureAbort=new AbortController(),fixtureTimeout=setTimeout(()=>fixtureAbort.abort(),12000);
+  let revised:Awaited<ReturnType<typeof request>>;
+  try{
+    const address=await fixtureStream.listen({host:'127.0.0.1',port:0});
+    const response=await fetch(`${address}/api/v1/public/organizations/${ids.a}/results/stream`,{signal:fixtureAbort.signal});
+    assert.equal(response.status,200);
+    const reader=response.body!.getReader(),decoder=new TextDecoder();
+    assert.match(decoder.decode((await reader.read()).value),/event: ready/);
+    revised=await request(adminA, 'PATCH', path(one.id), { ...slot('15:00', 'Cancha A', 'Lluvia sintética, se cambia el horario'), expectedRevision: 1 });
+    let received='';
+    while(!received.includes('event: fixture')){const chunk=await reader.read();if(chunk.done)break;received+=decoder.decode(chunk.value);}
+    assert.match(received,/event: fixture/);
+  }finally{clearTimeout(fixtureTimeout);fixtureAbort.abort();await fixtureStream.close();}
   assert.equal(revised.statusCode, 200, revised.body);
   const updated = (await app.inject(publicPath)).json().find((day: { id: string }) => day.id === dayId);
   assert.equal(updated.matches.find((m: { id: string }) => m.id === one.id).match_time, '15:00');
