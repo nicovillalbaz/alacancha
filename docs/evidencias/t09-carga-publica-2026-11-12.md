@@ -34,3 +34,5 @@ Despliegue del commit `339382e` en producción y espejo: compilación correcta, 
 ## Corrección de datos durante la recarga
 
 Una revisión posterior detectó que la tabla anterior podía quedar visible mientras llegaba un resultado nuevo. Ahora el portal muestra valores pendientes hasta recibir la versión actual. Un cambio de resultado, publicación o reprogramación de jornada, interrupción y reconexión del flujo público invalida el detalle precargado; una ficha abierta vuelve a pedir el partido. La migración 051 añade un índice no destructivo `(organization_id, created_at, id)` para leer avisos de jornada sin recorrer todo el outbox. El aviso de fixture se probó reprogramando una jornada sintética con una pestaña SSE abierta. Esta protección no elimina el tiempo de propagación de red ni convierte el portal en un marcador en vivo.
+
+La migración 051 se aplicó en espejo y producción después de un respaldo restaurado correctamente. Las dos API se reiniciaron; ambos servicios, los dos workers y el enlace público quedaron operativos. El cambio del fixture FCFS se registra por separado en [su evidencia](t09-correccion-fixture-fcfs-2026-11-12.md).

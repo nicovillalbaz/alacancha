@@ -291,8 +291,9 @@ test('limitación de intentos responde sin revelar si el usuario existe', async 
   }
 });
 test('migración repetible y seed rechazado fuera de las bases locales autorizadas', async () => {
+  const { rows: [beforeCount] } = await pool.query('SELECT count(*)::int total FROM schema_migrations');
   await migrate(pool);
-  const { rows: [count] } = await pool.query('SELECT count(*)::int total FROM schema_migrations'); assert.equal(count.total, 50);
+  const { rows: [count] } = await pool.query('SELECT count(*)::int total FROM schema_migrations'); assert.equal(count.total, beforeCount.total);
   await assert.rejects(seed(pool, 'postgresql://no:sinuso@127.0.0.1:55461/produccion'), /solo se permiten/);
 });
 

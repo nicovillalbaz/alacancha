@@ -283,3 +283,7 @@ Se midieron las lecturas públicas en el espejo y se eliminó una petición enca
 ### 2026-11-12 — T09: evitar valores anteriores durante la actualización
 
 Se detectó que una vista de la Copa podía conservar brevemente la tabla previa al llegar un resultado. Ahora las tablas esperan la respuesta de su revisión, y las fichas de partido se actualizan o vuelven a planificación al invalidarse. El flujo público también avisa publicaciones y reprogramaciones de jornadas y revalida al reconectar. La migración 051 añade un índice no destructivo al outbox de jornadas para esta lectura. La prueba de integración recibió el aviso SSE tras una reprogramación sintética; tipos y compilación correctos. No hay cambios deportivos. La red móvil y aceptación física siguen pendientes. [Evidencia](evidencias/t09-carga-publica-2026-11-12.md).
+
+### 2026-11-12 — T09: fe de erratas del fixture FCFS
+
+Por confirmación del organizador, se intercambiaron A4–B4 y A2–A3 entre J6 y J7 sin cambiar rivales ni fecha deportiva. Se respaldó producción, se restauró y ensayó la corrección en una base temporal y después se publicó la revisión 38. La consulta pública y la inspección privada coincidieron: J6 y J7 no repiten equipos y hay cero partidos oficiales vinculados. Código fuente, formato y prueba de regresión actualizados. Pruebas dirigidas correctas; la suite general detectó tres fallos de generación de flyers por timeout en Windows, pendientes de diagnóstico separado. [Evidencia](evidencias/t09-correccion-fixture-fcfs-2026-11-12.md).
