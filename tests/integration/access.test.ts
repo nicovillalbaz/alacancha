@@ -265,7 +265,7 @@ test('T08: diseño del flyer guarda colores y tres logos con alcance de torneo',
   assert.equal(current.primary_color,'#122C3A');assert.equal(current.accent_color,'#D9F166');assert.equal(current.revision,4);
   assert.equal((await request(adminA,'GET',`/organizations/${ids.b}/tournaments/${tournamentId}/flyer-settings`)).statusCode,403);
   const svg=renderFlyerSvg({kind:'match',sourceId:randomUUID(),title:'Próximo encuentro',kicker:'Copa',competition:'Edición',subline:'',footer:'',lines:[],note:null,orgAssetId:null,entryIds:[],scorerRegistrationIds:[],matchdayId:null,sourceRevision:null,approvalId:null,pageNo:1,totalPages:1,brand:{primaryColor:current.primary_color,accentColor:current.accent_color,cupAssetId:current.cup_logo_id,organizerAssetId:current.organizer_logo_id,federationAssetId:current.federation_logo_id}},'square','forest',{});
-  assert.match(svg,/#122C3A/);assert.match(svg,/#D9F166/);assert.match(svg,/Generado por NAVZ/);
+  assert.match(svg,/#122C3A/);assert.match(svg,/#D9F166/);assert.match(svg,/Generado por /);assert.match(svg,/alacancha\.top/);
 });
 test('recuperación: un uso y revocación de las sesiones anteriores', async () => {
   const before = await login('a', password, ids.a);
@@ -303,6 +303,27 @@ async function newTournament(organizationId = ids.a, rules: RuleConfig = fiveRul
   const response = await request(adminA, 'POST', `/organizations/${organizationId}/tournaments`, body);
   return { body, response };
 }
+test('presentación pública muestra equipos sin publicar reglamento ni fixture y respeta organización',async()=>{
+  const created=await newTournament(ids.a,{...fiveRules,initialPhase:null,competitionPlan:null});
+  assert.equal(created.response.statusCode,201,created.response.body);
+  const {tournamentId,categoryId}=created.response.json();
+  const path=`/organizations/${ids.a}/tournaments/${tournamentId}/public-preview`;
+  const team=await request(adminA,'POST',`/organizations/${ids.a}/teams`,{requestId:randomUUID(),name:`Club de presentación ${runId}`,color:'#165D46',categoryId});
+  assert.equal(team.statusCode,201,team.body);
+  let publicPage=await app.inject({method:'GET',url:`/api/v1/public/organizations/${ids.a}/tournaments`});
+  assert.equal(publicPage.json().tournaments.some((item:{id:string})=>item.id===tournamentId),false);
+  assert.equal((await request(adminB,'PATCH',path,{publicVisible:true})).statusCode,403);
+  assert.equal((await request(owner,'PATCH',path,{publicVisible:true})).statusCode,403);
+  const shown=await request(adminA,'PATCH',path,{publicVisible:true});assert.equal(shown.statusCode,200,shown.body);
+  assert.equal(shown.json().teamsPublished,1);
+  publicPage=await app.inject({method:'GET',url:`/api/v1/public/organizations/${ids.a}/tournaments`});
+  const preview=publicPage.json().tournaments.find((item:{id:string})=>item.id===tournamentId);
+  assert.equal(preview.presentation_only,true);assert.equal(preview.rules,null);
+  assert.equal(publicPage.json().teams.some((item:{id:string})=>item.id===team.json().teamId),true);
+  const hidden=await request(adminA,'PATCH',path,{publicVisible:false});assert.equal(hidden.statusCode,200,hidden.body);
+  publicPage=await app.inject({method:'GET',url:`/api/v1/public/organizations/${ids.a}/tournaments`});
+  assert.equal(publicPage.json().tournaments.some((item:{id:string})=>item.id===tournamentId),false);
+});
 test('Pagos: tarifas por torneo, multa pendiente, cobro parcial, ingresos, salidas y ámbito',async()=>{
   const setup={requestId:randomUUID(),name:`Copa pagos ${runId}`,timezone:'America/Asuncion',editionName:'Temporada 2026',categoryName:'Libre',preset:'F5',teamLimit:8,rules:{...fiveRules,advanced:{...fiveRules.advanced!,discipline:{...fiveRules.advanced!.discipline,customCards:[{code:'azul',label:'Azul',color:'#2278C7',suspensionMatches:1}]}}},paymentRates:{yellowGuaranies:12000,redGuaranies:50000,customCardRates:{azul:18000}}};
   assert.equal((await request(adminA,'POST',`/organizations/${ids.a}/tournaments`,{...setup,requestId:randomUUID(),paymentRates:{...setup.paymentRates,customCardRates:{desconocida:18000}}})).json().code,'CARD_UNKNOWN');
@@ -2391,7 +2412,7 @@ test('T08: flyer de Fecha conserva los dos escudos y el sello de atribución',as
  const line=source.lines[0];line.homeAssetId='home-synthetic';line.awayAssetId='away-synthetic';
  source.footer='Texto de pie innecesario';
  const svg=renderFlyerSvg(source,'square','forest',{'home-synthetic':'data:image/png;base64,aG9tZQ==','away-synthetic':'data:image/png;base64,YXdheQ=='});
- assert.match(svg,/Generado por NAVZ/);assert.match(svg,/aG9tZQ==/);assert.match(svg,/YXdheQ==/);
+ assert.match(svg,/Generado por /);assert.match(svg,/alacancha\.top/);assert.match(svg,/aG9tZQ==/);assert.match(svg,/YXdheQ==/);
  assert.equal(svg.includes('Texto de pie innecesario'),false);
  assert.ok(svg.includes(line.homeName!.slice(0,8)));assert.ok(svg.includes(line.awayName!.slice(0,8)));
  const bracket=renderFlyerSvg({...source,kind:'bracket',lines:[{...line,right:undefined,sub:'Llave 1'}]},'square','paper',{'home-synthetic':'data:image/png;base64,aG9tZQ==','away-synthetic':'data:image/png;base64,YXdheQ=='});

@@ -38,6 +38,7 @@ interface PublicFixtureDay { id: string; ordinal: number; tournament_id:string; 
 interface PublicCatalogItem {id:string;name:string;public_slug:string|null;organization_id:string;organization_name:string;organization_slug:string}
 interface PublicOrganizationItem {id:string;name:string;public_slug:string;has_logo:boolean;tournament_count:number;single_tournament_id:string|null;single_tournament_slug:string|null}
 interface PublicOrganization {id:string;name:string;accent:string;logo_id:string|null;public_slug:string}
+type PublicTournamentSummary=Omit<TournamentSummary,'rules'> & {rules:TournamentSummary['rules']|null;presentation_only:boolean};
 interface MatchAssignment {id:string;match_id:string;duty:'capture'|'review';membership_id:string;name:string;member_status:string;category_id:string;home_name:string;away_name:string;day_ordinal:number|null;day_status:'draft'|'published'|null;acta_status:'capturing'|'submitted'|'official'|null}
 interface OperatorSummary {id:string;name:string;username:string;status:string}
 interface PublicBracket { phase_id:string; category_id:string; category_name: string; edition_name: string; tournament_id:string; tournament_name: string; repechage?: boolean; slots: Array<{ stage: number; slot: number; home: string; away: string; twoLegs?: boolean;homeScore?:number|null;awayScore?:number|null }> }
@@ -141,7 +142,7 @@ const selectedDisciplineCase=computed(()=>disciplineCases.value.find(item=>item.
 let lastCaptureTap = { key: '', at: 0 };
 let publicResultsStream:EventSource|null=null;
 let privateMatchStream:EventSource|null=null;
-const publicTournaments = ref<TournamentSummary[]>([]);
+const publicTournaments = ref<PublicTournamentSummary[]>([]);
 const publicCatalog=ref<PublicCatalogItem[]>([]);
 const publicOrganizations=ref<PublicOrganizationItem[]>([]);
 const publicDraws=ref<PublicDraw[]>([]);
@@ -1280,29 +1281,30 @@ async function loadView(force = false) {
       publicOrganization.value = null; publicTournaments.value = []; publicTeams.value = []; publicSponsors.value = []; publicFixture.value = []; publicBrackets.value = []; publicStatistics.value = {}; publicFlyers.value=[]; publicDraws.value=[];
       if(!viewParts[1]){const organizations=await api<PublicOrganizationItem[]>('/public/organizations');if(epoch!==routeEpoch)return;publicOrganizations.value=organizations;setPublicPageMeta('A la cancha · Torneos','Encontrá organizaciones, torneos, partidos, resultados y estadísticas.',`${location.origin}/`);return;}
       const organizationId=viewParts[1];
-      const [result,draws] = await Promise.all([api<{ organization: PublicOrganization; tournaments: TournamentSummary[]; teams: typeof publicTeams.value; sponsors: typeof publicSponsors.value }>(`/public/organizations/${organizationId}/tournaments`),api<PublicDraw[]>(`/public/organizations/${organizationId}/draws`)]);
+      const [result,draws] = await Promise.all([api<{ organization: PublicOrganization; tournaments: PublicTournamentSummary[]; teams: typeof publicTeams.value; sponsors: typeof publicSponsors.value }>(`/public/organizations/${organizationId}/tournaments`),api<PublicDraw[]>(`/public/organizations/${organizationId}/draws`)]);
       if(epoch!==routeEpoch)return;
       publicDraws.value=draws;
       publicCatalog.value=[...new Map([...result.tournaments.map(item=>[item.id,{id:item.id,name:item.name,public_slug:item.public_slug||null,organization_id:organizationId,organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const),...draws.map(item=>[item.tournament_id,{id:item.tournament_id,name:item.tournament_name,public_slug:item.public_slug||null,organization_id:organizationId,organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const)].map(item=>[item[0],item[1]])).values()];
       const tournamentId=viewParts[2];
       if(tournamentId&&!result.tournaments.some(item=>item.id===tournamentId)&&!draws.some(item=>item.tournament_id===tournamentId))throw new RequestError('Este torneo todavía no está publicado.','NOT_FOUND',404);
       const positionPortal=draws.length>0&&(tournamentId?draws.some(item=>item.tournament_id===tournamentId):!result.tournaments.length);
-      const [published,brackets,sharedFlyers]=positionPortal?[[] as PublicFixtureDay[],[] as PublicBracket[],[] as typeof publicFlyers.value]:await Promise.all([api<PublicFixtureDay[]>(`/public/organizations/${organizationId}/fixture`),api<PublicBracket[]>(`/public/organizations/${organizationId}/brackets`),api<typeof publicFlyers.value>(`/public/organizations/${organizationId}/flyers`)]);
+      const previewOnly=result.tournaments.length>0&&result.tournaments.filter(item=>!tournamentId||item.id===tournamentId).every(item=>item.presentation_only);
+      const [published,brackets,sharedFlyers]=positionPortal||previewOnly?[[] as PublicFixtureDay[],[] as PublicBracket[],[] as typeof publicFlyers.value]:await Promise.all([api<PublicFixtureDay[]>(`/public/organizations/${organizationId}/fixture`),api<PublicBracket[]>(`/public/organizations/${organizationId}/brackets`),api<typeof publicFlyers.value>(`/public/organizations/${organizationId}/flyers`)]);
       if(epoch!==routeEpoch)return;
       publicOrganization.value = result.organization; publicTournaments.value = tournamentId?result.tournaments.filter(item=>item.id===tournamentId):result.tournaments; publicTeams.value = result.teams.filter(team=>publicTournaments.value.some(item=>item.category_id===team.category_id)); publicSponsors.value = result.sponsors.filter(sponsor=>!tournamentId||sponsor.tournament_id===tournamentId);
       publicFixture.value = tournamentId?published.filter(day=>day.tournament_id===tournamentId):published; publicBrackets.value = tournamentId?brackets.filter(item=>item.tournament_id===tournamentId):brackets;publicFlyers.value=tournamentId?sharedFlyers.filter(item=>item.tournamentId===tournamentId):sharedFlyers;
       const publicName=tournamentId?(publicTournament.value?.name||draws.find(item=>item.tournament_id===tournamentId)?.tournament_name):(result.organization as unknown as {name:string}|null)?.name||'Torneos';
       const title=tournamentId?`${publicName} · ${result.organization.name}`:`${publicName} · Torneos`;
-      const description=tournamentId?`Partidos, fixture, clasificación y goleadores de ${publicName}.`:`Torneos, partidos, resultados y estadísticas de ${publicName}.`;
+      const description=tournamentId&&previewOnly?`Equipos de ${publicName}. Fixture y formato pendientes.`:tournamentId?`Partidos, fixture, clasificación y goleadores de ${publicName}.`:`Torneos, partidos, resultados y estadísticas de ${publicName}.`;
       const alias=tournamentId?publicCatalog.value.find(item=>item.id===tournamentId)?.public_slug:null;
       const canonical=`${location.origin}${alias?`/${alias}`:`/${result.organization.public_slug}${tournamentId?`/${tournamentId}`:''}`}`;
-      const hasEmblem=publicTournament.value?.has_emblem&&publicTournament.value.status==='published'||draws.some(item=>item.tournament_id===tournamentId&&item.has_emblem);
+      const hasEmblem=publicTournament.value?.has_emblem&&(publicTournament.value.status==='published'||publicTournament.value.presentation_only)||draws.some(item=>item.tournament_id===tournamentId&&item.has_emblem);
       const image=hasEmblem?`${location.origin}/api/v1/public/organizations/${result.organization.id}/tournaments/${tournamentId}/emblem`:result.organization.logo_id?`${location.origin}/api/v1/public/organizations/${result.organization.id}/logo`:'';
       setPublicPageMeta(title,description,canonical,image);
-      const statResults = positionPortal?[]:await Promise.allSettled(result.tournaments.map(item => api<PublicStats>(`/public/organizations/${organizationId}/categories/${item.category_id}/statistics`)));
+      const statResults = positionPortal?[]:await Promise.allSettled(result.tournaments.map(item => item.presentation_only?Promise.resolve({available:false} as PublicStats):api<PublicStats>(`/public/organizations/${organizationId}/categories/${item.category_id}/statistics`)));
       if(epoch!==routeEpoch)return;
       publicStatistics.value = Object.fromEntries(result.tournaments.flatMap((item, index) => statResults[index].status === 'fulfilled' ? [[item.category_id, statResults[index].value]] : []));
-      publicResultsStream?.close();publicResultsStream=new EventSource(`/api/v1/public/organizations/${organizationId}/results/stream`);
+      publicResultsStream?.close();const stream=previewOnly?null:new EventSource(`/api/v1/public/organizations/${organizationId}/results/stream`);publicResultsStream=stream;
       const currentPublicView=()=>epoch===routeEpoch&&parts.value[0]==='publico'&&parts.value[1]===organizationId&&parts.value[2]===tournamentId;
       const refreshResults=()=>{void api<PublicFixtureDay[]>(`/public/organizations/${organizationId}/fixture`).then(days=>{if(currentPublicView())publicFixture.value=tournamentId?days.filter(day=>day.tournament_id===tournamentId):days;}).catch(()=>{});void Promise.allSettled(publicTournaments.value.map(item=>api<PublicStats>(`/public/organizations/${organizationId}/categories/${item.category_id}/statistics`))).then(results=>{if(currentPublicView())publicStatistics.value=Object.fromEntries(publicTournaments.value.flatMap((item,index)=>results[index].status==='fulfilled'?[[item.category_id,results[index].value]]:[]));});};
       const drawOrganizationId=organizationId;
@@ -1311,12 +1313,14 @@ async function loadView(force = false) {
         if(latest.some(item=>(publicDraws.value.find(current=>current.category_id===item.category_id)?.revision||0)>item.revision))return;
         publicDraws.value=latest;
       }).catch(()=>{});};
-      publicResultsStream.addEventListener('result',()=>{if(positionPortal)publicResultsRevision.value++;else refreshResults();});
-      publicResultsStream.addEventListener('fixture',()=>{if(positionPortal)publicResultsRevision.value++;else refreshResults();});
-      publicResultsStream.addEventListener('draw',refreshDraws);
       let streamReady=false,streamInterrupted=false;
-      publicResultsStream.addEventListener('error',()=>{if(positionPortal&&!streamInterrupted)publicResultsRevision.value++;streamInterrupted=true;});
-      publicResultsStream.addEventListener('ready',()=>{if(positionPortal&&(streamReady||streamInterrupted))publicResultsRevision.value++;else if(!positionPortal)refreshResults();streamReady=true;streamInterrupted=false;refreshDraws();});
+      if(stream){
+        stream.addEventListener('result',()=>{if(positionPortal)publicResultsRevision.value++;else refreshResults();});
+        stream.addEventListener('fixture',()=>{if(positionPortal)publicResultsRevision.value++;else refreshResults();});
+        stream.addEventListener('draw',refreshDraws);
+        stream.addEventListener('error',()=>{if(positionPortal&&!streamInterrupted)publicResultsRevision.value++;streamInterrupted=true;});
+        stream.addEventListener('ready',()=>{if(positionPortal&&(streamReady||streamInterrupted))publicResultsRevision.value++;else if(!positionPortal)refreshResults();streamReady=true;streamInterrupted=false;refreshDraws();});
+      }
       return;
     }
     if(parts.value[0]==='panel'){

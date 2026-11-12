@@ -469,17 +469,18 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
         JOIN categories c ON c.organization_id=ed.organization_id AND c.edition_id=ed.id
         JOIN fixture_position_blueprints b ON b.organization_id=c.organization_id AND b.category_id=c.id
         JOIN fixture_position_publications p ON p.organization_id=b.organization_id AND p.blueprint_id=b.id
-        WHERE t.organization_id=o.id))`, [organizationId]);
+        WHERE t.organization_id=o.id)
+      OR EXISTS (SELECT 1 FROM tournaments t WHERE t.organization_id=o.id AND t.public_preview_at IS NOT NULL))`, [organizationId]);
     if (!media) fail(404, 'NOT_FOUND', 'No hay logo público para esta organización.');
     if (!/^[0-9a-f-]+\.(png|jpg|webp)$/.test(media.filename)) fail(500, 'INVALID_FILE', 'No se pudo abrir el archivo.');
     return reply.header('Cache-Control','public, max-age=60, stale-while-revalidate=300').type(media.content_type).send(await readFile(resolve(config.mediaDir, media.filename)));
   });
 
-  const tournamentRows = `SELECT t.id,t.name,t.public_slug,t.timezone,t.status,(t.emblem_id IS NOT NULL) has_emblem,e.id edition_id,e.name edition_name,c.id category_id,c.name category_name,c.preset,c.team_limit,r.version rule_version,r.revision rule_revision,r.status rule_status,r.rules || jsonb_build_object('maxBenchStaff',COALESCE(r.rules->'maxBenchStaff','0'::jsonb),'substitutions',COALESCE(r.rules->'substitutions','null'::jsonb),'eligibility',COALESCE(r.rules->'eligibility','null'::jsonb),'advanced',COALESCE(r.rules->'advanced','null'::jsonb),'initialPhase',COALESCE(r.rules->'initialPhase','null'::jsonb)) rules
+  const tournamentRows = `SELECT t.id,t.name,t.public_slug,t.timezone,t.status,(t.emblem_id IS NOT NULL) has_emblem,(t.public_preview_at IS NOT NULL AND r.status IS NULL) presentation_only,e.id edition_id,e.name edition_name,c.id category_id,c.name category_name,c.preset,c.team_limit,r.version rule_version,r.revision rule_revision,r.status rule_status,CASE WHEN r.rules IS NULL THEN NULL ELSE r.rules || jsonb_build_object('maxBenchStaff',COALESCE(r.rules->'maxBenchStaff','0'::jsonb),'substitutions',COALESCE(r.rules->'substitutions','null'::jsonb),'eligibility',COALESCE(r.rules->'eligibility','null'::jsonb),'advanced',COALESCE(r.rules->'advanced','null'::jsonb),'initialPhase',COALESCE(r.rules->'initialPhase','null'::jsonb)) END rules
     FROM tournaments t JOIN editions e ON e.organization_id=t.organization_id AND e.tournament_id=t.id
     JOIN categories c ON c.organization_id=e.organization_id AND c.edition_id=e.id
-    JOIN LATERAL (SELECT version,revision,status,rules FROM rule_versions rv WHERE rv.organization_id=c.organization_id AND rv.category_id=c.id AND ($3::boolean=false OR rv.status='published') ORDER BY version DESC LIMIT 1) r ON true
-    WHERE t.organization_id=$1 AND ($2::uuid IS NULL OR t.id=$2) AND ($3::boolean=false OR (t.status='published' AND e.status='published' AND c.status='published'))
+    LEFT JOIN LATERAL (SELECT version,revision,status,rules FROM rule_versions rv WHERE rv.organization_id=c.organization_id AND rv.category_id=c.id AND ($3::boolean=false OR rv.status='published') ORDER BY version DESC LIMIT 1) r ON true
+    WHERE t.organization_id=$1 AND ($2::uuid IS NULL OR t.id=$2) AND ($3::boolean=false OR (t.status='published' AND e.status='published' AND c.status='published' AND r.status='published') OR t.public_preview_at IS NOT NULL)
     ORDER BY t.created_at DESC,c.created_at,c.id LIMIT 200`;
   app.get('/api/v1/organizations/:id/tournaments', async (request) => {
     const organizationId = uuid((request.params as { id: string }).id);
@@ -594,7 +595,8 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       OR EXISTS (SELECT 1 FROM editions ed JOIN categories c ON c.organization_id=ed.organization_id AND c.edition_id=ed.id
         JOIN fixture_position_blueprints b ON b.organization_id=c.organization_id AND b.category_id=c.id
         JOIN fixture_position_publications p ON p.organization_id=b.organization_id AND p.blueprint_id=b.id
-        WHERE ed.organization_id=t.organization_id AND ed.tournament_id=t.id))`, [organizationId, tournament]);
+        WHERE ed.organization_id=t.organization_id AND ed.tournament_id=t.id)
+      OR t.public_preview_at IS NOT NULL)`, [organizationId, tournament]);
     if (!media) fail(404, 'NOT_FOUND', 'No hay emblema público para este torneo.');
     if (!/^[0-9a-f-]+\.(png|jpg|webp)$/.test(media.filename)) fail(500, 'INVALID_FILE', 'No se pudo abrir el archivo.');
     return reply.header('Cache-Control','public, max-age=60, stale-while-revalidate=300').type(media.content_type).send(await readFile(resolve(config.mediaDir, media.filename)));
@@ -627,6 +629,20 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       return { tournamentId, editionId, categoryId, reused: false };
     });
     return reply.code(result.reused ? 200 : 201).send(result);
+  });
+  app.patch('/api/v1/organizations/:id/tournaments/:tournamentId/public-preview', async (request) => {
+    const {id,tournamentId}=request.params as {id:string;tournamentId:string};
+    const organizationId=uuid(id),tournament=uuid(tournamentId),actor=await organizationAccess(request,organizationId,true);
+    const {publicVisible}=z.object({publicVisible:z.boolean()}).strict().parse(request.body);
+    return transaction(pool,async client=>{
+      const {rows:[current]}=await client.query('SELECT public_preview_at FROM tournaments WHERE organization_id=$1 AND id=$2 FOR UPDATE',[organizationId,tournament]);
+      if(!current)fail(404,'NOT_FOUND','No se encontró este torneo en tu organización.');
+      const {rows:[updated]}=await client.query('UPDATE tournaments SET public_preview_at=CASE WHEN $1 THEN COALESCE(public_preview_at,now()) ELSE NULL END WHERE organization_id=$2 AND id=$3 RETURNING public_preview_at',[publicVisible,organizationId,tournament]);
+      const teams=publicVisible?await client.query(`UPDATE team_entries e SET public_visible=true FROM categories c JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id
+        WHERE e.organization_id=$1 AND e.category_id=c.id AND ed.tournament_id=$2 AND e.status='active' AND NOT e.public_visible`,[organizationId,tournament]):{rowCount:0};
+      await audit(client,actor.user_id,organizationId,'tournament.public_preview_changed',tournament,'Presentación pública del torneo',{publicVisible:!!current.public_preview_at},{publicVisible:!!updated.public_preview_at,teamsPublished:teams.rowCount});
+      return {publicVisible:!!updated.public_preview_at,teamsPublished:teams.rowCount};
+    });
   });
   app.post('/api/v1/organizations/:id/tournaments/:tournamentId/categories', async (request, reply) => {
     const { id, tournamentId } = request.params as { id: string; tournamentId: string };
@@ -791,7 +807,8 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     OR EXISTS (SELECT 1 FROM editions pe JOIN categories pc ON pc.organization_id=pe.organization_id AND pc.edition_id=pe.id
     JOIN fixture_position_blueprints pb ON pb.organization_id=pc.organization_id AND pb.category_id=pc.id
     JOIN fixture_position_publications pp ON pp.organization_id=pb.organization_id AND pp.blueprint_id=pb.id
-    WHERE pe.organization_id=t.organization_id AND pe.tournament_id=t.id)`;
+    WHERE pe.organization_id=t.organization_id AND pe.tournament_id=t.id)
+    OR t.public_preview_at IS NOT NULL`;
   app.get('/api/v1/public/organizations', async () => {
     const { rows } = await pool.query(`SELECT o.id,o.name,o.public_slug,(o.logo_id IS NOT NULL) has_logo,count(*)::int tournament_count,
       CASE WHEN count(*)=1 THEN (array_agg(t.id))[1] ELSE NULL END single_tournament_id,
@@ -837,7 +854,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const { rows: [organization] } = await pool.query("SELECT id,name,accent,logo_id,public_slug FROM organizations WHERE id=$1 AND status='active'", [organizationId]);
     if (!organization) fail(404, 'NOT_FOUND', 'No se encontró contenido público de esta organización.');
     const { rows } = await pool.query(tournamentRows, [organizationId, null, true]);
-    const { rows: teams } = await pool.query(`SELECT t.id,t.name,t.color,(t.shield_id IS NOT NULL) has_shield,e.id entry_id,e.category_id FROM team_entries e JOIN teams t ON t.organization_id=e.organization_id AND t.id=e.team_id JOIN categories c ON c.organization_id=e.organization_id AND c.id=e.category_id JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id JOIN tournaments tr ON tr.organization_id=ed.organization_id AND tr.id=ed.tournament_id WHERE e.organization_id=$1 AND e.status='active' AND e.public_visible AND c.status='published' AND ed.status='published' AND tr.status='published' ORDER BY t.name LIMIT 200`, [organizationId]);
+    const { rows: teams } = await pool.query(`SELECT t.id,t.name,t.color,(t.shield_id IS NOT NULL) has_shield,e.id entry_id,e.category_id FROM team_entries e JOIN teams t ON t.organization_id=e.organization_id AND t.id=e.team_id JOIN categories c ON c.organization_id=e.organization_id AND c.id=e.category_id JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id JOIN tournaments tr ON tr.organization_id=ed.organization_id AND tr.id=ed.tournament_id WHERE e.organization_id=$1 AND e.status='active' AND e.public_visible AND ((c.status='published' AND ed.status='published' AND tr.status='published') OR tr.public_preview_at IS NOT NULL) ORDER BY t.name LIMIT 200`, [organizationId]);
     const { rows: sponsors } = await pool.query(`SELECT ts.tournament_id,s.id,s.name FROM tournament_sponsors ts JOIN sponsors s ON s.organization_id=ts.organization_id AND s.id=ts.sponsor_id JOIN tournaments t ON t.organization_id=ts.organization_id AND t.id=ts.tournament_id WHERE ts.organization_id=$1 AND ts.archived_at IS NULL AND ts.public_visible AND t.status='published' ORDER BY s.name LIMIT 200`, [organizationId]);
     return { organization, tournaments: rows, teams, sponsors };
   });
@@ -1148,7 +1165,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
   app.get('/api/v1/public/organizations/:id/teams/:teamId/shield', async (request, reply) => {
     const { id, teamId } = request.params as { id: string; teamId: string };
     const organizationId = uuid(id), team = uuid(teamId);
-    const { rows: [media] } = await pool.query(`SELECT m.filename,m.content_type FROM teams t JOIN media m ON m.organization_id=t.organization_id AND m.id=t.shield_id JOIN team_entries e ON e.organization_id=t.organization_id AND e.team_id=t.id JOIN categories c ON c.organization_id=e.organization_id AND c.id=e.category_id JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id JOIN tournaments tr ON tr.organization_id=ed.organization_id AND tr.id=ed.tournament_id JOIN organizations o ON o.id=t.organization_id WHERE t.organization_id=$1 AND t.id=$2 AND o.status='active' AND e.status='active' AND e.public_visible AND c.status='published' AND ed.status='published' AND tr.status='published' LIMIT 1`, [organizationId, team]);
+    const { rows: [media] } = await pool.query(`SELECT m.filename,m.content_type FROM teams t JOIN media m ON m.organization_id=t.organization_id AND m.id=t.shield_id JOIN team_entries e ON e.organization_id=t.organization_id AND e.team_id=t.id JOIN categories c ON c.organization_id=e.organization_id AND c.id=e.category_id JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id JOIN tournaments tr ON tr.organization_id=ed.organization_id AND tr.id=ed.tournament_id JOIN organizations o ON o.id=t.organization_id WHERE t.organization_id=$1 AND t.id=$2 AND o.status='active' AND e.status='active' AND e.public_visible AND ((c.status='published' AND ed.status='published' AND tr.status='published') OR tr.public_preview_at IS NOT NULL) LIMIT 1`, [organizationId, team]);
     if (!media) fail(404, 'NOT_FOUND', 'No hay escudo público para este equipo.');
     if (!/^[0-9a-f-]+\.(png|jpg|webp)$/.test(media.filename)) fail(500, 'INVALID_FILE', 'No se pudo abrir el archivo.');
     return reply.header('Cache-Control','public, max-age=60, stale-while-revalidate=300').type(media.content_type).send(await readFile(resolve(config.mediaDir, media.filename)));

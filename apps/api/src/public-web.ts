@@ -3,21 +3,25 @@ import type { DatabasePool } from '@torneos/db';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-type Page = { organization_id: string; organization_name: string; public_slug: string; has_logo: boolean; tournament_id: string; tournament_name: string; tournament_slug: string | null; has_emblem: boolean; official: boolean };
-const pagesSql = `SELECT DISTINCT o.id organization_id,o.name organization_name,o.public_slug,(o.logo_id IS NOT NULL) has_logo,t.id tournament_id,t.name tournament_name,t.public_slug tournament_slug,(t.emblem_id IS NOT NULL) has_emblem,true official
+type Page = { organization_id: string; organization_name: string; public_slug: string; has_logo: boolean; tournament_id: string; tournament_name: string; tournament_slug: string | null; has_emblem: boolean; official: boolean; preview: boolean };
+const pagesSql = `SELECT DISTINCT o.id organization_id,o.name organization_name,o.public_slug,(o.logo_id IS NOT NULL) has_logo,t.id tournament_id,t.name tournament_name,t.public_slug tournament_slug,(t.emblem_id IS NOT NULL) has_emblem,true official,false preview
   FROM organizations o JOIN tournaments t ON t.organization_id=o.id AND t.status='published'
   JOIN editions ed ON ed.organization_id=t.organization_id AND ed.tournament_id=t.id AND ed.status='published'
   JOIN categories c ON c.organization_id=ed.organization_id AND c.edition_id=ed.id AND c.status='published'
   JOIN rule_versions r ON r.organization_id=c.organization_id AND r.category_id=c.id AND r.status='published'
   WHERE o.status='active'
   UNION
-  SELECT DISTINCT o.id,o.name,o.public_slug,(o.logo_id IS NOT NULL),t.id,t.name,t.public_slug,(t.emblem_id IS NOT NULL),false
+  SELECT DISTINCT o.id,o.name,o.public_slug,(o.logo_id IS NOT NULL),t.id,t.name,t.public_slug,(t.emblem_id IS NOT NULL),false,false
   FROM organizations o JOIN tournaments t ON t.organization_id=o.id
   JOIN editions ed ON ed.organization_id=t.organization_id AND ed.tournament_id=t.id
   JOIN categories c ON c.organization_id=ed.organization_id AND c.edition_id=ed.id
   JOIN fixture_position_blueprints b ON b.organization_id=c.organization_id AND b.category_id=c.id
   JOIN fixture_position_publications p ON p.organization_id=b.organization_id AND p.blueprint_id=b.id
-  WHERE o.status='active'`;
+  WHERE o.status='active'
+  UNION
+  SELECT o.id,o.name,o.public_slug,(o.logo_id IS NOT NULL),t.id,t.name,t.public_slug,(t.emblem_id IS NOT NULL),false,true
+  FROM organizations o JOIN tournaments t ON t.organization_id=o.id
+  WHERE o.status='active' AND t.public_preview_at IS NOT NULL`;
 const escapeHtml = (value: string) => value.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
 const escapeXml = escapeHtml;
 const typeFor = (path: string) => path.endsWith('.js') ? 'text/javascript; charset=utf-8' : path.endsWith('.css') ? 'text/css; charset=utf-8' : path.endsWith('.png') ? 'image/png' : path.endsWith('.svg') ? 'image/svg+xml' : path.endsWith('.webmanifest') ? 'application/manifest+json' : 'application/octet-stream';
@@ -29,7 +33,7 @@ export function registerPublicWebRoutes(app: FastifyInstance, pool: DatabasePool
     const unique = new Map<string,Page>();
     for (const page of (await pool.query(pagesSql)).rows as Page[]) {
       const key = `${page.organization_id}/${page.tournament_id}`, previous = unique.get(key);
-      unique.set(key, previous ? {...previous, official: previous.official || page.official} : page);
+      unique.set(key, previous ? {...previous, official: previous.official || page.official, preview: previous.preview && page.preview} : page);
     }
     return [...unique.values()];
   };
@@ -74,7 +78,7 @@ export function registerPublicWebRoutes(app: FastifyInstance, pool: DatabasePool
     const canonical = segments.length===0 ? `${base}/` : tournament ? tournament.tournament_slug?`${base}/${tournament.tournament_slug}`:`${base}/${organization!.public_slug}/${tournament.tournament_id}` : organization && segments.length===1 ? `${base}/${organization.public_slug}` : '';
     const name = tournament?.tournament_name || organization?.organization_name || 'A la cancha';
     const title = tournament ? `${name} · ${organization!.organization_name}` : organization ? `${name} · A la cancha` : 'A la cancha · Torneos';
-    const description = tournament ? `Partidos, fixture, clasificación y goleadores de ${name}.` : organization ? `Torneos, partidos, resultados y estadísticas de ${name}.` : 'Encontrá organizaciones, torneos, partidos, resultados y estadísticas.';
+    const description = tournament ? tournament.preview ? `Equipos de ${name}. Fixture y formato pendientes.` : `Partidos, fixture, clasificación y goleadores de ${name}.` : organization ? `Torneos y equipos de ${name}.` : 'Encontrá organizaciones, torneos, partidos, resultados y estadísticas.';
     const image = tournament?.has_emblem ? `${base}/api/v1/public/organizations/${tournament.organization_id}/tournaments/${tournament.tournament_id}/emblem` : organization?.has_logo ? `${base}/api/v1/public/organizations/${organization.organization_id}/logo` : '';
     const children = segments.length===0 ? [...new Map(published.map(page=>[page.public_slug,page])).values()].map(page=>({url:published.filter(item=>item.organization_id===page.organization_id).length===1&&page.tournament_slug?`/${page.tournament_slug}`:`/${page.public_slug}`,name:page.organization_name})) : organization && !tournament ? organizationPages.map(page=>({url:page.tournament_slug?`/${page.tournament_slug}`:`/${page.public_slug}/${page.tournament_id}`,name:page.tournament_name})) : [];
     const meta = `<title>${escapeHtml(title)}</title><meta name="description" content="${escapeHtml(description)}">${publicPage?`<link rel="canonical" href="${escapeHtml(canonical)}"><meta property="og:type" content="website"><meta property="og:title" content="${escapeHtml(title)}"><meta property="og:description" content="${escapeHtml(description)}"><meta property="og:url" content="${escapeHtml(canonical)}">${image?`<meta property="og:image" content="${escapeHtml(image)}">`:''}<meta name="twitter:card" content="${image?'summary_large_image':'summary'}">`:'<meta name="robots" content="noindex,nofollow">'}`;
