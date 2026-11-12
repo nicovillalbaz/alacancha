@@ -50,3 +50,5 @@ T04: fixture/jornadas; T05–T06: resultados/estadísticas oficiales; T01: media
 Generar previa y resultado, reprogramar, regenerar y comparar versiones; abrir portal anónimo y probar que endpoints/documentos privados niegan acceso. **Puerta:** artefactos coherentes y privacidad.
 
 **Copa Caacupé — 10/11/2026:** el enlace público del plan parcial muestra Partidos, Fixture por Fechas/Jornadas, Clasificación por Grupos/Cuartos/Cuadrangular/Tabla general y los diez clubes con escudo. Las celdas sin acta permanecen pendientes; no se publican datos de lista de buena fe. [Evidencia](../evidencias/t04-t08-vista-publica-plan-parcial-2026-11-10.md).
+
+**Flyers del plan por posiciones — 12/11/2026:** Cuartos y Finales toman únicamente partidos oficiales publicados de la revisión vigente del plan; el campeón se habilita tras la definición oficial. La Copa no tiene semifinal, por lo que ese flyer no aplica. Tres PNG generados y revisados en el espejo privado, con escudos superiores de mayor tamaño; la aceptación en dispositivos físicos sigue pendiente.
