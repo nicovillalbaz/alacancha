@@ -9,7 +9,7 @@ const groupRows: Array<[string,string,string,number|null]> = [
   ['F1','A1','A2',null],['F1','A4','A3',null],['F1','B1','B2',null],['F1','B4','B3',null],['F1','A5','B5',null],
   ['F2','A3','A1',3],['F2','A4','A5',3],['F2','B3','B1',3],['F2','B4','B5',4],['F2','A2','B2',4],
   ['F3','A1','A4',4],['F3','A5','A2',5],['F3','B1','B4',5],['F3','B5','B2',5],['F3','A3','B3',6],
-  ['F4','A5','A1',6],['F4','A2','A3',6],['F4','B5','B1',7],['F4','B2','B3',7],['F4','A4','B4',7],
+  ['F4','A5','A1',6],['F4','A2','A3',7],['F4','B5','B1',7],['F4','B2','B3',7],['F4','A4','B4',6],
   ['F5','A2','A4',8],['F5','A3','A5',8],['F5','B2','B4',8],['F5','B3','B5',9],['F5','A1','B1',9],
 ];
 const groupGames: Game[] = groupRows.map(([sportingRound,homeRef,awayRef,jornadaNo],index)=>({

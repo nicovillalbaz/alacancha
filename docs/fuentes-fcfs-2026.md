@@ -65,6 +65,8 @@ El DOCX marca **F1–F5 como fechas deportivas**, cada una de cinco partidos; «
 | F4 | A5–A1; A2–A3 | B5–B1; B2–B3 | A4–B4 | Final de J6 y J7 |
 | F5 | A2–A4; A3–A5 | B2–B4; B3–B5 | A1–B1 | J8 y J9 |
 
+**Corrección del organizador, 12/11/2026:** el DOCX ubicó por error A2–A3 en J6 y A4–B4 en J7. Se intercambian esas jornadas y sus fechas: A4–B4 se juega en J6 (01/12) y A2–A3 en J7 (03/12). No cambian los rivales, la fecha deportiva F4 ni el total de 25 partidos de grupos. Así ningún equipo tiene dos partidos en una misma jornada. Esta confirmación posterior prevalece sobre la programación original de la fuente.
+
 El DOCX programa la primera etapa en nueve jornadas: **17, 19, 24, 26 y 27/11; 01, 03, 04 y 10/12/2026**. Los cuartos van el **11 y 12/12**; el cuadrangular, el **15, 17 y 18/12**. La inauguración reparte los cinco partidos de la primera ronda original en dos y tres encuentros mediante sorteo; no se sabe cuáles jugarán cada día. Hay sedes posibles (Polideportivo Municipal y Sede Social del Club Teniente Fariña), pero no sede ni horario asignados a cada partido. El documento señala no programar el 08/12 y permite reprogramar jornadas conservando su secuencia.
 
 **Inconsistencia de resumen del DOCX:** 9 + 2 + 3 = 14 jornadas ordinarias y 25 + 4 + 6 = 35 partidos. Su tabla escribe «TOTAL 15» y «CON PARTIDO EXTRA 16»; las jornadas numeradas llegan hasta 14 y el extra figura como 15. No usar 15/16 como total confirmado sin aclarar esa cuenta. Conservar por partido su **fecha deportiva F1–F5** y su **jornada programada J1–J9** como datos separados; no inferir una relación uno a uno.

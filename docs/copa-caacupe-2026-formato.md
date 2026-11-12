@@ -36,8 +36,8 @@ El DOCX reserva el **22/12/2026** para un partido extra. Solo se contempla si, t
 | J3 | 24/11 | F2 | A3–A1, A4–A5, B3–B1. |
 | J4 | 26/11 | F2 → F3 | Cierra F2: B4–B5, A2–B2. Abre F3: A1–A4. |
 | J5 | 27/11 | F3 | A5–A2, B1–B4, B5–B2. |
-| J6 | 01/12 | F3 → F4 | Cierra F3: A3–B3. Abre F4: A5–A1, A2–A3. |
-| J7 | 03/12 | F4 | B5–B1, B2–B3, A4–B4. |
+| J6 | 01/12 | F3 → F4 | Cierra F3: A3–B3. Abre F4: A5–A1, A4–B4. |
+| J7 | 03/12 | F4 | A2–A3, B5–B1, B2–B3. |
 | J8 | 04/12 | F5 | A2–A4, A3–A5, B2–B4. |
 | J9 | 10/12 | F5 | B3–B5, A1–B1. |
 | J10 | 11/12 | Cuartos | MM1 y MM4. |

@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { derivePositionCompetition, type PositionGame, type PositionResult } from '@torneos/shared';
+import { fcfsPositionPlan } from '../scripts/fcfs-position-plan.ts';
+
+test('Copa Caacupé: cada equipo juega una sola vez por jornada programada',()=>{
+  const scheduled=fcfsPositionPlan.games.filter(game=>game.stage==='groups'&&game.jornadaNo!==null);
+  const byDay=new Map<number,string[]>();
+  for(const game of scheduled){const day=game.jornadaNo!;byDay.set(day,[...(byDay.get(day)||[]),game.homeRef,game.awayRef]);}
+  for(const [day,teams] of byDay)assert.equal(new Set(teams).size,teams.length,`Jornada ${day}: equipo repetido`);
+  assert.deepEqual(scheduled.filter(game=>game.jornadaNo===6).map(game=>[game.homeRef,game.awayRef]),[['A3','B3'],['A5','A1'],['A4','B4']]);
+  assert.deepEqual(scheduled.filter(game=>game.jornadaNo===7).map(game=>[game.homeRef,game.awayRef]),[['A2','A3'],['B5','B1'],['B2','B3']]);
+});
 
 const slots=new Map(Array.from({length:10},(_,index)=>[`${index<5?'A':'B'}${index%5+1}`,`${index<5?'A':'B'}${index%5+1}`] as const));
 const games:PositionGame[]=[];
