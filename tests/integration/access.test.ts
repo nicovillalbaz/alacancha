@@ -959,6 +959,43 @@ test('T04/T08: el sorteo completo se publica por versión y queda visible sin se
   assert.equal((await request(adminA,'POST',extraPath,{decision:'no_extra'})).json().code,'TITLE_EXTRA_ACTIVE');
 });
 
+test('T04/T05: una jornada de Copa con fecha prevista se publica y abre el acta sin hora ni sede',async()=>{
+  const tournament=await newTournament(ids.a,{...fiveRules,points:{win:2,draw:1,loss:0},initialPhase:null,competitionPlan:null});
+  assert.equal(tournament.response.statusCode,201,tournament.response.body);
+  const {categoryId,editionId}=tournament.response.json(),root=`/organizations/${ids.a}`;
+  const base=`${root}/categories/${categoryId}/fixture/blueprint`;
+  assert.equal((await request(adminA,'POST',base,fcfsPositionPlan)).statusCode,201);
+  for(let index=0;index<10;index++){
+    const created=await request(adminA,'POST',`${root}/teams`,{requestId:randomUUID(),name:`Club jornada ${index+1} ${randomUUID().slice(0,5)}`,color:'#165D46',categoryId});
+    assert.equal(created.statusCode,201,created.body);
+    assert.equal((await request(adminA,'PATCH',`${base}/slots/${index<5?'A':'B'}${index%5+1}`,{entryId:created.json().entryId})).statusCode,200);
+  }
+  assert.equal((await request(adminA,'PATCH',`${base}/opening`,{firstJornadaCodes:['G01','G02']})).statusCode,200);
+  const plan=(await request(adminA,'GET',base)).json();
+  assert.equal((await request(adminA,'POST',`${base}/publish-draw`,{expectedRevision:plan.blueprint.revision})).statusCode,200);
+  const rules=await request(adminA,'POST',`${root}/categories/${categoryId}/rules/publish`,{expectedRevision:1,reason:'Puntos y formato revisados',fixedFormatConfirmed:true});
+  assert.equal(rules.statusCode,200,rules.body);
+  const synced=await request(adminA,'POST',`${base}/sync`,{});assert.equal(synced.statusCode,200,synced.body);
+  const days=(await request(adminA,'GET',`${root}/editions/${editionId}/matchdays`)).json();
+  const firstDay=days.find((day:{ordinal:number})=>day.ordinal===1);assert.ok(firstDay);
+  const match=firstDay.matches[0];assert.ok(match.match_date);assert.equal(match.match_time,'');assert.equal(match.venue_id,null);
+  assert.equal(match.position_match,true);assert.equal(match.acta_status,null);
+  assert.equal((await request(adminA,'POST',`${root}/matches/${match.id}/record/start`,{})).json().code,'FIXTURE_NOT_PUBLISHED');
+  const preview=await request(adminA,'GET',`${root}/matchdays/${firstDay.id}/preview`);assert.deepEqual(preview.json().missing,[]);
+  assert.equal((await request(adminB,'POST',`${root}/matchdays/${firstDay.id}/publish`,{expectedRevision:preview.json().revision,reason:'Intento externo'})).statusCode,403);
+  const published=await request(adminA,'POST',`${root}/matchdays/${firstDay.id}/publish`,{expectedRevision:preview.json().revision,reason:'Jornada sintética confirmada'});
+  assert.equal(published.statusCode,201,published.body);
+  const publicDays=(await app.inject({method:'GET',url:`/api/v1/public/organizations/${ids.a}/fixture`})).json();
+  const publicMatch=publicDays.flatMap((day:{matches:Array<{id:string;match_time:string;result:unknown}>})=>day.matches).find((item:{id:string})=>item.id===match.id);
+  assert.ok(publicMatch);assert.equal(publicMatch.match_time,'');assert.equal(publicMatch.result,null);
+  const publicCompetition=(await app.inject({method:'GET',url:`/api/v1/public/organizations/${ids.a}/draws/${categoryId}/competition`})).json();
+  assert.equal(publicCompetition.available,true);assert.ok(publicCompetition.matches.some((item:{match_id:string})=>item.match_id===match.id));
+  assert.equal((await request(adminB,'POST',`${root}/matches/${match.id}/record/start`,{})).statusCode,403);
+  const started=await request(adminA,'POST',`${root}/matches/${match.id}/record/start`,{});assert.equal(started.statusCode,201,started.body);
+  assert.equal((await request(adminA,'GET',`${root}/matches/${match.id}/record`)).json().status,'capturing');
+  assert.equal((await request(adminB,'GET',`${root}/matches/${match.id}/record`)).statusCode,403);
+});
+
 test('T04: orden manual de grupos y general avanza solo con actas vigentes y permiso propio',async()=>{
   const created=await newTournament();assert.equal(created.response.statusCode,201,created.response.body);
   const {categoryId}=created.response.json(),base=`/organizations/${ids.a}/categories/${categoryId}/fixture/blueprint`;
@@ -1915,6 +1952,9 @@ test('T04: Fecha manual guarda partidos con ámbito, conflictos y revisiones', a
   assert.equal(manualStats.json().tables.length,1);assert.equal(manualStats.json().tables[0].totals.length,2);
   assert.equal((await request(adminA,'POST',path,{...input,time:'10:30'})).json().code,'SCHEDULE_CONFLICT');
   const listed=(await request(adminA,'GET',`${root}/editions/${editionId}/matchdays`)).json();assert.equal(listed[0].matches[0].id,made.json().id);
+  assert.equal(listed[0].matches[0].acta_status,null);
+  assert.match(listed[0].matches[0].home_team_id,/^[0-9a-f-]{36}$/);
+  assert.equal(typeof listed[0].matches[0].home_has_shield,'boolean');
   assert.equal((await request(adminB,'GET',`${root}/editions/${editionId}/matchdays`)).statusCode,403);
   assert.equal((await request(adminA,'PATCH',`${root}/fixture/matches/${made.json().id}/schedule`,{matchdayId:day.json().id,venueId:venue.json().id,courtLabel:'Cancha B',date:'2026-11-07',time:'12:00',durationMinutes:60,refereeName:null,expectedRevision:1,reason:'Cambio de horario'})).statusCode,200);
   const archiveMatch=`${root}/fixture/matches/${made.json().id}/archive`;
@@ -2013,6 +2053,8 @@ test('T05: captura privada congela planillas, guarda eventos una vez y deshace s
   assert.equal((await request(operator,'GET',`${root}/match-assignments`)).json().length,0);
   const assignment=await request(adminA,'POST',`${root}/matches/${matchId}/assignments`,{membershipId:createdOperator.json().membershipId,duty:'capture',reason:'Captura del encuentro'});
   assert.equal(assignment.statusCode,201,assignment.body);
+  assert.equal((await request(operator,'GET',`${root}/match-assignments`)).json()[0].day_status,'published');
+  assert.equal((await request(operator,'GET',`${root}/match-assignments`)).json()[0].acta_status,'capturing');
   assert.equal((await request(operator,'GET',recordPath)).statusCode,200);
   assert.equal((await request(operator,'GET',`/organizations/${ids.b}/matches/${matchId}/record`)).statusCode,403);
   assert.equal((await request(owner,'POST',`${root}/matches/${matchId}/assignments`,{membershipId:createdOperator.json().membershipId,duty:'review',reason:'Intento de superadmin'})).statusCode,403);

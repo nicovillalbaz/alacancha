@@ -37,7 +37,7 @@ interface PublicFixtureDay { id: string; ordinal: number; tournament_id:string; 
 interface PublicCatalogItem {id:string;name:string;public_slug:string|null;organization_id:string;organization_name:string;organization_slug:string}
 interface PublicOrganizationItem {id:string;name:string;public_slug:string;has_logo:boolean;tournament_count:number;single_tournament_id:string|null;single_tournament_slug:string|null}
 interface PublicOrganization {id:string;name:string;accent:string;logo_id:string|null;public_slug:string}
-interface MatchAssignment {id:string;match_id:string;duty:'capture'|'review';membership_id:string;name:string;member_status:string;category_id:string;home_name:string;away_name:string;day_ordinal:number|null}
+interface MatchAssignment {id:string;match_id:string;duty:'capture'|'review';membership_id:string;name:string;member_status:string;category_id:string;home_name:string;away_name:string;day_ordinal:number|null;day_status:'draft'|'published'|null;acta_status:'capturing'|'submitted'|'official'|null}
 interface OperatorSummary {id:string;name:string;username:string;status:string}
 interface PublicBracket { phase_id:string; category_id:string; category_name: string; edition_name: string; tournament_id:string; tournament_name: string; repechage?: boolean; slots: Array<{ stage: number; slot: number; home: string; away: string; twoLegs?: boolean;homeScore?:number|null;awayScore?:number|null }> }
 interface PublicStats { available: boolean; reason?: string; phaseMode?: string | null; officialMatches?: number; tables?: Array<{ groupNo: number | null; rows: Array<{ position: number; unresolved: boolean; teamName: string; played: number; wins: number; draws: number; losses: number; points: number; goalsFor: number; goalsAgainst: number; goalDifference: number }> }>; scorers?: Array<{ name: string; teamName: string; goals: number; penalties: number }>; rosters?:Array<{entryId:string;players:Array<{name:string;goals:number;yellowCards:number;redCards:number}>}>;unlistedGoals?: number }
@@ -98,6 +98,8 @@ const disciplineTab = ref('cases'), disciplineSettingsTab = ref('case');
 const fixtureAdvanceReason = ref('');
 const fixtureTie=ref<{categoryId:string;sourceKey:string;candidates:Array<{entryId:string;name:string}>;order:string[]}|null>(null);
 const capture = ref<MatchCaptureView | null>(null);
+const capturePreview=ref<{day:MatchdaySummary;match:MatchdaySummary['matches'][number]}|null>(null);
+const captureStartBlocked=ref(false);
 const matchTab = ref('events');
 const publicStatsTab = reactive<Record<string,string>>({});
 const captureKind = ref<'goal' | 'penalty' | 'own_goal' | 'yellow' | 'second_yellow' | 'red' | 'custom_card' | 'substitution' | 'incident' | 'shootout_goal' | 'shootout_miss'>('goal');
@@ -489,33 +491,37 @@ async function loadMatchdays(editionId: string) {
 }
 async function loadTournamentSection() {
   const organizationId = user.value?.organizationId;
-  if (!organizationId || !selectedTournament.value) return;
+  const tournament = selectedTournament.value;
+  if (!organizationId || !tournament) return;
   const categories = tournamentCategories.value;
-  if (['fixture','partidos','estadisticas'].includes(tournamentSection.value)) {
-    const categoryId = selectedTournament.value.category_id;
+  const section=tournamentSection.value;
+  const needsBlueprint=['fixture','partidos','estadisticas'].includes(section);
+  await Promise.all([needsBlueprint ? (async()=>{
+    const categoryId = tournament.category_id;
     if (workspaceBlueprint.value.categoryId !== categoryId) workspaceBlueprint.value = { blueprint:null, slots:[], games:[] };
     workspaceBlueprint.value = { ...(await api<PositionBlueprintView>(`/organizations/${organizationId}/categories/${categoryId}/fixture/blueprint`)), categoryId };
     workspaceCompetition.value=workspaceBlueprint.value.blueprint?await api<PositionCompetitionView>(`/organizations/${organizationId}/categories/${categoryId}/fixture/blueprint/competition`):null;
-  }
-  if (['equipos','pagos','estadisticas','fixture','partidos'].includes(tournamentSection.value)) await loadTeams();
-  if (tournamentSection.value === 'multas' && canManageTournaments()) {
+  })():Promise.resolve(),['equipos','pagos','estadisticas','fixture','partidos'].includes(section)?loadTeams():Promise.resolve()]);
+  if (needsBlueprint && workspaceBlueprint.value.blueprint && !(section==='fixture'&&parts.value[3])) return;
+  if (section === 'multas' && canManageTournaments()) {
     const results = await Promise.all(categories.map(async category => [category.category_id, await api<DisciplineCase[]>(`/organizations/${organizationId}/categories/${category.category_id}/discipline/cases`)] as const));
     workspaceCases.value = Object.fromEntries(results);
   }
-  if (['fixture','partidos','estadisticas'].includes(tournamentSection.value)) {
+  if (needsBlueprint) {
     const editionIds = [...new Set(categories.map(category => category.edition_id))];
-    workspaceMatchdays.value = (await Promise.all(editionIds.map(editionId => api<MatchdaySummary[]>(`/organizations/${organizationId}/editions/${editionId}/matchdays`)))).flat();
-    const brackets=await Promise.all(categories.map(async category=>[category.category_id,await api<FixtureOverview>(`/organizations/${organizationId}/categories/${category.category_id}/fixture`).catch(cause=>{if(cause instanceof RequestError&&[404,409].includes(cause.status))return{phase:null,rounds:[],groups:[],bracket:[]};throw cause;})] as const));
+    const [days,brackets,stats]=await Promise.all([
+      Promise.all(editionIds.map(editionId => api<MatchdaySummary[]>(`/organizations/${organizationId}/editions/${editionId}/matchdays`))),
+      Promise.all(categories.map(async category=>[category.category_id,await api<FixtureOverview>(`/organizations/${organizationId}/categories/${category.category_id}/fixture`).catch(cause=>{if(cause instanceof RequestError&&[404,409].includes(cause.status))return{phase:null,rounds:[],groups:[],bracket:[]};throw cause;})] as const)),
+      section==='estadisticas'&&canManageTournaments()?Promise.all(categories.map(async category=>[category.category_id,await api<PrivateStats>(`/organizations/${organizationId}/categories/${category.category_id}/statistics`).catch(cause=>{if(cause instanceof RequestError&&[404,409].includes(cause.status))return{officialMatches:0,entries:[],players:[],defense:[],tables:[]};throw cause;})] as const)):Promise.resolve(null),
+    ]);
+    workspaceMatchdays.value=days.flat();
     workspaceBrackets.value=Object.fromEntries(brackets);
-    if (['fixture','partidos'].includes(tournamentSection.value)) {
+    if(stats)workspaceStats.value=Object.fromEntries(stats);
+    if (['fixture','partidos'].includes(section)) {
       const published = await api<PublicFixtureDay[]>(`/public/organizations/${organizationId}/fixture`);
       workspaceOfficialMatchIds.value = published.flatMap(day => day.matches.filter(match => match.result?.status === 'official').map(match => match.id));
       workspaceScores.value=Object.fromEntries(published.flatMap(day=>day.matches.filter(match=>match.result?.status==='official').map(match=>[match.id,match.result!.score])));
     }
-  }
-  if (tournamentSection.value === 'estadisticas' && canManageTournaments()) {
-    const results = await Promise.all(categories.map(async category => [category.category_id, await api<PrivateStats>(`/organizations/${organizationId}/categories/${category.category_id}/statistics`).catch(cause=>{if(cause instanceof RequestError&&[404,409].includes(cause.status))return{officialMatches:0,entries:[],players:[],defense:[],tables:[]};throw cause;})] as const));
-    workspaceStats.value = Object.fromEntries(results);
   }
 }
 async function loadReferees(){if(user.value?.organizationId)referees.value=await api(`/organizations/${user.value.organizationId}/fixture/referees`);}
@@ -603,20 +609,30 @@ async function advanceFixture() {
   });
 }
 async function loadCapture() {
-  capture.value = null; pendingCapture.value = null; pendingCaptureUndo.value = null; lastCaptureTap = { key: '', at: 0 };
+  capture.value = null; capturePreview.value=null; captureStartBlocked.value=false; pendingCapture.value = null; pendingCaptureUndo.value = null; lastCaptureTap = { key: '', at: 0 };
   privateMatchStream?.close();privateMatchStream=null;
-  if (!user.value?.organizationId || !parts.value[2]) return;
-  queuedCapture.value=await queuedMatchEvents(user.value.id,user.value.organizationId,parts.value[2]);queueError.value='';
+  const matchId=parts.value[2];
+  if (!user.value?.organizationId || !matchId) return;
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(matchId)){error.value='No se encontró este partido. Volvé a la lista y elegilo de nuevo.';return;}
+  if(canManageTournaments()){
+    const day=matchdays.value.find(item=>item.matches.some(match=>match.id===matchId));
+    const match=day?.matches.find(item=>item.id===matchId);
+    if(day&&match)capturePreview.value={day,match};
+    if(day&&match&&!match.acta_status)return;
+  }
+  queuedCapture.value=await queuedMatchEvents(user.value.id,user.value.organizationId,matchId);queueError.value='';
   await loadMatchAssignments();
+  const assigned=matchAssignments.value.find(item=>item.match_id===matchId);
+  if(!canManageTournaments()&&assigned?.day_status!=='published'){captureStartBlocked.value=true;return;}
+  if(!canManageTournaments()&&assigned&&!assigned.acta_status)return;
   if (canManageTournaments()) operators.value=await api<OperatorSummary[]>(`/organizations/${user.value.organizationId}/operators`);
   try {
-    capture.value = await api<MatchCaptureView>(`/organizations/${user.value.organizationId}/matches/${parts.value[2]}/record`);
+    capture.value = await api<MatchCaptureView>(`/organizations/${user.value.organizationId}/matches/${matchId}/record`);
     captureTeamId.value = capture.value.home.entryId;
     await loadCaptureHistory();
     watchCaptureChanges();
   } catch (cause) {
     if (!(cause instanceof RequestError) || cause.code !== 'RECORD_NOT_FOUND') throw cause;
-    if(canCaptureMatch.value){try{capture.value=await api<MatchCaptureView>(`/organizations/${user.value.organizationId}/matches/${parts.value[2]}/record/start`,'POST',{});captureTeamId.value=capture.value.home.entryId;watchCaptureChanges();}catch(startError){error.value=startError instanceof Error?startError.message:'No se pudo abrir el partido.';}}
   }
 }
 function watchCaptureChanges(){if(!capture.value||!user.value?.organizationId)return;privateMatchStream?.close();const organizationId=user.value.organizationId,matchId=capture.value.matchId;privateMatchStream=new EventSource(`/api/v1/organizations/${organizationId}/matches/${matchId}/record/stream`);privateMatchStream.addEventListener('changed',()=>{void api<MatchCaptureView>(`/organizations/${organizationId}/matches/${matchId}/record`).then(result=>{if(capture.value?.matchId===matchId){capture.value=result;void loadCaptureHistory();}}).catch(cause=>{if(cause instanceof RequestError && cause.status===403){privateMatchStream?.close();error.value='Se revocó tu asignación para este partido.';}});});}
@@ -658,6 +674,13 @@ async function actaAction(action:'submit'|'approve'|'reject'|'reopen'){if(!captu
 async function startCapture() {
   if (!user.value?.organizationId || !parts.value[2]) return;
   await perform(async () => {
+    if(capturePreview.value?.day.status==='draft'&&canManageTournaments()){
+      const dayId=capturePreview.value.day.id;
+      const preview=await api<{revision:number;missing:string[]}>(`/organizations/${user.value!.organizationId}/matchdays/${dayId}/preview`);
+      if(preview.missing.length)throw new Error(preview.missing.join(' '));
+      await api(`/organizations/${user.value!.organizationId}/matchdays/${dayId}/publish`,'POST',{expectedRevision:preview.revision,reason:'Jornada confirmada al abrir la carga del partido'});
+      capturePreview.value.day.status='published';
+    }
     capture.value = await api<MatchCaptureView>(`/organizations/${user.value!.organizationId}/matches/${parts.value[2]}/record/start`, 'POST', {});
     captureTeamId.value = capture.value.home.entryId;
     watchCaptureChanges();
@@ -1328,7 +1351,9 @@ async function loadView(force = false) {
           }
         }
         if (['fixture','programar','partido'].includes(parts.value[0]) && selectedTournament.value) {
-          if(parts.value[0]!=='partido' || canManageTournaments()) await Promise.all([loadFixture(selectedTournament.value.category_id), loadMatchdays(selectedTournament.value.edition_id), loadTournamentResources(selectedTournament.value.id),...(parts.value[0]==='programar'?[loadReferees()]:[])]);
+          if(parts.value[0]==='partido'){
+            if(canManageTournaments())await loadMatchdays(selectedTournament.value.edition_id);
+          }else await Promise.all([loadFixture(selectedTournament.value.category_id), loadMatchdays(selectedTournament.value.edition_id), loadTournamentResources(selectedTournament.value.id),...(parts.value[0]==='programar'?[loadReferees()]:[])]);
           if (parts.value[0] === 'programar') prepareScheduleDraft();
         }
         if(parts.value[0]==='partido') await loadCapture();
@@ -1506,7 +1531,7 @@ onUnmounted(() => { publicResultsStream?.close();privateMatchStream?.close();win
       <a v-if="!user.platformAdmin && user.organizationId && parts[0] === 'inicio'" class="btn full" href="#/bandeja">Abrir bandeja de revisión<Icon name="arrow" /></a>
       <div v-if="!online" class="notice amber" role="status">Sin conexión. Tus cambios del formulario se conservan; guardá cuando vuelva la conexión.</div>
       <div v-if="error" class="notice error" role="alert"><div><p>{{ error }}</p><button v-if="errorCode === 'STALE_VERSION' && parts[0] === 'organizacion' && selectedOrg" type="button" class="btn mt" :disabled="busy" @click="refreshBrand(selectedOrg.id)">Actualizar datos sin borrar mi edición</button></div></div>
-      <div v-if="loading" class="loading" role="status">Cargando…</div>
+      <div v-if="loading && !(parts[0]==='torneo' && workspaceBlueprint.blueprint && workspaceBlueprint.categoryId===selectedTournament?.category_id && ['fixture','partidos','estadisticas'].includes(tournamentSection))" class="loading" role="status">Cargando…</div>
 
       <template v-if="user.platformAdmin && parts[0] === 'administradores'">
         <div class="heading"><div><h1 tabindex="-1">Administradores</h1><p>Personas y acceso a sus organizaciones</p></div><a href="#/nueva-organizacion" class="btn primary"><Icon name="plus" />Agregar</a></div>
@@ -1596,7 +1621,7 @@ onUnmounted(() => { publicResultsStream?.close();privateMatchStream?.close();win
         <FixtureDayEditor v-else-if="parts[0] === 'torneo' && tournamentSection === 'fixture' && parts[3] && canManageTournaments()" :tournament="selectedTournament" :categories="tournamentCategories" :entries="tournamentEntries" :days="tournamentDays" :day-id="parts[3]" :focus-match-id="parts[4]" :venues="tournamentResources.venues" :official-match-ids="workspaceOfficialMatchIds" :organization-id="user.organizationId!" :csrf-token="user.csrfToken" @refresh="loadTournamentSection" />
         <PositionBlueprint v-else-if="parts[0] === 'torneo' && tournamentSection === 'fixture' && workspaceBlueprint.blueprint && workspaceBlueprint.categoryId === selectedTournament.category_id" :view="workspaceBlueprint" :competition="workspaceCompetition" :entries="tournamentEntries" :can-manage="canManageTournaments()" :organization-id="user.organizationId!" :category-id="selectedTournament.category_id" :tournament-id="selectedTournament.id" :csrf-token="user.csrfToken" @refresh="loadTournamentSection" />
         <PositionMatches v-else-if="parts[0] === 'torneo' && tournamentSection === 'partidos' && workspaceBlueprint.blueprint && workspaceBlueprint.categoryId === selectedTournament.category_id" :view="workspaceBlueprint" :competition="workspaceCompetition" :entries="tournamentEntries" :organization-id="user.organizationId!" :category-id="selectedTournament.category_id" :tournament-id="selectedTournament.id" />
-        <PositionStatistics v-else-if="parts[0]==='torneo' && tournamentSection==='estadisticas' && workspaceBlueprint.blueprint && workspaceBlueprint.categoryId===selectedTournament.category_id" :view="workspaceBlueprint" :competition="workspaceCompetition" :entries="tournamentEntries" :organization-id="user.organizationId!" :can-manage="canManageTournaments()" @decide-title-extra="decideTitleExtra" @decide-tiebreak="decidePositionTiebreak" />
+        <PositionStatistics v-else-if="parts[0]==='torneo' && tournamentSection==='estadisticas' && workspaceBlueprint.blueprint && workspaceBlueprint.categoryId===selectedTournament.category_id" :view="workspaceBlueprint" :competition="workspaceCompetition" :entries="tournamentEntries" :organization-id="user.organizationId!" :category-id="selectedTournament.category_id" :can-manage="canManageTournaments()" @decide-title-extra="decideTitleExtra" @decide-tiebreak="decidePositionTiebreak" />
         <TournamentWorkspace v-else-if="parts[0] === 'torneo'" :tournament="selectedTournament" :categories="tournamentCategories" :entries="tournamentEntries" :days="tournamentDays" :official-match-ids="workspaceOfficialMatchIds" :scores="workspaceScores" :cases="workspaceCases" :stats="workspaceStats" :brackets="workspaceBrackets" :position-blueprint="workspaceBlueprint" :position-competition="workspaceCompetition" :section="tournamentSection" :day-id="parts[3]" :can-manage="canManageTournaments()" :organization-id="user.organizationId!" :csrf-token="user.csrfToken" @refresh="loadView(true)" />
         <template v-if="parts[0] === 'torneo' && tournamentSection === 'ajustes'">
           <div class="tournament-emblem-editor"><img v-if="selectedTournament.has_emblem" :src="`/api/v1/organizations/${user.organizationId}/tournaments/${selectedTournament.id}/emblem`" :alt="`Emblema de ${selectedTournament.name}`"><Icon v-else name="trophy" /><div><strong>Emblema del torneo</strong><input id="tournament-emblem" class="file-input" type="file" accept="image/png,image/jpeg,image/webp" :disabled="busy" @change="uploadTournamentEmblem($event,selectedTournament.id)"><label for="tournament-emblem" class="team-shield-action"><Icon name="edit" />{{ selectedTournament.has_emblem ? 'Cambiar' : 'Añadir' }}</label></div></div>
@@ -1664,8 +1689,10 @@ onUnmounted(() => { publicResultsStream?.close();privateMatchStream?.close();win
 
       <div v-else-if="!user.platformAdmin && parts[0] === 'partido'" class="form-page">
         <a :href="canManageTournaments() && selectedTournament ? `#/torneo/${selectedTournament.id}/partidos` : '#/mis-partidos'" class="back"><Icon name="back" />Partidos</a>
-        <div class="heading match-top-actions"><h1 tabindex="-1" class="sr-only">Partido</h1><a v-if="selectedTournament && canManageTournaments()" class="btn" :href="`#/flyers/${selectedTournament.id}/${capture?.status === 'official' ? 'result' : 'match'}/${parts[2]}`"><Icon name="file" />{{ capture?.status === 'official' ? 'Flyer del resultado' : 'Flyer del partido' }}</a></div>
-        <section v-if="!capture && canCaptureMatch" class="stack"><button type="button" class="btn primary full" :disabled="busy" @click="startCapture">Abrir partido para cargar</button></section>
+        <div class="heading match-top-actions"><h1 tabindex="-1" class="sr-only">Partido</h1><a v-if="selectedTournament && canManageTournaments() && capture" class="btn" :href="`#/flyers/${selectedTournament.id}/${capture.status === 'official' ? 'result' : 'match'}/${parts[2]}`"><Icon name="file" />{{ capture.status === 'official' ? 'Flyer del resultado' : 'Flyer del partido' }}</a></div>
+        <section v-if="!capture && capturePreview" class="match-preview"><div class="match-hero" aria-label="Partido programado"><div class="match-hero-status">Jornada {{ capturePreview.day.ordinal }} · {{ capturePreview.day.status==='published'?'Publicada':'Sin publicar' }}</div><div class="match-hero-main"><div class="match-hero-team"><img v-if="capturePreview.match.home_has_shield" class="match-hero-shield" :src="`/api/v1/organizations/${user.organizationId}/teams/${capturePreview.match.home_team_id}/shield`" alt=""><span v-else class="match-hero-shield placeholder">{{ initials(capturePreview.match.home_name) }}</span><strong>{{ capturePreview.match.home_name }}</strong></div><div class="match-hero-score"><b aria-label="Marcador pendiente">–<span>:</span>–</b></div><div class="match-hero-team"><img v-if="capturePreview.match.away_has_shield" class="match-hero-shield" :src="`/api/v1/organizations/${user.organizationId}/teams/${capturePreview.match.away_team_id}/shield`" alt=""><span v-else class="match-hero-shield placeholder">{{ initials(capturePreview.match.away_name) }}</span><strong>{{ capturePreview.match.away_name }}</strong></div></div><p>{{ capturePreview.match.match_date || 'Día por definir' }}{{ capturePreview.match.match_time ? ` · ${capturePreview.match.match_time}` : '' }}{{ capturePreview.match.venue_name ? ` · ${capturePreview.match.venue_name}` : '' }}</p></div><button v-if="!capturePreview.match.acta_status && !captureStartBlocked && canCaptureMatch" type="button" class="btn primary full" :disabled="busy" @click="startCapture">{{ capturePreview.day.status==='draft'?'Publicar jornada y cargar partido':'Cargar partido' }}</button><a v-if="selectedTournament && canManageTournaments()" class="btn match-preview-edit" :href="`#/torneo/${selectedTournament.id}/fixture/${capturePreview.day.id}/${capturePreview.match.id}`"><Icon name="edit" />Editar en Fixture</a></section>
+        <section v-else-if="!capture && canCaptureMatch && !captureStartBlocked && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(parts[2]||'')" class="stack"><button type="button" class="btn primary full" :disabled="busy" @click="startCapture">Abrir partido para cargar</button></section>
+        <section v-else-if="!capture && matchAssignments.some(item=>item.match_id===parts[2]&&item.day_status!=='published')" class="notice neutral">La jornada todavía no está publicada. El organizador puede habilitarla desde el partido.</section>
         <section v-else-if="!capture" class="notice neutral">Este partido todavía no tiene carga abierta. El planillero asignado puede iniciarla.</section>
         <template v-else>
           <section class="match-hero" aria-label="Resultado del partido"><div class="match-hero-status">{{ capture.status==='official'?'Resultado oficial':capture.status==='submitted'?'En revisión':'Resultado en borrador' }}</div><div class="match-hero-main"><div class="match-hero-team"><img v-if="capture.home.hasShield" class="match-hero-shield" :src="`/api/v1/organizations/${user.organizationId}/teams/${capture.home.teamId}/shield`" :alt="`Escudo de ${capture.home.name}`"><span v-else class="match-hero-shield placeholder" :style="{background:capture.home.color}">{{ initials(capture.home.name) }}</span><strong>{{ capture.home.name }}</strong></div><div class="match-hero-score"><b aria-label="Marcador">{{ capture.score.home }}<span>:</span>{{ capture.score.away }}</b><small v-if="capture.shootout.home || capture.shootout.away">Penales {{ capture.shootout.home }} : {{ capture.shootout.away }}</small></div><div class="match-hero-team"><img v-if="capture.away.hasShield" class="match-hero-shield" :src="`/api/v1/organizations/${user.organizationId}/teams/${capture.away.teamId}/shield`" :alt="`Escudo de ${capture.away.name}`"><span v-else class="match-hero-shield placeholder" :style="{background:capture.away.color}">{{ initials(capture.away.name) }}</span><strong>{{ capture.away.name }}</strong></div></div><div v-if="matchGoals('home').length||matchGoals('away').length" class="match-hero-goals"><div><span v-for="goal in matchGoals('home')" :key="goal.id"><SportEventMark :kind="goal.kind" />{{ goal.name }} <small>{{ goal.period||'' }}</small></span></div><div><span v-for="goal in matchGoals('away')" :key="goal.id"><SportEventMark :kind="goal.kind" />{{ goal.name }} <small>{{ goal.period||'' }}</small></span></div></div><p v-for="warning in capture.warnings||[]" :key="warning" class="notice amber">{{ warning }}</p></section>

@@ -1544,9 +1544,10 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     });
   });
   async function matchdaySnapshot(client: PoolClient, organizationId: string, matchdayId: string, archived = false) {
-    const { rows } = await client.query(`SELECT m.id,m.category_id,m.fixture_phase_id,c.name category_name,m.home_entry_id,m.away_entry_id,home.name home_name,away.name away_name,
+    const { rows } = await client.query(`SELECT m.id,m.category_id,m.fixture_phase_id,(m.position_game_id IS NOT NULL) position_match,c.name category_name,m.home_entry_id,m.away_entry_id,home.id home_team_id,away.id away_team_id,home.name home_name,away.name away_name,
+      (home.shield_id IS NOT NULL) home_has_shield,(away.shield_id IS NOT NULL) away_has_shield,
       v.id venue_id,coalesce(v.name,'') venue_name,coalesce(m.court_label,'') court_label,coalesce(to_char(m.match_date,'YYYY-MM-DD'),'') match_date,
-      coalesce(to_char(m.starts_at AT TIME ZONE t.timezone,'HH24:MI'),'') match_time,coalesce(m.duration_minutes,60) duration_minutes,m.referee_name,m.referee_id,m.schedule_revision
+      coalesce(to_char(m.starts_at AT TIME ZONE t.timezone,'HH24:MI'),'') match_time,coalesce(m.duration_minutes,60) duration_minutes,m.referee_name,m.referee_id,m.schedule_revision,r.status acta_status
       FROM draft_matches m JOIN matchdays md ON md.organization_id=m.organization_id AND md.id=m.matchday_id
       JOIN categories c ON c.organization_id=m.organization_id AND c.id=m.category_id
       JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id
@@ -1556,6 +1557,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       JOIN teams home ON home.organization_id=h.organization_id AND home.id=h.team_id
       JOIN teams away ON away.organization_id=a.organization_id AND away.id=a.team_id
       LEFT JOIN venues v ON v.organization_id=m.organization_id AND v.id=m.venue_id
+      LEFT JOIN match_records r ON r.organization_id=m.organization_id AND r.match_id=m.id
       WHERE m.organization_id=$1 AND md.id=$2 AND ${archived ? 'm.archived_at IS NOT NULL' : 'm.archived_at IS NULL'} ORDER BY m.starts_at,m.court_label,m.id`, [organizationId, matchdayId]);
     return rows;
   }
@@ -1978,7 +1980,8 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const snapshot = await matchdaySnapshot(client, organizationId, matchdayId);
     const missing: string[] = [];
     if (!snapshot.length) missing.push('La jornada todavía no tiene partidos programados.');
-    if(snapshot.some(match=>!match.match_date||!match.match_time||!match.venue_id))missing.push('Programá día, hora y sede de todos los partidos antes de publicar.');
+    if(snapshot.some(match=>match.position_match&&!match.match_date))missing.push('Indicá la fecha de todos los cruces del plan por posiciones.');
+    if(snapshot.some(match=>!match.position_match&&(!match.match_date||!match.match_time||!match.venue_id)))missing.push('Programá día, hora y sede de todos los partidos antes de publicar.');
     const { rows } = await client.query(`SELECT m.id,c.status category_status,ed.status edition_status,t.status tournament_status,h.status home_status,a.status away_status,h.public_visible home_public,a.public_visible away_public
       FROM draft_matches m JOIN categories c ON c.organization_id=m.organization_id AND c.id=m.category_id
       JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id
@@ -2666,12 +2669,13 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
   app.get('/api/v1/organizations/:id/match-assignments', async(request)=>{
     const organizationId=uuid((request.params as {id:string}).id),actor=await organizationAccess(request,organizationId);
     if (actor.platform_admin) fail(403,'ORGANIZER_REQUIRED','El superadmin no opera partidos.');
-    return (await pool.query(`SELECT a.id,a.match_id,a.duty,a.membership_id,u.display_name name,m.status member_status,dm.category_id,home.name home_name,away.name away_name,md.ordinal day_ordinal
+    return (await pool.query(`SELECT a.id,a.match_id,a.duty,a.membership_id,u.display_name name,m.status member_status,dm.category_id,home.name home_name,away.name away_name,md.ordinal day_ordinal,md.status day_status,r.status acta_status
       FROM match_capture_assignments a JOIN memberships m ON m.organization_id=a.organization_id AND m.id=a.membership_id JOIN users u ON u.id=m.user_id
       JOIN draft_matches dm ON dm.organization_id=a.organization_id AND dm.id=a.match_id
       JOIN team_entries he ON he.organization_id=dm.organization_id AND he.id=dm.home_entry_id JOIN teams home ON home.organization_id=he.organization_id AND home.id=he.team_id
       JOIN team_entries ae ON ae.organization_id=dm.organization_id AND ae.id=dm.away_entry_id JOIN teams away ON away.organization_id=ae.organization_id AND away.id=ae.team_id
       LEFT JOIN matchdays md ON md.organization_id=dm.organization_id AND md.id=dm.matchday_id
+      LEFT JOIN match_records r ON r.organization_id=dm.organization_id AND r.match_id=dm.id
       WHERE a.organization_id=$1 AND a.revoked_at IS NULL AND (m.user_id=$2 OR EXISTS(SELECT 1 FROM memberships mine WHERE mine.organization_id=$1 AND mine.user_id=$2 AND mine.role='tournament_admin' AND mine.status='active')) ORDER BY md.ordinal,home.name`,[organizationId,actor.user_id])).rows;
   });
   async function captureAccess(request: FastifyRequest, organizationId: string, matchId: string, duty: 'capture'|'review'|'read'='capture') {

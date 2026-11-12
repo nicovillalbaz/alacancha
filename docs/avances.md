@@ -249,3 +249,9 @@ Pruebas: `npm run typecheck`, `npm run build`, 98/98, auditoría de 163 rutas si
 ### 2026-11-11 — T09: limpieza visual de partidos y equipos públicos
 
 Se quitó el marco oscuro que aportaba el borde nativo de los nuevos botones de partido. Los encuentros se separan con un trazo fino. Los equipos se distribuyen en dos columnas en escritorio y una en móvil, conservando toda la fila como acceso a la ficha. Sin cambio de datos ni permisos. Compilación y tipos correctos; revisión visual local en escritorio y a 390 px sin desbordamiento. Aceptación física pendiente. [Evidencia](evidencias/t09-ajuste-listas-publicas-2026-11-11.md).
+
+### 2026-11-12 — T09: rutas de partido, jornada y carga de Estadísticas
+
+Se corrigieron los enlaces privados de Fixture y Estadísticas para incluir categoría y partido, y se añadió vista previa del encuentro sin acta. La consulta de producción confirmó que el sorteo estaba publicado, pero las nueve jornadas oficiales seguían en borrador y sin hora/sede; no se cambiaron datos reales. La Copa por posiciones permite publicar una jornada con las fechas previstas, y el organizador puede hacerlo explícitamente desde el partido antes de cargar el resultado. El flujo ajeno a ese plan conserva sus requisitos anteriores. Estadísticas evita consultar jornadas, cuadros y estadísticas privadas que no dibuja, y ya no superpone «Cargando…» a los datos presentes.
+
+Pruebas: tipos y compilación correctos; 99/99 pruebas, incluida publicación de jornada sin horario/sede, lectura pública sin resultado, acta abierta y denegaciones entre organizaciones. Auditoría de 163 rutas: 0 sin clasificar. La medición sintética de API registró p95 de 72 ms para estadísticas públicas de varias categorías; no equivale a una medición de red móvil ni a aceptación física. [Evidencia](evidencias/t09-navegacion-acta-y-carga-2026-11-12.md).
