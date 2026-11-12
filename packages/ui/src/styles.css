@@ -81,3 +81,22 @@ body{background:#fff}.main{padding-top:18px;padding-bottom:40px}.panel{border:0;
 @media(max-width:359px){.fixture-day-match{grid-template-columns:38px minmax(0,1fr) 18px;gap:5px}.fixture-day-side{gap:5px}.fixture-day-mark{width:19px;height:19px}.workspace-stat-head,.workspace-standing-row{grid-template-columns:minmax(0,1fr) 26px 30px 32px;gap:3px}}
 .fixed-competition-format{margin-bottom:14px;border-top:2px solid #0a6a48;border-bottom:1px solid var(--line)}.fixed-competition-format h2{margin:0;padding:12px 0 5px;font-size:.95rem}.fixed-competition-format>div{display:flex;align-items:flex-start;gap:10px;min-height:39px;padding:9px 0;border-top:1px solid var(--line);font-size:.79rem;line-height:1.4}.fixed-competition-format b{display:grid;place-items:center;flex:none;width:20px;height:20px;border-radius:50%;background:#e2f1e9;color:#06603e;font-size:.69rem}.fixed-competition-format span{min-width:0}
 .fixed-competition-format .icon{flex:none;width:20px;height:20px;color:#08714c}.fixed-rules-publish{display:grid;gap:8px;margin:12px 0}.fixed-rules-publish label{display:flex;align-items:center;gap:8px;min-height:44px;font-size:.79rem}.fixed-rules-publish input{width:18px;height:18px}
+
+/* Jerarquía deportiva compartida por el panel del organizador. */
+.match-strip{padding:9px 0;border-bottom-color:#e6ede8}
+.match-strip-main{min-height:68px;transition:background-color .15s ease}
+.match-strip-main:hover,.match-strip-main:focus-visible{background:#f4f9f6}
+.match-strip-team strong{font-size:.8rem;font-weight:760;line-height:1.2}
+.match-strip-mark{width:34px;height:34px}
+.match-strip-time b{display:grid;place-items:center;min-width:56px;min-height:31px;padding:3px 5px;border-radius:6px;background:#eff3f0;color:#173d34;font-size:1rem;letter-spacing:-.03em}
+.match-strip-time b.result{background:#102d29;color:#fff;font-size:1.24rem;letter-spacing:-.04em}
+.match-strip-time small{color:#536b60;font-size:.65rem;font-weight:700}
+.workspace-stat-head{color:#4e685d;font-weight:800;text-transform:uppercase;letter-spacing:.025em}
+.workspace-standing-row{min-height:50px}.workspace-standing-row strong{font-weight:730}
+.workspace-standing-row b{color:#0a6546;font-size:.96rem;font-weight:900}
+.workspace-stat-shield{width:25px;height:25px}
+.standing-position{background:#e4f0e8;color:#0a6546;font-weight:850}
+.workspace-standing-group h4{font-size:.88rem;font-weight:820}
+.sport-tabs button{transition:color .15s ease,background-color .15s ease}
+.sport-tabs button:hover{background:#f4f9f6;color:#0b6246}
+@media(max-width:359px){.match-strip-mark{width:29px;height:29px}.match-strip-main{gap:4px}}

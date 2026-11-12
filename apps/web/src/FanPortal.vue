@@ -93,7 +93,7 @@ function flyerUrl(item:FanFlyer){return `/api/v1/public/organizations/${props.or
             <p v-if="!days.length" class="fan-empty">Aún no hay partidos publicados.</p>
             <section v-for="day in days" :key="day.id" class="fan-day">
               <div class="fan-day-head"><h2>{{ dayTitle(day) }}</h2><a v-if="flyer('matchday',day.id)" class="fan-flyer-link" :href="flyerUrl(flyer('matchday',day.id)!)" target="_blank" rel="noopener"><Icon name="download" /> Flyer</a></div>
-              <button v-for="match in day.matches" :key="match.id" type="button" class="fan-match-row" :aria-label="`${match.home_name} contra ${match.away_name}, ${match.result?`${match.result.score.home} a ${match.result.score.away}`:match.match_time}. Ver partido`" @click="selectedMatch=match">
+              <button v-for="match in day.matches" :key="match.id" type="button" class="fan-match-row" :class="{'is-final':match.result?.status==='official'}" :aria-label="`${match.home_name} contra ${match.away_name}, ${match.result?`${match.result.score.home} a ${match.result.score.away}`:match.match_time}. Ver partido`" @click="selectedMatch=match">
                 <span class="fan-match-date">{{ match.result?.status==='official'?'Final':match.match_time }}<small v-if="match.tie_leg">{{ match.tie_leg }}</small></span>
                 <span class="fan-match-team"><TeamCrest size="sm" :name="match.home_name" :team-id="match.home_team_id" :organization-id="organization?.id" :color="team(match.home_team_id)?.color" :has-shield="team(match.home_team_id)?.has_shield" /><strong :title="match.home_name">{{ match.home_name }}</strong></span>
                 <span class="fan-match-result"><b>{{ match.result?`${match.result.score.home} : ${match.result.score.away}`:'vs' }}</b><small v-if="match.result&&(match.result.shootout.home||match.result.shootout.away)">Pen. {{ match.result.shootout.home }}:{{ match.result.shootout.away }}</small></span>
@@ -129,4 +129,27 @@ function flyerUrl(item:FanFlyer){return `/api/v1/public/organizations/${props.or
 .fan-overline{display:flex;align-items:center;gap:6px}.fan-org-logo{width:18px;height:18px;object-fit:contain;background:#fff;border-radius:50%}
 .fan-header-top{display:flex;align-items:center;gap:7px;min-height:32px}.fan-header-top .fan-overline{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fan-back{display:grid;place-items:center;flex:none;width:32px;height:32px;margin-left:-8px;padding:0;border:0;border-radius:50%;background:transparent;color:inherit;cursor:pointer}.fan-back .icon{width:17px;height:17px}.fan-back:focus-visible{outline:3px solid #0cac70;outline-offset:1px}
 @media(max-width:359px){.fan-header-inner{padding-inline:12px}.fan-content{padding-inline:12px}.fan-match-row{grid-template-columns:39px minmax(0,1fr) 52px minmax(0,1fr) 14px;gap:4px}.fan-match-result{font-size:1rem}.fan-score-grid{grid-template-columns:minmax(0,1fr) 68px minmax(0,1fr)}.fan-score-number{font-size:1.7rem}.fan-player-row{grid-template-columns:minmax(0,1fr) 32px 32px 32px;gap:5px}}
+/* Lectura deportiva: escudos, marcador y cifras antes que metadatos. */
+.fan-match-row{min-height:82px;gap:8px;border-bottom-color:#e7eeea;transition:background-color .15s ease}
+.fan-match-row .fan-match-team :deep(.team-crest){width:34px;height:34px}
+.fan-match-team strong{font-size:.76rem;font-weight:760;line-height:1.18}
+.fan-match-date{font-size:.66rem;font-weight:730;color:#536b60}
+.fan-match-result{display:grid;place-items:center;min-height:31px;padding:3px 4px;border-radius:6px;background:#eff3f0;color:#173d34;font-size:1rem;letter-spacing:-.025em}
+.fan-match-row.is-final .fan-match-result{background:#102d29;color:#fff}
+.fan-match-row.is-final .fan-match-result small{color:#b9e5c9}
+.fan-match-row:hover,.fan-match-row:focus-visible{background:#f4f9f6}
+.fan-day h2{font-size:.85rem;font-weight:820;color:#153b31}
+.fan-scoreboard{position:relative;overflow:hidden;padding:25px 16px 27px;background:radial-gradient(circle at 50% 120%,#214c3c 0,#102d29 64%);isolation:isolate}
+.fan-scoreboard::before{content:"";position:absolute;inset:auto -14% -82% -14%;height:145%;border:1px solid #ffffff19;border-radius:50%;z-index:-1;pointer-events:none}
+.fan-score-grid{grid-template-columns:minmax(0,1fr) minmax(78px,auto) minmax(0,1fr);align-items:center}
+.fan-score-number{padding:0;font-size:clamp(2rem,8vw,2.8rem);line-height:1;font-weight:900;letter-spacing:-.06em}
+.fan-score-team{gap:9px}.fan-score-team strong{font-size:.87rem;font-weight:800}
+.fan-match-state{margin-bottom:20px}.fan-score-meta{margin-top:20px}
+.fan-table-head,.fan-defense-head{color:#49685a;font-weight:800;text-transform:uppercase;letter-spacing:.025em}
+.fan-table-row,.fan-defense-row{min-height:54px}.fan-table-row strong,.fan-defense-row strong{font-size:.78rem}
+.fan-table-row>b:last-child,.fan-defense-row>b{color:#0a6546;font-size:.98rem;font-weight:900}
+.fan-rank{color:#406653;font-weight:850}
+.fan-scorer-row>b{font-size:1.1rem;font-weight:900}
+.fan-team-row:hover,.fan-team-row:focus-visible{background:#f4f9f6}
+@media(max-width:359px){.fan-match-row{gap:4px}.fan-score-grid{grid-template-columns:minmax(0,1fr) 70px minmax(0,1fr)}}
 </style>
