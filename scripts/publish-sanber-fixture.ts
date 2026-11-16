@@ -41,7 +41,26 @@ try{
   }
   const published=await app.inject({method:'POST',url:`${base}/publish`,headers,payload:{expectedRevision:revision,reason:'Publicar las nueve jornadas anunciadas sin fechas ni horas'}});
   if(published.statusCode!==200)throw new Error(`No se pudo publicar el calendario: ${published.statusCode} ${published.body}`);
+  const {rows:[rule]}=await pool.query('SELECT revision,status,rules FROM rule_versions WHERE organization_id=$1 AND category_id=$2 ORDER BY version DESC LIMIT 1',[organizationId,categoryId]);
+  if(!rule||rule.status!=='draft'||!rule.rules?.advanced?.discipline)throw new Error('El reglamento de Sanber ya no es un borrador editable.');
+  const existingBlue=(rule.rules.advanced.discipline.customCards||[]).find((card:{label:string})=>card.label.toLocaleLowerCase('es')==='azul');
+  const blueCode=existingBlue?.code||'azul';
+  if(!existingBlue){
+    const rules=structuredClone(rule.rules);
+    rules.advanced.discipline.customCards=[...(rules.advanced.discipline.customCards||[]),{code:blueCode,label:'Azul',color:'#2278C7',suspensionMatches:0}];
+    const updated=await app.inject({method:'POST',url:`/api/v1/organizations/${organizationId}/categories/${categoryId}/rules/draft`,headers,payload:{rules,expectedRevision:rule.revision,reason:'Agregar tarjeta Azul sin publicar el reglamento deportivo'}});
+    if(updated.statusCode!==200)throw new Error(`No se pudo guardar la tarjeta Azul: ${updated.statusCode} ${updated.body}`);
+  }
+  const paymentsPath=`/api/v1/organizations/${organizationId}/tournaments/5edc2433-5833-4eb4-9c6b-53971f6454aa/payments`;
+  const payments=await app.inject({method:'GET',url:paymentsPath,headers});
+  if(payments.statusCode!==200)throw new Error(`No se pudo verificar Pagos: ${payments.statusCode}`);
+  const paymentData=payments.json(),rateKey=`${categoryId}:${blueCode}`;
+  if(!paymentData.cards.some((card:{key:string;label:string})=>card.key===rateKey&&card.label==='Azul'))throw new Error('La tarjeta Azul no aparece en Pagos.');
+  if(paymentData.rates.customCardRates[rateKey]===undefined){
+    const rates=await app.inject({method:'POST',url:`${paymentsPath}/rates`,headers,payload:{yellowGuaranies:paymentData.rates.yellowGuaranies,redGuaranies:paymentData.rates.redGuaranies,customCardRates:{...paymentData.rates.customCardRates,[rateKey]:0}}});
+    if(rates.statusCode!==200)throw new Error(`No se pudo registrar importe Azul en cero: ${rates.statusCode} ${rates.body}`);
+  }
   const publicResult=await app.inject({method:'GET',url:`/api/v1/public/organizations/${organizationId}/categories/${categoryId}/fixture/announced`});
   if(publicResult.statusCode!==200||publicResult.json().rounds.length!==9||publicResult.json().teams.length!==10)throw new Error('El portal público no entrega el calendario completo.');
-  console.log(JSON.stringify({target,revision,rounds:9,matches:45,teams:10,qualificationCount:8,quarterPairing:'in_person_draw',semifinalPairing:'pending',finalPairing:'winners',url:'https://alacancha.top/copa-sanber'}));
+  console.log(JSON.stringify({target,revision,rounds:9,matches:45,teams:10,qualificationCount:8,quarterPairing:'in_person_draw',semifinalPairing:'pending',finalPairing:'winners',blueCard:true,url:'https://alacancha.top/copa-sanber'}));
 }finally{if(sessionId)await pool.query('UPDATE sessions SET revoked_at=now() WHERE id=$1',[sessionId]);await app.close();await pool.end();}

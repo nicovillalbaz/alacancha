@@ -41,7 +41,7 @@ export function registerTournamentPaymentRoutes(app: FastifyInstance, pool: Data
         LEFT JOIN teams t ON t.organization_id=te.organization_id AND t.id=te.team_id
         WHERE m.organization_id=$1 AND m.tournament_id=$2 ORDER BY m.occurred_on DESC,m.created_at DESC,m.id DESC`,[organizationId,tournamentId]),
       pool.query(`SELECT c.id category_id,c.name category_name,r.rules FROM categories c JOIN editions e ON e.organization_id=c.organization_id AND e.id=c.edition_id
-        JOIN LATERAL (SELECT rules FROM rule_versions WHERE organization_id=c.organization_id AND category_id=c.id AND status='published' ORDER BY version DESC LIMIT 1) r ON true
+        JOIN LATERAL (SELECT rules FROM rule_versions WHERE organization_id=c.organization_id AND category_id=c.id ORDER BY version DESC LIMIT 1) r ON true
         WHERE c.organization_id=$1 AND e.tournament_id=$2`,[organizationId,tournamentId]),
     ]);
     const active=entries.filter(row=>!row.voided_at);

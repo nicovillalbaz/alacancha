@@ -329,6 +329,7 @@ test('Pagos: tarifas por torneo, multa pendiente, cobro parcial, ingresos, salid
   assert.equal((await request(adminA,'POST',`/organizations/${ids.a}/tournaments`,{...setup,requestId:randomUUID(),paymentRates:{...setup.paymentRates,customCardRates:{desconocida:18000}}})).json().code,'CARD_UNKNOWN');
   const tournament=await request(adminA,'POST',`/organizations/${ids.a}/tournaments`,setup);assert.equal(tournament.statusCode,201,tournament.body);
   const {tournamentId,categoryId}=tournament.json();const root=`/organizations/${ids.a}/tournaments/${tournamentId}/payments`;
+  assert.equal((await request(adminA,'GET',root)).json().cards.find((card:{label:string})=>card.label==='Azul')?.key,`${categoryId}:azul`);
   assert.deepEqual((await request(adminA,'GET',root)).json().rates.customCardRates,{[`${categoryId}:azul`]:18000});
   const team=await request(adminA,'POST',`/organizations/${ids.a}/teams`,{requestId:randomUUID(),name:`Equipo pagos ${runId}`,color:'#165D46',categoryId});assert.equal(team.statusCode,201,team.body);
   const entryId=team.json().entryId;
