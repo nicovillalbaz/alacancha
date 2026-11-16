@@ -4,6 +4,8 @@
 
 **Estado al 29/10/2026:** código local implementado con [acta inicial](../evidencias/t03-cierre-codigo-local.md) e [incremento de políticas](../evidencias/t03-t04-cierre-local-2026-10-29.md). Identidad cifrada y reutilizable, documentos privados, procedencia, movimientos, restricciones, elegibilidad por fecha, buena fe y planilla versionadas, importación reversible y PDF privado. El reglamento versiona campos privados adicionales, ventana de inscripción y comprobante de pase según procedencia. La aceptación visual/física y por el propietario sigue abierta.
 
+**Incremento del 16/11/2026:** el alta de un jugador acepta solo nombre y apellido. Documento, ficha y nacimiento son opcionales; la ausencia de nacimiento se conserva como `NULL`, no como fecha inventada. Si el reglamento aplica edad, la elegibilidad avisa que falta el dato para verificarla. El alta rápida desde un partido se detalla en T05.
+
 ## Dependencias
 
 T02: categoría, equipo participante, reglamento versionado y administrador de equipo asignado. Crear en esta tanda un partido mínimo **solo en borrador** para armar su planilla; T04 añade fase, jornada, programación y publicación. Ningún partido de prueba es oficial.

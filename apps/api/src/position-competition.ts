@@ -6,7 +6,7 @@ import { derivePositionCompetition, projectMatchJournal, ruleSchema, type MatchJ
 type Queryable=PoolClient|DatabasePool;
 
 export async function positionCompetitionState(db:Queryable, organizationId:string, categoryId:string, publicOnly=false, withManual=true){
-  const {rows:[blueprint]}=await db.query('SELECT id,revision FROM fixture_position_blueprints WHERE organization_id=$1 AND category_id=$2',[organizationId,categoryId]);
+  const {rows:[blueprint]}=await db.query('SELECT id,revision,group_size FROM fixture_position_blueprints WHERE organization_id=$1 AND category_id=$2',[organizationId,categoryId]);
   if(!blueprint)return null;
   const {rows:assignments}=await db.query('SELECT slot_code,entry_id FROM fixture_position_assignments WHERE organization_id=$1 AND blueprint_id=$2 ORDER BY slot_code',[organizationId,blueprint.id]);
   const slots=new Map<string,string|null>(assignments.map(row=>[row.slot_code,row.entry_id]));
@@ -58,7 +58,7 @@ export async function positionCompetitionState(db:Queryable, organizationId:stri
       (positions||((manualOrders as Record<string,Map<number,string[]>>)[key]=new Map())).set(row.position,row.entry_order);
     }
   }
-  const competition=derivePositionCompetition(slots,simpleGames,results,parsed.data,manualOrders);
+  const competition=derivePositionCompetition(slots,simpleGames,results,parsed.data,manualOrders,blueprint.group_size);
   const titleTie=competition.final&&competition.official.quadrangular===6?competition.final.totals.filter(row=>row.points===Math.max(...competition.final!.totals.map(item=>item.points))).map(row=>row.teamId):[];
   const {rows:[extra]}=await db.query(`SELECT d.decision,d.match_id,m.home_entry_id,m.away_entry_id,to_char(m.match_date,'YYYY-MM-DD') match_date,md.status day_status,a.snapshot
     FROM fixture_position_title_decisions d LEFT JOIN draft_matches m ON m.organization_id=d.organization_id AND m.id=d.match_id
@@ -99,7 +99,7 @@ export async function syncPositionMatches(client:PoolClient,organizationId:strin
   if(!state.rulesPublished)return {created:0,updated:0,blocked:'rules'};
   if(state.competition.blocked==='draw')return {created:0,updated:0,blocked:'draw'};
   const opening=state.games.filter(game=>game.stage==='groups'&&game.sporting_round==='F1');
-  if(opening.length!==5||opening.some(game=>!game.jornada_no||!game.planned_date))return {created:0,updated:0,blocked:'opening'};
+  if(opening.length!==state.blueprint.group_size||opening.some(game=>!game.jornada_no||!game.planned_date))return {created:0,updated:0,blocked:'opening'};
   const {rows:[category]}=await client.query('SELECT edition_id FROM categories WHERE organization_id=$1 AND id=$2',[organizationId,categoryId]);
   const existingDays=await client.query('SELECT id,ordinal FROM matchdays WHERE organization_id=$1 AND edition_id=$2',[organizationId,category.edition_id]);
   const days=new Map<number,string>(existingDays.rows.map(row=>[row.ordinal,row.id]));

@@ -886,6 +886,29 @@ test('T04: plan privado por posiciones conserva Fechas/Jornadas y resuelve el so
   assert.equal(count.total,0);
 });
 
+test('T04: el formato por posiciones de 12 equipos usa la misma API y respeta el alcance de organización', async () => {
+  const tournament=await newTournament();
+  assert.equal(tournament.response.statusCode,201,tournament.response.body);
+  const categoryId=tournament.response.json().categoryId;
+  const base=`/organizations/${ids.a}/categories/${categoryId}/fixture/blueprint`;
+  const size=6;
+  const groupGames=[];
+  for(const group of ['A','B'])for(let left=1;left<=size;left++)for(let right=left+1;right<=size;right++)groupGames.push({homeRef:`${group}${left}`,awayRef:`${group}${right}`});
+  for(let position=1;position<=size;position++)groupGames.push({homeRef:`A${position}`,awayRef:`B${position}`});
+  const later=[...fcfsPositionPlan.games.filter(game=>game.stage!=='groups')].map(game=>({...game,jornadaNo:null,plannedDate:null}));
+  const plan={name:'Formato por posiciones de prueba',groupSize:size,opening:{firstJornada:1,secondJornada:2,firstDate:'2027-01-01',secondDate:'2027-01-02'},extraReservedDate:null,games:[...groupGames.map((game,index)=>({...game,code:`G${String(index+1).padStart(2,'0')}`,stage:'groups',sportingRound:index>=30?'F1':'F2',jornadaNo:null,plannedDate:null})),...later]};
+  assert.equal((await request(adminB,'POST',base,plan)).statusCode,403);
+  const created=await request(adminA,'POST',base,plan);
+  assert.equal(created.statusCode,201,created.body);
+  const view=await request(adminA,'GET',base);
+  assert.equal(view.statusCode,200,view.body);
+  assert.equal(view.json().blueprint.group_size,6);
+  assert.equal(view.json().slots.length,12);
+  assert.equal((await request(adminB,'GET',base)).statusCode,403);
+  assert.equal((await request(adminA,'PATCH',`${base}/opening`,{firstJornadaCodes:['G31','G32']})).statusCode,200);
+  assert.equal((await request(adminA,'PATCH',`${base}/slots/A7`,{entryId:null})).statusCode,404);
+});
+
 test('T04/T08: el plan parcial se publica sin resultados ni asignaciones inventadas', async () => {
   const tournament=await newTournament(ids.a,{...fiveRules,points:{win:2,draw:1,loss:0},initialPhase:null,competitionPlan:null});
   const {categoryId,tournamentId}=tournament.response.json();
@@ -1117,6 +1140,28 @@ test('T04/T05: una jornada de Copa con fecha prevista se publica y abre el acta 
   const started=await request(adminA,'POST',`${root}/matches/${match.id}/record/start`,{});assert.equal(started.statusCode,201,started.body);
   assert.equal((await request(adminA,'GET',`${root}/matches/${match.id}/record`)).json().status,'capturing');
   assert.equal((await request(adminB,'GET',`${root}/matches/${match.id}/record`)).statusCode,403);
+  const registrationId=randomUUID(),teamEntryId=started.json().home.entryId;
+  const quickPlayer={registrationId,teamEntryId,givenNames:'Lucía',familyNames:'Benítez',event:{clientEventId:registrationId,kind:'goal',teamEntryId,registrationId,relatedRegistrationId:null,incidentNote:null,cardCode:null,windowNo:null,period:'PT',minute:null}};
+  assert.equal((await request(adminB,'POST',`${root}/matches/${match.id}/record/players`,quickPlayer)).statusCode,403);
+  const otherEntry=randomUUID();
+  assert.equal((await request(adminA,'POST',`${root}/matches/${match.id}/record/players`,{...quickPlayer,teamEntryId:otherEntry,event:{...quickPlayer.event,teamEntryId:otherEntry}})).json().code,'TEAM_NOT_IN_MATCH');
+  const added=await request(adminA,'POST',`${root}/matches/${match.id}/record/players`,quickPlayer);
+  assert.equal(added.statusCode,201,added.body);
+  assert.ok(added.json().view.home.players.some((player:{registrationId:string;name:string})=>player.registrationId===quickPlayer.registrationId&&player.name==='Lucía Benítez'));
+  assert.equal(added.json().view.score.home,1);assert.equal(added.json().view.events.length,1);
+  const repeated=await request(adminA,'POST',`${root}/matches/${match.id}/record/players`,quickPlayer);
+  assert.equal(repeated.statusCode,200);assert.equal(repeated.json().view.events.length,1);
+  assert.equal((await request(adminA,'POST',`${root}/matches/${match.id}/record/players`,{...quickPlayer,event:{...quickPlayer.event,kind:'yellow'}})).json().code,'EVENT_ID_REUSED');
+  const failedId=randomUUID();
+  const invalid={...quickPlayer,registrationId:failedId,givenNames:'Rosa',event:{...quickPlayer.event,clientEventId:failedId,registrationId:failedId,kind:'custom_card',cardCode:'no_existe'}};
+  assert.equal((await request(adminA,'POST',`${root}/matches/${match.id}/record/players`,invalid)).json().code,'CARD_UNKNOWN');
+  assert.equal((await pool.query('SELECT 1 FROM player_registrations WHERE organization_id=$1 AND id=$2',[ids.a,failedId])).rowCount,0);
+  const {rows:[quickIdentity]}=await pool.query(`SELECT p.birth_date,pr.status FROM player_registrations pr JOIN players p ON p.organization_id=pr.organization_id AND p.id=pr.player_id WHERE pr.organization_id=$1 AND pr.id=$2`,[ids.a,quickPlayer.registrationId]);
+  assert.equal(quickIdentity.birth_date,null);assert.equal(quickIdentity.status,'draft');
+  const nameOnly=await request(adminA,'POST',`${root}/entries/${started.json().away.entryId}/players`,{givenNames:'Mario',familyNames:'Gómez'});
+  assert.equal(nameOnly.statusCode,201,nameOnly.body);
+  const card=await request(adminA,'POST',`${root}/matches/${match.id}/events`,{clientEventId:randomUUID(),kind:'yellow',teamEntryId:quickPlayer.teamEntryId,registrationId:quickPlayer.registrationId,relatedRegistrationId:null,incidentNote:null,cardCode:null,windowNo:null,period:'PT',minute:null});
+  assert.equal(card.statusCode,201,card.body);assert.equal(card.json().score.home,1);assert.equal(card.json().events.length,2);
 });
 
 test('T04: orden manual de grupos y general avanza solo con actas vigentes y permiso propio',async()=>{

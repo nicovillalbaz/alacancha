@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { derivePositionCompetition, type PositionGame, type PositionResult } from '@torneos/shared';
+import { derivePositionCompetition, positionBlueprintSchema, type PositionGame, type PositionResult } from '@torneos/shared';
 import { fcfsPositionPlan } from '../scripts/fcfs-position-plan.ts';
 
 test('Copa Caacupé: cada equipo juega una sola vez por jornada programada',()=>{
@@ -10,6 +10,32 @@ test('Copa Caacupé: cada equipo juega una sola vez por jornada programada',()=>
   for(const [day,teams] of byDay)assert.equal(new Set(teams).size,teams.length,`Jornada ${day}: equipo repetido`);
   assert.deepEqual(scheduled.filter(game=>game.jornadaNo===6).map(game=>[game.homeRef,game.awayRef]),[['A3','B3'],['A5','A1'],['A4','B4']]);
   assert.deepEqual(scheduled.filter(game=>game.jornadaNo===7).map(game=>[game.homeRef,game.awayRef]),[['A2','A3'],['B5','B1'],['B2','B3']]);
+});
+
+test('el mismo formato admite seis equipos por grupo sin depender de la Copa',()=>{
+  const size=6;
+  const otherSlots=new Map(Array.from({length:size*2},(_,index)=>[`${index<size?'A':'B'}${index%size+1}`,`${index<size?'A':'B'}${index%size+1}`] as const));
+  const otherGames:PositionGame[]=[];
+  const otherResults:PositionResult[]=[];
+  const append=(homeRef:string,awayRef:string)=>{
+    const code=`G${String(otherGames.length+1).padStart(2,'0')}`;
+    otherGames.push({code,stage:'groups',homeRef,awayRef});
+    otherResults.push({code,homeEntryId:homeRef,awayEntryId:awayRef,homeGoals:1,awayGoals:0,homePenalties:0,awayPenalties:0});
+  };
+  for(const group of ['A','B'])for(let left=1;left<=size;left++)for(let right=left+1;right<=size;right++)append(`${group}${left}`,`${group}${right}`);
+  for(let position=1;position<=size;position++)append(`A${position}`,`B${position}`);
+  for(const [code,homeRef,awayRef] of [['MM1','1A','4B'],['MM2','1B','4A'],['MM3','2A','3B'],['MM4','2B','3A']])otherGames.push({code,stage:'quarterfinal',homeRef,awayRef});
+  for(const [code,homeRef,awayRef] of [['Q1','S1','S4'],['Q2','S2','S3'],['Q3','S1','S3'],['Q4','S2','S4'],['Q5','S1','S2'],['Q6','S3','S4']])otherGames.push({code,stage:'quadrangular',homeRef,awayRef});
+  const otherRules={points:{win:2,draw:1,loss:0},advanced:{tiebreakers:['wins','goal_difference','goals_for','manual_draw']}} as Parameters<typeof derivePositionCompetition>[3];
+  const state=derivePositionCompetition(otherSlots,otherGames,otherResults,otherRules,{},size);
+  assert.equal(state.official.groups,36);
+  assert.equal(state.official.expectedGroups,36);
+  assert.equal(state.groupA.totals.find(row=>row.teamId==='A1')?.played,6);
+  assert.equal(state.groupB.totals.find(row=>row.teamId==='B1')?.played,6);
+  assert.equal(state.blocked,'quarterfinal_results');
+  const blueprint={name:'Otra Copa',groupSize:size,opening:{firstJornada:1,secondJornada:2,firstDate:'2027-01-01',secondDate:'2027-01-02'},extraReservedDate:null,games:otherGames.map((game,index)=>({...game,sportingRound:index>=size*(size-1)&&index<size*size?'F1':'F2',jornadaNo:null,plannedDate:null}))};
+  assert.equal(positionBlueprintSchema.safeParse(blueprint).success,true);
+  assert.equal(positionBlueprintSchema.safeParse({...blueprint,groupSize:5}).success,false);
 });
 
 const slots=new Map(Array.from({length:10},(_,index)=>[`${index<5?'A':'B'}${index%5+1}`,`${index<5?'A':'B'}${index%5+1}`] as const));

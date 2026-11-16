@@ -13,7 +13,7 @@ export const roles = ['tournament_admin', 'team_admin', 'operator'] as const;
 export const matchPeriodCodes = ['PT','ST','TE','P4','P5','P6'] as const;
 export const matchEventSchema = z.object({ clientEventId: z.uuid(), kind: z.enum(['goal','penalty','penalty_miss','own_goal','yellow','second_yellow','red','custom_card','substitution','incident','shootout_goal','shootout_miss']), teamEntryId: z.uuid(), registrationId: z.uuid().nullable(), cardCode: z.string().regex(/^[a-z][a-z0-9_]{1,29}$/).nullable().optional(), relatedRegistrationId: z.uuid().nullable().optional(), incidentNote: z.string().trim().min(3).max(500).nullable().optional(), windowNo: z.number().int().min(1).max(20).nullable().optional(), period: z.enum(matchPeriodCodes).nullable(), minute: z.number().int().min(0).max(200).nullable() }).strict();
 export const matchEventVoidSchema = z.object({ clientEventId: z.uuid(), reason: z.string().trim().min(3).max(300) }).strict();
-export interface MatchCaptureView { matchId: string; status: 'capturing' | 'submitted' | 'official'; revision: number; warnings?: string[]; home: { entryId: string; teamId: string; name: string; color: string; hasShield: boolean; players: Array<{ registrationId: string; name: string; shirtNumber: number | null }> }; away: { entryId: string; teamId: string; name: string; color: string; hasShield: boolean; players: Array<{ registrationId: string; name: string; shirtNumber: number | null }> }; score: { home: number; away: number }; shootout: { home: number; away: number }; unattributedGoals: number; submissionId: string | null; approvalId: string | null; allowedKinds: import('./match.ts').MatchEventKind[]; customCards: Array<{code:string;label:string;color:string;suspensionMatches:number}>; substitutionNeedsWindow:boolean; events: import('./match.ts').MatchJournalEvent[]; periods: string[] }
+export interface MatchCaptureView { matchId: string; status: 'capturing' | 'submitted' | 'official'; revision: number; warnings?: string[]; home: { entryId: string; teamId: string; name: string; color: string; hasShield: boolean; canAddPlayer: boolean; players: Array<{ registrationId: string; name: string; shirtNumber: number | null }> }; away: { entryId: string; teamId: string; name: string; color: string; hasShield: boolean; canAddPlayer: boolean; players: Array<{ registrationId: string; name: string; shirtNumber: number | null }> }; score: { home: number; away: number }; shootout: { home: number; away: number }; unattributedGoals: number; submissionId: string | null; approvalId: string | null; allowedKinds: import('./match.ts').MatchEventKind[]; customCards: Array<{code:string;label:string;color:string;suspensionMatches:number}>; substitutionNeedsWindow:boolean; events: import('./match.ts').MatchJournalEvent[]; periods: string[] }
 export const roleLabels: Record<typeof roles[number], string> = { tournament_admin: 'Administrador de torneo', team_admin: 'Administrador de equipo', operator: 'Planillero' };
 export const passwordSchema = z.string().min(12, 'Usá al menos 12 caracteres.').max(128, 'La contraseña es demasiado larga.');
 export const loginSchema = z.object({ username: z.string().trim().min(3).max(160), password: z.string().min(1).max(128) }).strict();
@@ -102,6 +102,7 @@ export const advancedRulesSchema = z.object({
 });
 export const positionBlueprintSchema = z.object({
   name: z.string().trim().min(3).max(120),
+  groupSize: z.number().int().min(4).max(8).default(5),
   opening: z.object({ firstJornada: z.number().int().min(1).max(999), secondJornada: z.number().int().min(1).max(999), firstDate: calendarDateSchema, secondDate: calendarDateSchema }).strict(),
   extraReservedDate: calendarDateSchema.nullable(),
   games: z.array(z.object({
@@ -110,18 +111,35 @@ export const positionBlueprintSchema = z.object({
     sportingRound: z.string().trim().min(2).max(30),
     jornadaNo: z.number().int().min(1).max(999).nullable(),
     plannedDate: calendarDateSchema.nullable(),
-    homeRef: z.string().regex(/^([AB][1-5]|[1-4][AB]|S[1-4])$/),
-    awayRef: z.string().regex(/^([AB][1-5]|[1-4][AB]|S[1-4])$/),
+    homeRef: z.string().regex(/^([AB][1-8]|[1-4][AB]|S[1-4])$/),
+    awayRef: z.string().regex(/^([AB][1-8]|[1-4][AB]|S[1-4])$/),
   }).strict()).min(1).max(200),
 }).strict().superRefine((plan, context) => {
   const issue = (message: string) => context.addIssue({ code: 'custom', message });
   if (plan.opening.firstJornada === plan.opening.secondJornada || plan.opening.firstDate >= plan.opening.secondDate) issue('Las dos jornadas de apertura deben ser distintas y estar en orden.');
   if (new Set(plan.games.map(game => game.code)).size !== plan.games.length) issue('Cada partido del plan necesita un código único.');
   if (plan.games.some(game => (game.jornadaNo === null) !== (game.plannedDate === null) || game.homeRef === game.awayRef)) issue('Revisá fecha, jornada y rivales de cada cruce.');
+  if (plan.games.some(game => [game.homeRef,game.awayRef].some(ref => /^[AB][1-8]$/.test(ref) && Number(ref[1]) > plan.groupSize))) issue('El cruce usa una posición fuera del tamaño de los grupos.');
+  if (plan.games.filter(game => game.stage === 'groups').length !== plan.groupSize ** 2 || plan.games.filter(game => game.stage === 'quarterfinal').length !== 4 || plan.games.filter(game => game.stage === 'quadrangular').length !== 6) issue('El formato requiere todos los cruces de grupos, cuatro cuartos y seis cruces del cuadrangular.');
+  const pair = (left:string,right:string) => [left,right].sort().join(':');
+  const expectedGroupPairs = new Set<string>();
+  for(const group of ['A','B']) for(let left=1;left<=plan.groupSize;left++) for(let right=left+1;right<=plan.groupSize;right++) expectedGroupPairs.add(pair(`${group}${left}`,`${group}${right}`));
+  for(let position=1;position<=plan.groupSize;position++) expectedGroupPairs.add(pair(`A${position}`,`B${position}`));
+  const actualGroupPairs=plan.games.filter(game=>game.stage==='groups').map(game=>pair(game.homeRef,game.awayRef));
+  if(actualGroupPairs.length!==expectedGroupPairs.size||new Set(actualGroupPairs).size!==expectedGroupPairs.size||actualGroupPairs.some(value=>!expectedGroupPairs.has(value))) issue('Cada equipo debe jugar una vez contra los de su grupo y su par interserial.');
+  if(plan.games.filter(game=>game.stage==='groups'&&game.sportingRound==='F1').length!==plan.groupSize) issue('La primera fecha deportiva debe incluir un cruce por cada posición del grupo.');
+  const openingRefs=plan.games.filter(game=>game.stage==='groups'&&game.sportingRound==='F1').flatMap(game=>[game.homeRef,game.awayRef]);
+  if(openingRefs.length!==plan.groupSize*2||new Set(openingRefs).size!==plan.groupSize*2) issue('Cada equipo debe jugar una sola vez en la primera fecha deportiva.');
+  const quarterRefs=plan.games.filter(game=>game.stage==='quarterfinal').flatMap(game=>[game.homeRef,game.awayRef]);
+  if(quarterRefs.length!==8||new Set(quarterRefs).size!==8||quarterRefs.some(ref=>!/^[1-4][AB]$/.test(ref))) issue('Cada uno de los ocho clasificados debe disputar un solo cuarto de final.');
+  const expectedFinalPairs=new Set<string>();
+  for(let left=1;left<=4;left++)for(let right=left+1;right<=4;right++)expectedFinalPairs.add(pair(`S${left}`,`S${right}`));
+  const finalPairs=plan.games.filter(game=>game.stage==='quadrangular').map(game=>pair(game.homeRef,game.awayRef));
+  if(finalPairs.length!==6||new Set(finalPairs).size!==6||finalPairs.some(value=>!expectedFinalPairs.has(value))) issue('Los cuatro ganadores deben disputar el cuadrangular completo.');
 });
 export type PositionBlueprintInput = z.infer<typeof positionBlueprintSchema>;
 export interface PositionBlueprintView {
-  blueprint: null | { id:string; name:string; revision:number; published_revision:number|null; opening_first_jornada:number; opening_second_jornada:number; opening_first_date:string; opening_second_date:string; extra_reserved_date:string|null };
+  blueprint: null | { id:string; name:string; revision:number; published_revision:number|null; group_size:number; opening_first_jornada:number; opening_second_jornada:number; opening_first_date:string; opening_second_date:string; extra_reserved_date:string|null };
   slots: Array<{ slot_code:string; entry_id:string|null; team_name:string|null; color:string|null }>;
   games: Array<{ code:string; stage:'groups'|'quarterfinal'|'quadrangular'; sporting_round:string; jornada_no:number|null; planned_date:string|null; home_ref:string; away_ref:string }>;
 }
@@ -228,11 +246,11 @@ export const playerOriginSchema = z.discriminatedUnion('kind', [
 export const playerDraftSchema = z.object({
   givenNames: z.string().trim().min(2).max(120),
   familyNames: z.string().trim().min(2).max(120),
-  documentKind: z.enum(['ci', 'passport', 'other']).nullable(),
-  documentNumber: z.string().trim().min(4).max(40).refine((value) => value.replace(/[\s.\-]/g, '').length >= 4, 'Ingresá un número de documento válido.').nullable(),
-  birthDate: calendarDateSchema,
-  registrationNumber: z.string().trim().min(1).max(40).nullable(),
-  origin: playerOriginSchema,
+  documentKind: z.enum(['ci', 'passport', 'other']).nullable().default(null),
+  documentNumber: z.string().trim().min(4).max(40).refine((value) => value.replace(/[\s.\-]/g, '').length >= 4, 'Ingresá un número de documento válido.').nullable().default(null),
+  birthDate: calendarDateSchema.nullable().default(null),
+  registrationNumber: z.string().trim().min(1).max(40).nullable().default(null),
+  origin: playerOriginSchema.default({ kind: 'unknown' }),
   details: z.record(z.string().regex(/^[a-z][a-z0-9_]{1,31}$/), z.string().trim().max(160)).default({}),
 }).strict().refine((player) => Boolean(player.documentKind) === Boolean(player.documentNumber), 'Si cargás documento, indicá tipo y número.');
 export type PlayerDraftInput = z.infer<typeof playerDraftSchema>;
@@ -244,14 +262,14 @@ export const playerImportPreviewSchema = z.object({ rows: z.array(playerDraftSch
 });
 export const playerImportCommitSchema = playerImportPreviewSchema.safeExtend({ previewToken: z.string().min(70).max(120), reason: z.string().trim().min(3).max(300) });
 export interface PlayerImportBatch { id: string; status: 'imported' | 'reverted'; row_count: number; reason: string; created_at: string; reverted_at: string | null }
-export const playerIdentityEditSchema = z.object({ givenNames: z.string().trim().min(2).max(120), familyNames: z.string().trim().min(2).max(120), birthDate: calendarDateSchema, documentKind: z.enum(['ci','passport','other']).optional(), documentNumber: z.string().trim().min(4).max(40).optional(), expectedRevision: z.number().int().positive(), reason: z.string().trim().min(3).max(300) }).strict().refine((edit) => Boolean(edit.documentKind) === Boolean(edit.documentNumber), 'Para cambiar el documento, indicá tipo y número.');
+export const playerIdentityEditSchema = z.object({ givenNames: z.string().trim().min(2).max(120), familyNames: z.string().trim().min(2).max(120), birthDate: calendarDateSchema.nullable(), documentKind: z.enum(['ci','passport','other']).optional(), documentNumber: z.string().trim().min(4).max(40).optional(), expectedRevision: z.number().int().positive(), reason: z.string().trim().min(3).max(300) }).strict().refine((edit) => Boolean(edit.documentKind) === Boolean(edit.documentNumber), 'Si cargás documento, indicá tipo y número.');
 export const playerReuseSchema = z.object({ playerId: z.uuid(), registrationNumber: z.string().trim().min(1).max(40).nullable(), origin: playerOriginSchema, details: z.record(z.string().regex(/^[a-z][a-z0-9_]{1,31}$/), z.string().trim().max(160)).default({}), reason: z.string().trim().min(3).max(300) }).strict();
-export interface PlayerIdentitySearch { id: string; given_names: string; family_names: string; document_kind: string | null; document_last_four: string | null; birth_date: string; revision: number }
-export interface PlayerIdentityChange { id: string; revision: number; changed_fields: string[]; reason: string; changed_at: string; before: { givenNames: string; familyNames: string; birthDate: string; documentKind: string; documentLastFour: string }; after: { givenNames: string; familyNames: string; birthDate: string; documentKind: string; documentLastFour: string } }
-export interface PlayerDraftSummary { id: string; player_id: string; entry_id: string; given_names: string; family_names: string; document_kind: 'ci' | 'passport' | 'other' | null; document_last_four: string | null; birth_date: string; identity_revision: number; registration_number: string | null; details: Record<string,string>; origin_kind: 'internal' | 'external' | 'none' | 'unknown'; origin_team_name: string | null; origin_city: string | null; origin_league: string | null; status: 'draft' | 'submitted' | 'approved' | 'observed' | 'rejected'; revision: number }
+export interface PlayerIdentitySearch { id: string; given_names: string; family_names: string; document_kind: string | null; document_last_four: string | null; birth_date: string | null; revision: number }
+export interface PlayerIdentityChange { id: string; revision: number; changed_fields: string[]; reason: string; changed_at: string; before: { givenNames: string; familyNames: string; birthDate: string | null; documentKind: string | null; documentLastFour: string | null }; after: { givenNames: string; familyNames: string; birthDate: string | null; documentKind: string | null; documentLastFour: string | null } }
+export interface PlayerDraftSummary { id: string; player_id: string; entry_id: string; given_names: string; family_names: string; document_kind: 'ci' | 'passport' | 'other' | null; document_last_four: string | null; birth_date: string | null; identity_revision: number; registration_number: string | null; details: Record<string,string>; origin_kind: 'internal' | 'external' | 'none' | 'unknown'; origin_team_name: string | null; origin_city: string | null; origin_league: string | null; status: 'draft' | 'submitted' | 'approved' | 'observed' | 'rejected'; revision: number }
 export const goodFaithSubmitSchema = z.object({ registrationIds: z.array(z.uuid()).min(1).max(500).refine((ids) => new Set(ids).size === ids.length, 'No repitas jugadores.'), expectedVersion: z.number().int().min(0), reason: z.string().trim().min(3).max(300) }).strict();
 export const goodFaithReviewSchema = z.object({ version: z.number().int().positive(), decision: z.enum(['approved','observed','rejected']), reason: z.string().trim().min(3).max(300) }).strict();
-export interface GoodFaithVersion { id: string; entry_id: string; version: number; status: 'submitted' | 'approved' | 'observed' | 'rejected'; snapshot: Array<{ registrationId: string; playerId: string; givenNames: string; familyNames: string; birthDate: string; registrationNumber: string | null; originKind: string }>; submit_reason: string; submitted_at: string; review_reason: string | null; reviewed_at: string | null }
+export interface GoodFaithVersion { id: string; entry_id: string; version: number; status: 'submitted' | 'approved' | 'observed' | 'rejected'; snapshot: Array<{ registrationId: string; playerId: string; givenNames: string; familyNames: string; birthDate: string | null; registrationNumber: string | null; originKind: string }>; submit_reason: string; submitted_at: string; review_reason: string | null; reviewed_at: string | null }
 export const playerDocumentLabelSchema = z.string().trim().min(2).max(80);
 export const playerEvidenceReviewSchema = z.object({ decision: z.enum(['approved','rejected']), reason: z.string().trim().min(3).max(300) }).strict();
 export interface PlayerDocument { id: string; registration_id: string; label: string; content_type: string; byte_length: number; status: 'uploaded' | 'approved' | 'rejected'; uploaded_at: string; review_reason: string | null }

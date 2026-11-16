@@ -1,4 +1,4 @@
-type Player = { givenNames: string; familyNames: string; registrationNumber: string; birthDate: string; originKind: string };
+type Player = { givenNames: string; familyNames: string; registrationNumber: string | null; birthDate: string | null; originKind: string };
 function latin(value: string) { return Array.from(value.normalize('NFC'), (char) => char.charCodeAt(0) <= 255 ? char : '?').join(''); }
 function literal(value: string) { return latin(value).replaceAll('\\','\\\\').replaceAll('(','\\(').replaceAll(')','\\)').replaceAll('\r',' ').replaceAll('\n',' '); }
 function line(text: string, x: number, y: number, bold = false, size = 10) { return `BT /${bold ? 'F2' : 'F1'} ${size} Tf ${x} ${y} Td (${literal(text)}) Tj ET\n`; }
@@ -27,7 +27,7 @@ export function approvedGoodFaithPdf(input: { tournament: string; edition: strin
   type PdfRow = { index: number; player: Player; name: string[]; card: string[]; y: number };
   const pageRows: PdfRow[][] = [[]]; let y = rowsStart;
   input.players.forEach((player, index) => {
-    const name = wrap(`${player.familyNames}, ${player.givenNames}`, 44), card = wrap(player.registrationNumber, 14);
+    const name = wrap(`${player.familyNames}, ${player.givenNames}`, 44), card = wrap(player.registrationNumber ?? '—', 14);
     const height = Math.max(33, Math.max(name.length, card.length) * 8 + 8);
     if (y - height < 75 && pageRows.at(-1)!.length) { pageRows.push([]); y = rowsStart; }
     pageRows.at(-1)!.push({ index, player, name, card, y }); y -= height;
@@ -47,7 +47,7 @@ export function approvedGoodFaithPdf(input: { tournament: string; edition: strin
     pageRows[page].forEach(({ index, player, name, card, y }) => {
       name.forEach((part, row) => { stream += line(`${row === 0 ? String(index + 1).padStart(2) : '  '}  ${part}`, 42, y - row * 8, false, 8); });
       card.forEach((part, row) => { stream += line(part, 396, y - row * 8, false, 8); });
-      stream += line(player.birthDate, 513, y, false, 9);
+      stream += line(player.birthDate ?? 'Pendiente', 513, y, false, 9);
     });
     stream += line('Documento privado · Sin número de identidad · No publicar en el portal', 42, 46, false, 8);
     const bytes = Buffer.from(latin(stream), 'latin1');

@@ -1,5 +1,7 @@
 # Avances y evidencias
 
+**16/11/2026 — T03/T04/T05, plantilla de posiciones y alta atómica:** el formato por posiciones acepta dos grupos de 4–8 equipos; valida los cruces únicos de grupos, cuartos y cuadrangular, y calcula umbrales desde el plan. El alta durante la captura guarda jugador, inscripción, nómina y evento en una transacción; una validación fallida revierte todo y un reintento no duplica. Migraciones 054 y 055 preparadas. Pruebas con 10 y 12 equipos y permisos cruzados: 105/105 aprobadas; tipos correctos. No se generaron resultados deportivos reales.
+
 **16/11/2026 — T04, Sanber visible al organizador:** Fixture y Partidos leen el mismo calendario anunciado que el portal público. Se muestran nueve jornadas y 45 cruces sin fecha; el panel distingue carga/error/ausencia y no ofrece un segundo sorteo para esa categoría. Sin migración ni partidos oficiales inventados. **101/101 pruebas, tipos y build web correctos.** Aceptación en la cuenta organizadora y teléfono real pendiente. [Evidencia y límites](evidencias/t04-sanber-admin-calendario-2026-11-16.md).
 
 **12/11/2026 — T09, dominio público:** `alacancha.top` apunta al VPS y responde por HTTPS; `alacancha.webs.vc` redirige con 308 al dominio nuevo conservando ruta y consulta. Caddy, API y worker activos; `/ready`, enlace directo de Copa, manifest, robots y sitemap verificados. `WEB_ORIGIN` y la guarda del importador FCFS usan el dominio nuevo. No hubo migración ni cambio de datos deportivos. [Evidencia](evidencias/t09-dominio-alacancha-top-2026-11-12.md).

@@ -33,7 +33,7 @@ export interface PositionCompetition {
   participants: Record<string, { homeEntryId: string | null; awayEntryId: string | null }>;
   quarterfinalWinners: string[];
   seeds: string[];
-  official: { groups: number; quarterfinals: number; quadrangular: number };
+  official: { groups: number; expectedGroups: number; quarterfinals: number; quadrangular: number };
   blocked: 'draw' | 'group_results' | 'group_tiebreak' | 'quarterfinal_results' | 'general_tiebreak' | 'quadrangular_results' | 'final_tiebreak' | null;
 }
 export interface PositionCompetitionView {
@@ -60,9 +60,9 @@ function applyManualOrder(table:PositionTable, orders:ReadonlyMap<number,readonl
 }
 
 /** El resultado aprobado es la fuente. Cada interserial cuenta una sola vez en la general y para cada participante en su grupo. */
-export function derivePositionCompetition(slots: ReadonlyMap<string,string|null>, games: readonly PositionGame[], results: readonly PositionResult[], rules: Pick<RuleConfig,'points'|'advanced'>, manualOrders:PositionManualOrders={}): PositionCompetition {
-  const idsA=Array.from({length:5},(_,i)=>slots.get(`A${i+1}`)).filter((id):id is string=>!!id);
-  const idsB=Array.from({length:5},(_,i)=>slots.get(`B${i+1}`)).filter((id):id is string=>!!id);
+export function derivePositionCompetition(slots: ReadonlyMap<string,string|null>, games: readonly PositionGame[], results: readonly PositionResult[], rules: Pick<RuleConfig,'points'|'advanced'>, manualOrders:PositionManualOrders={}, groupSize=5): PositionCompetition {
+  const idsA=Array.from({length:groupSize},(_,i)=>slots.get(`A${i+1}`)).filter((id):id is string=>!!id);
+  const idsB=Array.from({length:groupSize},(_,i)=>slots.get(`B${i+1}`)).filter((id):id is string=>!!id);
   const all=[...idsA,...idsB];
   const byGame=new Map(games.map(game=>[game.code,game]));
   const byResult=new Map(results.filter(result=>byGame.has(result.code)).map(result=>[result.code,result]));
@@ -86,8 +86,9 @@ export function derivePositionCompetition(slots: ReadonlyMap<string,string|null>
   const groupA=applyManualOrder(rankStandings(idsA,initial,breakers,new Map(),{includeExternalOpponents:true}),manualOrders.A);
   const groupB=applyManualOrder(rankStandings(idsB,initial,breakers,new Map(),{includeExternalOpponents:true}),manualOrders.B);
   const general=applyManualOrder(rankStandings(all,initial,breakers),manualOrders.general);
-  const completeDraw=idsA.length===5&&idsB.length===5&&new Set(all).size===10;
-  const completeGroups=completeDraw&&groupGames.length===25&&groupResults.length===25;
+  const completeDraw=idsA.length===groupSize&&idsB.length===groupSize&&new Set(all).size===groupSize*2;
+  const expectedGroups=groupSize*groupSize;
+  const completeGroups=completeDraw&&groupGames.length===expectedGroups&&groupResults.length===expectedGroups;
   const positions=(table:PositionTable)=>table.groups.flatMap(group=>group.unresolved?Array(group.teamIds.length).fill(null) as null[]:group.teamIds);
   const a=completeGroups?positions(groupA):[],b=completeGroups?positions(groupB):[];
   const canPair=a.slice(0,4).every(Boolean)&&b.slice(0,4).every(Boolean);
@@ -121,5 +122,5 @@ export function derivePositionCompetition(slots: ReadonlyMap<string,string|null>
   }):[];
   const final=seeded?applyManualOrder(rankStandings(seeds,finalResults.map(ranked),breakers),manualOrders.final):null;
   const blocked:PositionCompetition['blocked']=!completeDraw?'draw':!completeGroups?'group_results':!canPair?'group_tiebreak':!allWinners?'quarterfinal_results':!seeded?'general_tiebreak':finalResults.length!==6?'quadrangular_results':final?.groups[0]?.unresolved?'final_tiebreak':null;
-  return {groupA,groupB,general,final,participants,quarterfinalWinners:winners,seeds,official:{groups:groupResults.length,quarterfinals:quarterfinalGames.filter(game=>byResult.has(game.code)).length,quadrangular:finalResults.length},blocked};
+  return {groupA,groupB,general,final,participants,quarterfinalWinners:winners,seeds,official:{groups:groupResults.length,expectedGroups,quarterfinals:quarterfinalGames.filter(game=>byResult.has(game.code)).length,quadrangular:finalResults.length},blocked};
 }

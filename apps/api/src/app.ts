@@ -166,7 +166,8 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const age = rule?.rules?.eligibility?.age;
     if (age) {
       const reference = age.reference === 'fixed_date' ? age.fixedDate : asOf;
-      if (!reference || player.birth_date > reference) blocked.push('La fecha de nacimiento no cumple el corte de edad.');
+      if (!player.birth_date) blocked.push('Falta la fecha de nacimiento para verificar la edad.');
+      else if (!reference || player.birth_date > reference) blocked.push('La fecha de nacimiento no cumple el corte de edad.');
       else {
         const years = ageAt(player.birth_date, reference);
         if ((age.minYears !== null && years < age.minYears) || (age.maxYears !== null && years > age.maxYears)) blocked.push(`Edad fuera del rango al ${reference}.`);
@@ -237,7 +238,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const maximum = rule?.rules?.maxRegisteredPlayers;
     if (typeof maximum === 'number' && count.total + rows.length > maximum) fail(409, 'ROSTER_FULL', `El lote supera el máximo de ${maximum} jugadores.`);
     for (const row of rows) {
-      if (row.birthDate > new Date().toISOString().slice(0,10)) fail(400, 'BIRTH_DATE_FUTURE', 'El lote contiene una fecha de nacimiento futura.');
+      if (row.birthDate && row.birthDate > new Date().toISOString().slice(0,10)) fail(400, 'BIRTH_DATE_FUTURE', 'El lote contiene una fecha de nacimiento futura.');
       if (row.origin.kind === 'internal') {
         const { rowCount } = await db.query('SELECT 1 FROM teams WHERE organization_id=$1 AND id=$2', [organizationId, row.origin.teamId]);
         if (!rowCount) fail(400, 'ORIGIN_NOT_FOUND', 'Un equipo de origen no pertenece a esta organización.');
@@ -1253,7 +1254,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const organizationId = uuid(id), entry = uuid(entryId);
     const actor = await teamAccess(request, organizationId, entry);
     const input = playerDraftSchema.parse(request.body);
-    if (input.birthDate > new Date().toISOString().slice(0, 10)) fail(400, 'BIRTH_DATE_FUTURE', 'La fecha de nacimiento no puede ser futura.');
+    if (input.birthDate && input.birthDate > new Date().toISOString().slice(0, 10)) fail(400, 'BIRTH_DATE_FUTURE', 'La fecha de nacimiento no puede ser futura.');
     const fingerprint = input.documentKind && input.documentNumber ? documentFingerprint(config.appSecret, organizationId, input.documentKind, input.documentNumber) : null;
     const playerId = randomUUID(), registrationId = randomUUID();
     await transaction(pool, async (client) => {
@@ -1313,7 +1314,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const { id, entryId, registrationId } = request.params as { id: string; entryId: string; registrationId: string };
     const organizationId = uuid(id), entry = uuid(entryId), registration = uuid(registrationId), actor = await teamAccess(request, organizationId, entry);
     const input = playerIdentityEditSchema.parse(request.body);
-    if (input.birthDate > new Date().toISOString().slice(0,10)) fail(400, 'BIRTH_DATE_FUTURE', 'La fecha de nacimiento no puede ser futura.');
+    if (input.birthDate && input.birthDate > new Date().toISOString().slice(0,10)) fail(400, 'BIRTH_DATE_FUTURE', 'La fecha de nacimiento no puede ser futura.');
     return transaction(pool, async (client) => {
       const { rows: [registrationRow] } = await client.query('SELECT player_id FROM player_registrations WHERE organization_id=$1 AND entry_id=$2 AND id=$3 AND reverted_at IS NULL FOR UPDATE', [organizationId, entry, registration]);
       if (!registrationRow) fail(404, 'NOT_FOUND', 'No se encontró la inscripción.');
@@ -1669,7 +1670,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     await organizationAccess(request, organizationId);
     const { rows: [found] } = await pool.query('SELECT 1 FROM categories WHERE organization_id=$1 AND id=$2', [organizationId, category]);
     if (!found) fail(404, 'CATEGORY_NOT_FOUND', 'No se encontró la categoría.');
-    const { rows: [blueprint] } = await pool.query(`SELECT b.id,b.name,b.revision,b.opening_first_jornada,b.opening_second_jornada,to_char(b.opening_first_date,'YYYY-MM-DD') opening_first_date,to_char(b.opening_second_date,'YYYY-MM-DD') opening_second_date,to_char(b.extra_reserved_date,'YYYY-MM-DD') extra_reserved_date,
+    const { rows: [blueprint] } = await pool.query(`SELECT b.id,b.name,b.revision,b.group_size,b.opening_first_jornada,b.opening_second_jornada,to_char(b.opening_first_date,'YYYY-MM-DD') opening_first_date,to_char(b.opening_second_date,'YYYY-MM-DD') opening_second_date,to_char(b.extra_reserved_date,'YYYY-MM-DD') extra_reserved_date,
       (SELECT max(p.revision) FROM fixture_position_publications p WHERE p.organization_id=b.organization_id AND p.blueprint_id=b.id) published_revision
       FROM fixture_position_blueprints b WHERE b.organization_id=$1 AND b.category_id=$2`, [organizationId, category]);
     if (!blueprint) return { blueprint: null, slots: [], games: [] };
@@ -1725,8 +1726,9 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
         await audit(client,actor.user_id,organizationId,'fixture.title_extra_decided',category,'Sin partido extra por decisión del organizador',previous,{decision:'no_extra'});
         return {decision:'no_extra',matchId:null,reused:previous?.decision==='no_extra'};
       }
+      const {rows:[next]}=await client.query(`SELECT greatest(coalesce((SELECT max(ordinal) FROM matchdays WHERE organization_id=$1 AND edition_id=$2),0),coalesce((SELECT max(jornada_no) FROM fixture_position_games WHERE organization_id=$1 AND blueprint_id=$3),0))+1 ordinal`,[organizationId,plan.edition_id,plan.id]);
       const {rows:[day]}=await client.query(`INSERT INTO matchdays(id,organization_id,edition_id,ordinal,created_by)
-        VALUES($1,$2,$3,15,$4) ON CONFLICT(organization_id,edition_id,ordinal) DO UPDATE SET ordinal=excluded.ordinal RETURNING id`,[randomUUID(),organizationId,plan.edition_id,actor.user_id]);
+        VALUES($1,$2,$3,$4,$5) ON CONFLICT(organization_id,edition_id,ordinal) DO UPDATE SET ordinal=excluded.ordinal RETURNING id`,[randomUUID(),organizationId,plan.edition_id,next.ordinal,actor.user_id]);
       const matchId=randomUUID();
       await client.query(`INSERT INTO draft_matches(id,organization_id,category_id,home_entry_id,away_entry_id,match_date,created_by,matchday_id,competition_stage)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,'knockout')`,[matchId,organizationId,category,input.homeEntryId,input.awayEntryId,plan.extra_reserved_date,actor.user_id,day.id]);
@@ -1740,12 +1742,12 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const {id,categoryId}=request.params as {id:string;categoryId:string};
     const organizationId=uuid(id),category=uuid(categoryId),actor=await organizationAccess(request,organizationId,true);
     if(actor.platform_admin)fail(403,'ORGANIZER_REQUIRED','El orden deportivo corresponde al organizador.');
-    const input=z.object({table:z.enum(['A','B','general']),position:z.number().int().positive(),entryOrder:z.array(z.uuid()).min(2).max(10),reason:z.string().trim().max(300).optional()}).strict().parse(request.body);
+    const input=z.object({table:z.enum(['A','B','general']),position:z.number().int().positive(),entryOrder:z.array(z.uuid()).min(2).max(16),reason:z.string().trim().max(300).optional()}).strict().parse(request.body);
     return transaction(pool,async client=>{
       const {rows:[plan]}=await client.query('SELECT id FROM fixture_position_blueprints WHERE organization_id=$1 AND category_id=$2 FOR UPDATE',[organizationId,category]);
       if(!plan)return fail(404,'BLUEPRINT_NOT_FOUND','No se encontró el formato de esta Copa.');
       const raw=await positionCompetitionState(client,organizationId,category,false,false);
-      if(!raw||raw.competition.official.groups!==25)return fail(409,'GROUP_RESULTS_PENDING','Esperá las 25 actas de la primera etapa.');
+      if(!raw||raw.competition.official.groups!==raw.competition.official.expectedGroups)return fail(409,'GROUP_RESULTS_PENDING',`Esperá las ${raw?.competition.official.expectedGroups??'todas'} actas de la primera etapa.`);
       const table=input.table==='A'?raw.competition.groupA:input.table==='B'?raw.competition.groupB:raw.competition.general;
       const group=table.groups.find(item=>item.position===input.position&&item.unresolved);
       if(!group||group.teamIds.length!==input.entryOrder.length||new Set(input.entryOrder).size!==input.entryOrder.length||input.entryOrder.some(id=>!group.teamIds.includes(id)))return fail(409,'TIE_CHANGED','La tabla cambió. Actualizá antes de ordenar los equipos.');
@@ -1780,13 +1782,13 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
         FROM fixture_position_assignments a LEFT JOIN team_entries e ON e.organization_id=a.organization_id AND e.id=a.entry_id
         LEFT JOIN teams t ON t.organization_id=e.organization_id AND t.id=e.team_id
         WHERE a.organization_id=$1 AND a.blueprint_id=$2 ORDER BY a.slot_code`, [organizationId,plan.id]);
-      if (slots.length !== 10) fail(409, 'DRAW_INCOMPLETE', 'El plan necesita sus diez posiciones.');
+      if (slots.length !== plan.group_size*2) fail(409, 'DRAW_INCOMPLETE', `El plan necesita sus ${plan.group_size*2} posiciones.`);
       const { rows: teams } = await client.query(`SELECT e.id entry_id,t.id team_id,t.name team_name,t.color,(t.shield_id IS NOT NULL) has_shield
         FROM team_entries e JOIN teams t ON t.organization_id=e.organization_id AND t.id=e.team_id
         WHERE e.organization_id=$1 AND e.category_id=$2 AND e.status='active' ORDER BY t.name,t.id`,[organizationId,category]);
       const { rows: games } = await client.query(`SELECT code,stage,sporting_round,jornada_no,to_char(planned_date,'YYYY-MM-DD') planned_date,home_ref,away_ref FROM fixture_position_games WHERE organization_id=$1 AND blueprint_id=$2 ORDER BY ordinal`, [organizationId,plan.id]);
       const { rows: [competition] } = await client.query(`SELECT t.id tournament_id,t.name tournament_name,c.name category_name FROM categories c JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id JOIN tournaments t ON t.organization_id=ed.organization_id AND t.id=ed.tournament_id WHERE c.organization_id=$1 AND c.id=$2`, [organizationId,category]);
-      const snapshot = { blueprint: { name:plan.name, opening_first_jornada:plan.opening_first_jornada, opening_second_jornada:plan.opening_second_jornada, opening_first_date:plan.opening_first_date, opening_second_date:plan.opening_second_date, extra_reserved_date:plan.extra_reserved_date }, slots, teams, games };
+      const snapshot = { blueprint: { name:plan.name, group_size:plan.group_size, opening_first_jornada:plan.opening_first_jornada, opening_second_jornada:plan.opening_second_jornada, opening_first_date:plan.opening_first_date, opening_second_date:plan.opening_second_date, extra_reserved_date:plan.extra_reserved_date }, slots, teams, games };
       const { rows: [prior] } = await client.query('SELECT id FROM fixture_position_publications WHERE organization_id=$1 AND blueprint_id=$2 AND revision=$3', [organizationId,plan.id,plan.revision]);
       if (prior) return { id:prior.id, revision:plan.revision, reused:true, tournamentId:competition.tournament_id };
       const publicationId = randomUUID();
@@ -1807,9 +1809,9 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       const { rowCount: activeFixture } = await client.query("SELECT 1 FROM fixture_phases WHERE organization_id=$1 AND category_id=$2 AND status='generated'", [organizationId, category]);
       if (activeFixture) fail(409, 'FIXTURE_ALREADY_GENERATED', 'El fixture oficial ya existe; revisá sus partidos antes de crear el plan.');
       const blueprintId = randomUUID();
-      await client.query(`INSERT INTO fixture_position_blueprints(id,organization_id,category_id,name,opening_first_jornada,opening_second_jornada,opening_first_date,opening_second_date,extra_reserved_date,created_by)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [blueprintId,organizationId,category,input.name,input.opening.firstJornada,input.opening.secondJornada,input.opening.firstDate,input.opening.secondDate,input.extraReservedDate,actor.user_id]);
-      for (const group of ['A','B']) for (let position=1;position<=5;position++) await client.query('INSERT INTO fixture_position_assignments(organization_id,blueprint_id,slot_code) VALUES($1,$2,$3)', [organizationId,blueprintId,`${group}${position}`]);
+      await client.query(`INSERT INTO fixture_position_blueprints(id,organization_id,category_id,name,group_size,opening_first_jornada,opening_second_jornada,opening_first_date,opening_second_date,extra_reserved_date,created_by)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [blueprintId,organizationId,category,input.name,input.groupSize,input.opening.firstJornada,input.opening.secondJornada,input.opening.firstDate,input.opening.secondDate,input.extraReservedDate,actor.user_id]);
+      for (const group of ['A','B']) for (let position=1;position<=input.groupSize;position++) await client.query('INSERT INTO fixture_position_assignments(organization_id,blueprint_id,slot_code) VALUES($1,$2,$3)', [organizationId,blueprintId,`${group}${position}`]);
       for (const [index, game] of input.games.entries()) await client.query(`INSERT INTO fixture_position_games(id,organization_id,blueprint_id,code,ordinal,stage,sporting_round,jornada_no,planned_date,home_ref,away_ref)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [randomUUID(),organizationId,blueprintId,game.code,index+1,game.stage,game.sportingRound,game.jornadaNo,game.plannedDate,game.homeRef,game.awayRef]);
       await audit(client,actor.user_id,organizationId,'fixture.position_blueprint_created',blueprintId,'Plan privado por posiciones',null,{categoryId:category,games:input.games.length});
@@ -1819,7 +1821,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
   });
   app.patch('/api/v1/organizations/:id/categories/:categoryId/fixture/blueprint/slots/:code', async (request) => {
     const { id, categoryId, code } = request.params as { id: string; categoryId: string; code: string };
-    const organizationId = uuid(id), category = uuid(categoryId), slotCode = z.string().regex(/^[AB][1-5]$/).parse(code);
+    const organizationId = uuid(id), category = uuid(categoryId), slotCode = z.string().regex(/^[AB][1-8]$/).parse(code);
     const actor = await organizationAccess(request, organizationId, true);
     const { entryId } = z.object({ entryId: z.uuid().nullable() }).strict().parse(request.body);
     return transaction(pool, async (client) => {
@@ -1859,7 +1861,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       if (activeFixture) fail(409, 'FIXTURE_ALREADY_GENERATED', 'El fixture oficial ya existe; revisá sus partidos antes de cambiar la apertura.');
       if((await client.query('SELECT 1 FROM draft_matches m JOIN fixture_position_games g ON g.organization_id=m.organization_id AND g.id=m.position_game_id JOIN fixture_position_blueprints b ON b.organization_id=g.organization_id AND b.id=g.blueprint_id WHERE b.organization_id=$1 AND b.category_id=$2 LIMIT 1',[organizationId,category])).rowCount)fail(409,'POSITION_MATCHES_ACTIVE','Los partidos oficiales ya fueron preparados. Reprogramá cada partido desde Fixture.');
       const { rows: opening } = await client.query("SELECT code,jornada_no FROM fixture_position_games WHERE organization_id=$1 AND blueprint_id=$2 AND stage='groups' AND sporting_round='F1' FOR UPDATE", [organizationId,plan.id]);
-      if (opening.length !== 5 || firstJornadaCodes.some(code => !opening.some(game => game.code === code))) fail(409, 'OPENING_GAMES_CHANGED', 'La primera fecha ya no tiene los cinco cruces esperados.');
+      if (opening.length !== plan.group_size || firstJornadaCodes.some(code => !opening.some(game => game.code === code))) fail(409, 'OPENING_GAMES_CHANGED', 'La primera fecha ya no tiene los cruces esperados.');
       await client.query(`UPDATE fixture_position_games SET jornada_no=CASE WHEN cardinality($3::text[])=0 THEN NULL WHEN code=ANY($3::text[]) THEN $4::integer ELSE $5::integer END,
         planned_date=CASE WHEN cardinality($3::text[])=0 THEN NULL WHEN code=ANY($3::text[]) THEN $6::date ELSE $7::date END
         WHERE organization_id=$1 AND blueprint_id=$2 AND stage='groups' AND sporting_round='F1'`, [organizationId,plan.id,firstJornadaCodes,plan.opening_first_jornada,plan.opening_second_jornada,plan.opening_first_date,plan.opening_second_date]);
@@ -2782,7 +2784,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     allowedKinds.push('yellow','second_yellow','red','substitution');
     const customCards = periods.success ? periods.data.advanced?.discipline.customCards || [] : [];
     if (customCards.length) allowedKinds.push('custom_card');
-    return { matchId, status: record.status, revision: record.revision, submissionId:record.submission_id, approvalId:record.approval_id, warnings:roster?.warnings||[], allowedKinds,customCards,substitutionNeedsWindow:false, home: { entryId: record.home_entry_id, teamId: record.home_team_id, name: record.home_name, color: record.home_color, hasShield: record.home_has_shield, players: players('home',record.home_lineup_id) }, away: { entryId: record.away_entry_id, teamId: record.away_team_id, name: record.away_name, color: record.away_color, hasShield: record.away_has_shield, players: players('away',record.away_lineup_id) }, score,shootout,unattributedGoals,
+    return { matchId, status: record.status, revision: record.revision, submissionId:record.submission_id, approvalId:record.approval_id, warnings:roster?.warnings||[], allowedKinds,customCards,substitutionNeedsWindow:false, home: { entryId: record.home_entry_id, teamId: record.home_team_id, name: record.home_name, color: record.home_color, hasShield: record.home_has_shield, canAddPlayer: record.status==='capturing' && !record.home_lineup_id, players: players('home',record.home_lineup_id) }, away: { entryId: record.away_entry_id, teamId: record.away_team_id, name: record.away_name, color: record.away_color, hasShield: record.away_has_shield, canAddPlayer: record.status==='capturing' && !record.away_lineup_id, players: players('away',record.away_lineup_id) }, score,shootout,unattributedGoals,
       periods: periods.success ? periods.data.periods.map((period) => period.name) : [],
       events };
   }
@@ -2855,11 +2857,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     });
     return reply.code(201).send(await captureView(organizationId, match));
   });
-  app.post('/api/v1/organizations/:id/matches/:matchId/events', async (request, reply) => {
-    const { id, matchId } = request.params as { id: string; matchId: string };
-    const organizationId = uuid(id), match = uuid(matchId), actor = await captureAccess(request, organizationId,match);
-    const input = matchEventSchema.parse(request.body);
-    await transaction(pool, async (client) => {
+  async function appendCaptureEvent(client: PoolClient, organizationId: string, match: string, actor: { user_id: string }, input: z.infer<typeof matchEventSchema>) {
       const { rows: [record] } = await client.query(`SELECT r.id,r.status,r.revision,r.rule_version,r.home_lineup_id,r.away_lineup_id,r.roster_snapshot,m.home_entry_id,m.away_entry_id,m.category_id
         FROM match_records r JOIN draft_matches m ON m.organization_id=r.organization_id AND m.id=r.match_id
         WHERE r.organization_id=$1 AND r.match_id=$2 FOR UPDATE OF r`, [organizationId, match]);
@@ -2892,7 +2890,66 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       await client.query('UPDATE match_records SET revision=$3 WHERE organization_id=$1 AND match_id=$2', [organizationId, match, sequence]);
       await appendMatchOutbox(client,organizationId,match,'match.provisional',sequence,await actaPayload(client,organizationId,match,{revision:sequence}));
       await audit(client, actor.user_id, organizationId, 'match.event_added', eventId, 'Evento de partido', null, { matchId: match, sequence, kind: input.kind });
+  }
+  app.post('/api/v1/organizations/:id/matches/:matchId/record/players', async (request, reply) => {
+    const { id, matchId } = request.params as { id: string; matchId: string };
+    const organizationId = uuid(id), match = uuid(matchId);
+    const actor = await organizationAccess(request, organizationId, true);
+    const input = z.object({
+      registrationId: z.uuid(),
+      teamEntryId: z.uuid(),
+      givenNames: z.string().trim().min(2).max(120),
+      familyNames: z.string().trim().min(2).max(120),
+      event: matchEventSchema,
+    }).strict().parse(request.body);
+    if(input.event.clientEventId!==input.registrationId||input.event.registrationId!==input.registrationId||input.event.teamEntryId!==input.teamEntryId)
+      fail(400,'QUICK_EVENT_MISMATCH','El evento debe pertenecer al jugador y equipo de esta alta.');
+    let created = false;
+    await transaction(pool, async (client) => {
+      const { rows: [record] } = await client.query(`SELECT r.status,r.home_lineup_id,r.away_lineup_id,r.roster_snapshot,m.home_entry_id,m.away_entry_id,m.category_id
+        FROM match_records r JOIN draft_matches m ON m.organization_id=r.organization_id AND m.id=r.match_id
+        WHERE r.organization_id=$1 AND r.match_id=$2 FOR UPDATE OF r`, [organizationId, match]);
+      if (!record) fail(404, 'RECORD_NOT_FOUND', 'Abrí primero la carga del partido.');
+      const side: 'home' | 'away' | null = input.teamEntryId === record.home_entry_id ? 'home' : input.teamEntryId === record.away_entry_id ? 'away' : null;
+      const rosterSide: 'home' | 'away' = side ?? fail(409, 'TEAM_NOT_IN_MATCH', 'Elegí uno de los dos equipos del partido.');
+      const { rows: [existing] } = await client.query(`SELECT pr.entry_id,p.given_names,p.family_names FROM player_registrations pr
+        JOIN players p ON p.organization_id=pr.organization_id AND p.id=pr.player_id
+        WHERE pr.organization_id=$1 AND pr.id=$2`, [organizationId, input.registrationId]);
+      if (existing) {
+        if (existing.entry_id !== input.teamEntryId || existing.given_names !== input.givenNames || existing.family_names !== input.familyNames)
+          fail(409, 'PLAYER_ID_REUSED', 'Esta alta ya se usó para otro jugador.');
+      } else {
+        if (record.status !== 'capturing') fail(409, 'RECORD_LOCKED', 'El acta ya no admite jugadores.');
+        if (rosterSide === 'home' ? record.home_lineup_id : record.away_lineup_id)
+          fail(409, 'LINEUP_FROZEN', 'Este equipo tiene planilla aprobada. Revisá su lista antes de añadir jugadores.');
+        const roster = record.roster_snapshot as {home:Array<{registrationId:string;shirtNumber:number|null}>;away:Array<{registrationId:string;shirtNumber:number|null}>;warnings?:string[]};
+        if (roster[rosterSide].length >= 200) fail(409, 'ROSTER_FULL', 'El partido alcanzó el límite de jugadores cargados.');
+        const { rows: [rule] } = await client.query('SELECT rules FROM rule_versions WHERE organization_id=$1 AND category_id=$2 AND version=(SELECT rule_version FROM match_records WHERE organization_id=$1 AND match_id=$3)', [organizationId, record.category_id, match]);
+        const maximum = rule?.rules?.maxRegisteredPlayers;
+        if (typeof maximum === 'number') {
+          const { rows: [count] } = await client.query("SELECT count(*)::int total FROM player_registrations WHERE organization_id=$1 AND entry_id=$2 AND reverted_at IS NULL AND status<>'rejected'", [organizationId, input.teamEntryId]);
+          if (count.total >= maximum) fail(409, 'ROSTER_FULL', `La nómina de esta categoría admite hasta ${maximum} jugadores.`);
+        }
+        const playerId = randomUUID();
+        await client.query(`INSERT INTO players(id,organization_id,given_names,family_names,birth_date,created_by)
+          VALUES($1,$2,$3,$4,NULL,$5)`, [playerId, organizationId, input.givenNames, input.familyNames, actor.user_id]);
+        await client.query(`INSERT INTO player_registrations(id,organization_id,entry_id,player_id,origin_kind,created_by)
+          VALUES($1,$2,$3,$4,'unknown',$5)`, [input.registrationId, organizationId, input.teamEntryId, playerId, actor.user_id]);
+        roster[rosterSide].push({ registrationId: input.registrationId, shirtNumber: null });
+        roster.warnings = [...new Set([...(roster.warnings || []), 'Hay jugadores cargados solo con nombre y apellido. Completá sus datos y revisá la buena fe.'])];
+        await client.query('UPDATE match_records SET roster_snapshot=$3 WHERE organization_id=$1 AND match_id=$2', [organizationId, match, JSON.stringify(roster)]);
+        await audit(client, actor.user_id, organizationId, 'match.quick_player_created', input.registrationId, 'Jugador agregado durante la carga del partido', null, { matchId: match, entryId: input.teamEntryId, playerId });
+        created = true;
+      }
+      await appendCaptureEvent(client,organizationId,match,actor,input.event);
     });
+    return reply.code(created ? 201 : 200).send({ registrationId: input.registrationId, view: await captureView(organizationId, match) });
+  });
+  app.post('/api/v1/organizations/:id/matches/:matchId/events', async (request, reply) => {
+    const { id, matchId } = request.params as { id: string; matchId: string };
+    const organizationId = uuid(id), match = uuid(matchId), actor = await captureAccess(request, organizationId,match);
+    const input = matchEventSchema.parse(request.body);
+    await transaction(pool, client => appendCaptureEvent(client, organizationId, match, actor, input));
     return reply.code(201).send(await captureView(organizationId, match));
   });
   app.post('/api/v1/organizations/:id/matches/:matchId/events/:eventId/void', async (request, reply) => {

@@ -4,6 +4,8 @@
 
 **Estado al 29/10/2026:** T05-01 a T05-07 implementados y verificados en código local: asignaciones, captura posterior, eventos, acta versionada, conformidad, resultado provisional/oficial, rectificación, SSE y cola IndexedDB. [Cierre técnico, pruebas y límites](../evidencias/t05-cierre-codigo-local.md). La aceptación en teléfonos físicos y por usuarios reales sigue pendiente; T06 calcula las tablas y estadísticas públicas desde las actas aprobadas.
 
+**Incremento del 16/11/2026:** el organizador puede crear un jugador con solo nombre y apellido desde la selección de autor de un evento y registrar la acción inmediatamente. El alta queda como borrador privado del equipo y se incorpora al plantel congelado de ese partido solo cuando no había planilla aprobada para ese lado. La fecha de nacimiento no se exige. El nombre público del goleador conserva su autorización individual; buena fe y elegibilidad no se aprueban automáticamente. Pendiente revisión física en teléfono.
+
 ## Dependencias
 
 T03: planillas/elegibilidad; T04: partido y jornada publicada. Sin esas fuentes la pantalla sería solo un prototipo.
