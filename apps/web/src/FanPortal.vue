@@ -6,6 +6,7 @@ import SportTabs from './SportTabs.vue';
 import SportEventMark from './SportEventMark.vue';
 import TeamCrest from './TeamCrest.vue';
 import BracketView from './BracketView.vue';
+import AnnouncedFixtureMatches from './AnnouncedFixtureMatches.vue';
 
 type FanEvent={id:string;kind:string;side:'home'|'away'|'unknown';period:string|null;minute:number|null;cardLabel:string|null;cardColor:string|null;name:string;relatedName:string|null};
 type FanMatch={id:string;category_id:string;category_name:string;home_name:string;away_name:string;home_team_id:string;away_team_id:string;venue_name:string;court_label:string;match_date:string;match_time:string;tie_leg?:string|null;result:{status:'provisional'|'official';score:{home:number;away:number};shootout:{home:number;away:number};events:FanEvent[]}|null};
@@ -33,6 +34,7 @@ const menuItems=computed(()=>props.catalog.filter(item=>(!props.organization||it
 const hasEmblem=(id:string)=>props.tournaments.some(item=>item.id===id&&item.has_emblem);
 const emblemUrl=(organizationId:string,tournamentId:string)=>`/api/v1/public/organizations/${organizationId}/tournaments/${tournamentId}/emblem`;
 const tabs=computed(()=>[
+  ...(currentTournament.value?.presentation_only&&announced.value?[{key:'matches',label:'Partidos',icon:'ball'}]:[]),
   ...(currentTournament.value?.presentation_only&&announced.value?[{key:'announced',label:'Fixture',icon:'calendar'}]:[]),
   ...(currentTournament.value?.presentation_only?[]:[
   {key:'matches',label:'Partidos',icon:'ball'},
@@ -54,9 +56,9 @@ const activeStatFlyer=computed(()=>tab.value==='standings'&&leagueBracket.value&
 const roster=computed(()=>stats.value?.rosters?.find(item=>item.entryId===selectedTeam.value?.entry_id)?.players||[]);
 const periods=[{code:'PT',label:'Primer tiempo'},{code:'ST',label:'Segundo tiempo'},{code:'TE',label:'Tiempo extra'},{code:'P4',label:'Cuarto tiempo'},{code:'P5',label:'Quinto tiempo'},{code:'P6',label:'Sexto tiempo'},{code:'',label:'Sin tiempo'}];
 const eventGroups=computed(()=>periods.map(period=>{const events=(selectedMatch.value?.result?.events||[]).filter(event=>(event.period||'')===period.code);return {...period,label:period.code===''&&events.every(event=>event.kind.startsWith('shootout_'))?'Penales':period.label,events};}).filter(group=>group.events.length));
-watch(()=>props.selectedTournamentId,id=>{tab.value=props.tournaments.find(item=>item.id===id)?.presentation_only?(props.announcedFixtures[props.tournaments.find(item=>item.id===id)?.category_id||'']?'announced':'teams'):'matches';matchesView.value='days';standingsView.value='league';categoryId.value='';announcedRound.value=1;selectedMatch.value=null;selectedTeam.value=null;selectorOpen.value=!id;tournamentSearch.value='';});
-watch([currentTournament,announced],([item,plan])=>{if(item?.presentation_only&&(tab.value==='teams'||tab.value==='announced'))tab.value=plan?'announced':'teams';},{immediate:true});
-watch(category,()=>{selectedMatch.value=null;selectedTeam.value=null;standingsView.value='league';announcedRound.value=1;if(!tabs.value.some(item=>item.key===tab.value))tab.value=currentTournament.value?.presentation_only?(announced.value?'announced':'teams'):'matches';});
+watch(()=>props.selectedTournamentId,id=>{tab.value=props.tournaments.find(item=>item.id===id)?.presentation_only?(props.announcedFixtures[props.tournaments.find(item=>item.id===id)?.category_id||'']?'matches':'teams'):'matches';matchesView.value='days';standingsView.value='league';categoryId.value='';announcedRound.value=1;selectedMatch.value=null;selectedTeam.value=null;selectorOpen.value=!id;tournamentSearch.value='';});
+watch([currentTournament,announced],([item,plan])=>{if(item?.presentation_only&&(tab.value==='teams'||tab.value==='announced'||tab.value==='matches'))tab.value=plan?'matches':'teams';},{immediate:true});
+watch(category,()=>{selectedMatch.value=null;selectedTeam.value=null;standingsView.value='league';announcedRound.value=1;if(!tabs.value.some(item=>item.key===tab.value))tab.value=currentTournament.value?.presentation_only?(announced.value?'matches':'teams'):'matches';});
 let listScrollY=0;
 watch([selectedMatch,selectedTeam],([match,team],[previousMatch,previousTeam])=>{if((match||team)&&!(previousMatch||previousTeam)){listScrollY=window.scrollY;void nextTick(()=>window.scrollTo(0,0));}else if(!match&&!team&&(previousMatch||previousTeam)){void nextTick(()=>window.scrollTo(0,listScrollY));}});
 function chooseTournament(item:CatalogItem){selectorOpen.value=false;tournamentSearch.value='';emit('navigate',`publico/${item.organization_id}/${item.id}`);}
@@ -94,10 +96,12 @@ function flyerUrl(item:FanFlyer){return `/api/v1/public/organizations/${props.or
         <section v-if="tab==='announced'&&announced" id="fan-sections-announced-panel" role="tabpanel" aria-labelledby="fan-sections-announced-tab" class="fan-content">
           <p class="fan-plan-note">Una rueda · todos contra todos · 8 equipos clasifican a cuartos. Fechas y horarios por confirmar.</p>
           <div class="fan-plan-rounds" role="group" aria-label="Jornadas del fixture"><button v-for="round in announced.rounds" :key="round.ordinal" type="button" :aria-pressed="announcedRound===round.ordinal" @click="announcedRound=round.ordinal">J{{ round.ordinal }}</button></div>
-          <section v-for="round in announced.rounds.filter(item=>item.ordinal===announcedRound)" :key="round.ordinal" class="fan-day"><h2>Jornada {{ round.ordinal }} · sin fecha</h2><div v-for="(match,index) in round.matches" :key="index" class="fan-plan-match"><span class="fan-plan-side"><TeamCrest size="sm" :name="announcedTeams.get(match.homeEntryId)?.name||'Equipo'" :team-id="announcedTeams.get(match.homeEntryId)?.team_id" :organization-id="organization?.id" :color="announcedTeams.get(match.homeEntryId)?.color" :has-shield="announcedTeams.get(match.homeEntryId)?.has_shield" /><strong>{{ announcedTeams.get(match.homeEntryId)?.name }}</strong></span><span class="fan-plan-versus">vs</span><span class="fan-plan-side away"><TeamCrest size="sm" :name="announcedTeams.get(match.awayEntryId)?.name||'Equipo'" :team-id="announcedTeams.get(match.awayEntryId)?.team_id" :organization-id="organization?.id" :color="announcedTeams.get(match.awayEntryId)?.color" :has-shield="announcedTeams.get(match.awayEntryId)?.has_shield" /><strong>{{ announcedTeams.get(match.awayEntryId)?.name }}</strong></span></div></section>
+          <AnnouncedFixtureMatches :rounds="announced.rounds.filter(item=>item.ordinal===announcedRound)" :teams="announced.teams" :organization-id="organization?.id" />
           <p class="fan-plan-note fan-plan-after">Cuartos: cruces por sorteo presencial después de la clasificación. Semifinales: forma de cruce por confirmar. Final: entre los ganadores de semifinales.</p>
         </section>
         <section v-if="tab==='matches'" id="fan-sections-matches-panel" role="tabpanel" aria-labelledby="fan-sections-matches-tab" class="fan-content">
+          <template v-if="currentTournament?.presentation_only&&announced"><p class="fan-plan-note">Partidos anunciados · horarios por confirmar.</p><AnnouncedFixtureMatches :rounds="announced.rounds" :teams="announced.teams" :organization-id="organization?.id" /></template>
+          <template v-else>
           <div v-if="bracket" class="fan-subtabs" role="group" aria-label="Vista de partidos"><button type="button" :aria-pressed="matchesView==='days'" @click="matchesView='days'">Fechas</button><button type="button" :aria-pressed="matchesView==='bracket'" @click="matchesView='bracket'">Cuadro</button></div>
           <template v-if="matchesView==='days'">
             <p v-if="!days.length" class="fan-empty">Aún no hay partidos publicados.</p>
@@ -112,6 +116,7 @@ function flyerUrl(item:FanFlyer){return `/api/v1/public/organizations/${props.or
             </section>
           </template>
           <template v-else><div v-if="flyer('bracket',bracket?.phase_id||'')" class="fan-context-action"><a class="fan-flyer-link" :href="flyerUrl(flyer('bracket',bracket?.phase_id||'')!)" target="_blank" rel="noopener"><Icon name="download" /> Flyer</a></div><BracketView :rounds="bracketRounds" :teams="categoryTeams" :organization-id="organization?.id" @open-match="openBracketMatch" /></template>
+          </template>
         </section>
         <div v-if="activeStatFlyer" class="fan-context-action fan-context-outside"><a class="fan-flyer-link" :href="flyerUrl(activeStatFlyer)" target="_blank" rel="noopener"><Icon name="download" /> Flyer</a></div>
         <section v-if="tab==='standings'" id="fan-sections-standings-panel" role="tabpanel" aria-labelledby="fan-sections-standings-tab" class="fan-content">
