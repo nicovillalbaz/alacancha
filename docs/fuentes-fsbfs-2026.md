@@ -2,6 +2,8 @@
 
 El propietario pidió crear la Federación San Bernardinense de Fútbol de Salón y la Copa Sanber, con categoría Primera y diez equipos. Confirmó `usuariofsbfs` como cuenta organizadora y la presentación pública de la Copa y los equipos, aun sin programación. El formato, grupos, reglamento deportivo, precios por tarjeta, fechas y fixture no están confirmados y permanecen en borrador. La publicación de presentación no habilita resultados.
 
+**Actualización del 16/11/2026:** el propietario entregó el fixture de nueve jornadas y 45 cruces para una rueda única. Confirmó ocho clasificados, sorteo presencial en cuartos y semifinales, final entre ganadores, puntuación 2/1/0 y dos tiempos de 20 minutos. La tarjeta Azul figura con importe y suspensión automática iniciales en cero. Fechas, horarios, sedes y otros importes permanecen sin confirmar. El estado inicial descrito arriba es histórico.
+
 Los originales están en `img/FSBFS`. La primera carga los usó sin modificar:
 
 | Entidad | Archivo | Nombre visible |

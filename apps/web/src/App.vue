@@ -38,7 +38,7 @@ interface PublicFixtureDay { id: string; ordinal: number; tournament_id:string; 
 interface PublicCatalogItem {id:string;name:string;public_slug:string|null;organization_id:string;organization_name:string;organization_slug:string}
 interface PublicOrganizationItem {id:string;name:string;public_slug:string;has_logo:boolean;tournament_count:number;single_tournament_id:string|null;single_tournament_slug:string|null}
 interface PublicOrganization {id:string;name:string;accent:string;logo_id:string|null;public_slug:string}
-type PublicTournamentSummary=Omit<TournamentSummary,'rules'> & {rules:TournamentSummary['rules']|null;presentation_only:boolean};
+type PublicTournamentSummary=Omit<TournamentSummary,'rules'> & {rules:TournamentSummary['rules']|null;presentation_only:boolean;has_announced_fixture:boolean};
 interface MatchAssignment {id:string;match_id:string;duty:'capture'|'review';membership_id:string;name:string;member_status:string;category_id:string;home_name:string;away_name:string;day_ordinal:number|null;day_status:'draft'|'published'|null;acta_status:'capturing'|'submitted'|'official'|null}
 interface OperatorSummary {id:string;name:string;username:string;status:string}
 interface PublicBracket { phase_id:string; category_id:string; category_name: string; edition_name: string; tournament_id:string; tournament_name: string; repechage?: boolean; slots: Array<{ stage: number; slot: number; home: string; away: string; twoLegs?: boolean;homeScore?:number|null;awayScore?:number|null }> }
@@ -1301,9 +1301,10 @@ async function loadView(force = false) {
       if(epoch!==routeEpoch)return;
       publicOrganization.value = result.organization; publicTournaments.value = tournamentId?result.tournaments.filter(item=>item.id===tournamentId):result.tournaments; publicTeams.value = result.teams.filter(team=>publicTournaments.value.some(item=>item.category_id===team.category_id)); publicSponsors.value = result.sponsors.filter(sponsor=>!tournamentId||sponsor.tournament_id===tournamentId);
       publicFixture.value = tournamentId?published.filter(day=>day.tournament_id===tournamentId):published; publicBrackets.value = tournamentId?brackets.filter(item=>item.tournament_id===tournamentId):brackets;publicFlyers.value=tournamentId?sharedFlyers.filter(item=>item.tournamentId===tournamentId):sharedFlyers;
-      const announced=await Promise.allSettled(result.tournaments.filter(item=>item.presentation_only&&(!tournamentId||item.id===tournamentId)).map(item=>api<AnnouncedFixture>(`/public/organizations/${organizationId}/categories/${item.category_id}/fixture/announced`)));
+      const announcedCandidates=result.tournaments.filter(item=>item.has_announced_fixture&&(!tournamentId||item.id===tournamentId));
+      const announced=await Promise.allSettled(announcedCandidates.map(item=>api<AnnouncedFixture>(`/public/organizations/${organizationId}/categories/${item.category_id}/fixture/announced`)));
       if(epoch!==routeEpoch)return;
-      publicAnnouncedFixtures.value=Object.fromEntries(result.tournaments.filter(item=>item.presentation_only&&(!tournamentId||item.id===tournamentId)).flatMap((item,index)=>announced[index].status==='fulfilled'?[[item.category_id,announced[index].value]]:[]));
+      publicAnnouncedFixtures.value=Object.fromEntries(announcedCandidates.flatMap((item,index)=>announced[index].status==='fulfilled'?[[item.category_id,announced[index].value]]:[]));
       const publicName=tournamentId?(publicTournament.value?.name||draws.find(item=>item.tournament_id===tournamentId)?.tournament_name):(result.organization as unknown as {name:string}|null)?.name||'Torneos';
       const title=tournamentId?`${publicName} · ${result.organization.name}`:`${publicName} · Torneos`;
       const description=tournamentId&&previewOnly?(Object.keys(publicAnnouncedFixtures.value).length?`Fixture anunciado de ${publicName}: nueve jornadas sin fechas confirmadas, diez equipos y ocho clasificados.`:`Equipos de ${publicName}. Fixture y formato pendientes.`):tournamentId?`Partidos, fixture, clasificación y goleadores de ${publicName}.`:`Torneos, partidos, resultados y estadísticas de ${publicName}.`;

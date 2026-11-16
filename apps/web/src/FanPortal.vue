@@ -28,6 +28,7 @@ const categories=computed(()=>props.tournaments.filter(item=>item.id===props.sel
 const category=computed(()=>categories.value.find(item=>item.category_id===categoryId.value)||categories.value[0]||null);
 const currentCategoryId=computed(()=>category.value?.category_id||'');
 const announced=computed(()=>props.announcedFixtures[currentCategoryId.value]);
+const announcedMode=computed(()=>!!announced.value&&!props.fixture.some(day=>day.matches.some(match=>match.category_id===currentCategoryId.value)));
 const announcedStandings=computed(()=>[...(announced.value?.teams||[])].sort((a,b)=>a.name.localeCompare(b.name,'es')));
 const announcedHome=computed(()=>announced.value?.teams.find(team=>team.entry_id===selectedAnnouncedMatch.value?.homeEntryId));
 const announcedAway=computed(()=>announced.value?.teams.find(team=>team.entry_id===selectedAnnouncedMatch.value?.awayEntryId));
@@ -41,10 +42,10 @@ const menuItems=computed(()=>props.catalog.filter(item=>(!props.organization||it
 const hasEmblem=(id:string)=>props.tournaments.some(item=>item.id===id&&item.has_emblem);
 const emblemUrl=(organizationId:string,tournamentId:string)=>`/api/v1/public/organizations/${organizationId}/tournaments/${tournamentId}/emblem`;
 const tabs=computed(()=>[
-  ...(currentTournament.value?.presentation_only&&announced.value?[{key:'matches',label:'Partidos',icon:'ball'}]:[]),
-  ...(currentTournament.value?.presentation_only&&announced.value?[{key:'announced',label:'Fixture',icon:'calendar'}]:[]),
-  ...(currentTournament.value?.presentation_only&&announced.value?[{key:'standings',label:'Clasificación',icon:'chart'},{key:'scorers',label:'Goleadores',icon:'trophy'},{key:'defense',label:'Valla menos vencida',icon:'shield'}]:[]),
-  ...(currentTournament.value?.presentation_only?[]:[
+  ...(announcedMode.value?[{key:'matches',label:'Partidos',icon:'ball'}]:[]),
+  ...(announcedMode.value?[{key:'announced',label:'Fixture',icon:'calendar'}]:[]),
+  ...(announcedMode.value?[{key:'standings',label:'Clasificación',icon:'chart'},{key:'scorers',label:'Goleadores',icon:'trophy'},{key:'defense',label:'Valla menos vencida',icon:'shield'}]:[]),
+  ...(currentTournament.value?.presentation_only||announcedMode.value?[]:[
   {key:'matches',label:'Partidos',icon:'ball'},
   ...(category.value?.rules?.initialPhase?.mode==='knockout'?[]:[{key:'standings',label:'Clasificación',icon:'chart'}]),
   {key:'scorers',label:'Goleadores',icon:'trophy'},
@@ -65,8 +66,8 @@ const roster=computed(()=>stats.value?.rosters?.find(item=>item.entryId===select
 const periods=[{code:'PT',label:'Primer tiempo'},{code:'ST',label:'Segundo tiempo'},{code:'TE',label:'Tiempo extra'},{code:'P4',label:'Cuarto tiempo'},{code:'P5',label:'Quinto tiempo'},{code:'P6',label:'Sexto tiempo'},{code:'',label:'Sin tiempo'}];
 const eventGroups=computed(()=>periods.map(period=>{const events=(selectedMatch.value?.result?.events||[]).filter(event=>(event.period||'')===period.code);return {...period,label:period.code===''&&events.every(event=>event.kind.startsWith('shootout_'))?'Penales':period.label,events};}).filter(group=>group.events.length));
 watch(()=>props.selectedTournamentId,id=>{tab.value=props.tournaments.find(item=>item.id===id)?.presentation_only?(props.announcedFixtures[props.tournaments.find(item=>item.id===id)?.category_id||'']?'matches':'teams'):'matches';matchesView.value='days';standingsView.value='league';categoryId.value='';announcedRound.value=1;announcedView.value='rounds';selectedMatch.value=null;selectedAnnouncedMatch.value=null;selectedTeam.value=null;selectorOpen.value=!id;tournamentSearch.value='';});
-watch([currentTournament,announced],([item,plan])=>{if(item?.presentation_only&&(tab.value==='teams'||tab.value==='announced'||tab.value==='matches'))tab.value=plan?'matches':'teams';},{immediate:true});
-watch(category,()=>{selectedMatch.value=null;selectedAnnouncedMatch.value=null;selectedTeam.value=null;standingsView.value='league';announcedRound.value=1;announcedView.value='rounds';if(!tabs.value.some(item=>item.key===tab.value))tab.value=currentTournament.value?.presentation_only?(announced.value?'matches':'teams'):'matches';});
+watch([currentTournament,announcedMode],([item,hasPlan])=>{if(!tabs.value.some(entry=>entry.key===tab.value))tab.value=hasPlan?'matches':item?.presentation_only?'teams':'matches';},{immediate:true});
+watch(category,()=>{selectedMatch.value=null;selectedAnnouncedMatch.value=null;selectedTeam.value=null;standingsView.value='league';announcedRound.value=1;announcedView.value='rounds';if(!tabs.value.some(item=>item.key===tab.value))tab.value=currentTournament.value?.presentation_only?(announcedMode.value?'matches':'teams'):'matches';});
 let listScrollY=0;
 watch([selectedMatch,selectedAnnouncedMatch,selectedTeam],([match,announcedMatch,team],[previousMatch,previousAnnouncedMatch,previousTeam])=>{if((match||announcedMatch||team)&&!(previousMatch||previousAnnouncedMatch||previousTeam)){listScrollY=window.scrollY;void nextTick(()=>window.scrollTo(0,0));}else if(!match&&!announcedMatch&&!team&&(previousMatch||previousAnnouncedMatch||previousTeam)){void nextTick(()=>window.scrollTo(0,listScrollY));}});
 function chooseTournament(item:CatalogItem){selectorOpen.value=false;tournamentSearch.value='';emit('navigate',`publico/${item.organization_id}/${item.id}`);}
@@ -111,10 +112,10 @@ function flyerUrl(item:FanFlyer){return `/api/v1/public/organizations/${props.or
           <div class="fan-plan-rounds" role="group" aria-label="Jornadas del fixture"><button v-for="round in announced.rounds" :key="round.ordinal" type="button" :aria-pressed="announcedRound===round.ordinal" @click="announcedRound=round.ordinal">J{{ round.ordinal }}</button></div>
           <AnnouncedFixtureMatches :rounds="announced.rounds.filter(item=>item.ordinal===announcedRound)" :teams="announced.teams" :organization-id="organization?.id" @open-match="(ordinal,match)=>selectedAnnouncedMatch={ordinal,...match}" />
           </template>
-          <template v-else><p class="fan-plan-note">Cuartos: sorteo presencial · Semifinales: cruces por confirmar</p><BracketView :rounds="announcedFinals" planned /></template>
+          <template v-else><p class="fan-plan-note">Cuartos: sorteo presencial · Semifinales: {{ announced.semifinalPairing==='in_person_draw'?'sorteo presencial':'cruces por confirmar' }}</p><BracketView :rounds="announcedFinals" planned /></template>
         </section>
         <section v-if="tab==='matches'" id="fan-sections-matches-panel" role="tabpanel" aria-labelledby="fan-sections-matches-tab" class="fan-content">
-          <template v-if="currentTournament?.presentation_only&&announced"><p class="fan-plan-note">Partidos anunciados · horarios por confirmar.</p><AnnouncedFixtureMatches :rounds="announced.rounds" :teams="announced.teams" :organization-id="organization?.id" @open-match="(ordinal,match)=>selectedAnnouncedMatch={ordinal,...match}" /></template>
+          <template v-if="announcedMode&&announced"><p class="fan-plan-note">Partidos anunciados · horarios por confirmar.</p><AnnouncedFixtureMatches :rounds="announced.rounds" :teams="announced.teams" :organization-id="organization?.id" @open-match="(ordinal,match)=>selectedAnnouncedMatch={ordinal,...match}" /></template>
           <template v-else>
           <div v-if="bracket" class="fan-subtabs" role="group" aria-label="Vista de partidos"><button type="button" :aria-pressed="matchesView==='days'" @click="matchesView='days'">Fechas</button><button type="button" :aria-pressed="matchesView==='bracket'" @click="matchesView='bracket'">Cuadro</button></div>
           <template v-if="matchesView==='days'">
@@ -134,7 +135,7 @@ function flyerUrl(item:FanFlyer){return `/api/v1/public/organizations/${props.or
         </section>
         <div v-if="activeStatFlyer" class="fan-context-action fan-context-outside"><a class="fan-flyer-link" :href="flyerUrl(activeStatFlyer)" target="_blank" rel="noopener"><Icon name="download" /> Flyer</a></div>
         <section v-if="tab==='standings'" id="fan-sections-standings-panel" role="tabpanel" aria-labelledby="fan-sections-standings-tab" class="fan-content">
-          <div v-if="currentTournament?.presentation_only&&announced" class="fan-table"><div class="fan-table-head"><span>Equipo</span><span>PJ</span><span>DG</span><span>Pts</span></div><div v-for="teamItem in announcedStandings" :key="teamItem.entry_id" class="fan-table-row"><span class="fan-rank">—</span><TeamCrest size="sm" :name="teamItem.name" :team-id="teamItem.team_id" :organization-id="organization?.id" :color="teamItem.color" :has-shield="teamItem.has_shield" /><strong :title="teamItem.name">{{ teamItem.name }}</strong><span>0</span><span>0</span><b>0</b></div></div>
+          <div v-if="announcedMode&&announced" class="fan-table"><div class="fan-table-head"><span>Equipo</span><span>PJ</span><span>DG</span><span>Pts</span></div><div v-for="teamItem in announcedStandings" :key="teamItem.entry_id" class="fan-table-row"><span class="fan-rank">—</span><TeamCrest size="sm" :name="teamItem.name" :team-id="teamItem.team_id" :organization-id="organization?.id" :color="teamItem.color" :has-shield="teamItem.has_shield" /><strong :title="teamItem.name">{{ teamItem.name }}</strong><span>0</span><span>0</span><b>0</b></div></div>
           <template v-else>
           <div v-if="leagueBracket" class="fan-subtabs" role="group" aria-label="Fases de clasificación"><button type="button" :aria-pressed="standingsView==='league'" @click="standingsView='league'">Liguilla</button><button type="button" :aria-pressed="standingsView==='bracket'" @click="standingsView='bracket'">Eliminación</button></div>
           <template v-if="!leagueBracket||standingsView==='league'">
