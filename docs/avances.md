@@ -1,5 +1,7 @@
 # Avances y evidencias
 
+**16/11/2026 — T04, Sanber visible al organizador:** Fixture y Partidos leen el mismo calendario anunciado que el portal público. Se muestran nueve jornadas y 45 cruces sin fecha; el panel distingue carga/error/ausencia y no ofrece un segundo sorteo para esa categoría. Sin migración ni partidos oficiales inventados. **101/101 pruebas, tipos y build web correctos.** Aceptación en la cuenta organizadora y teléfono real pendiente. [Evidencia y límites](evidencias/t04-sanber-admin-calendario-2026-11-16.md).
+
 **12/11/2026 — T09, dominio público:** `alacancha.top` apunta al VPS y responde por HTTPS; `alacancha.webs.vc` redirige con 308 al dominio nuevo conservando ruta y consulta. Caddy, API y worker activos; `/ready`, enlace directo de Copa, manifest, robots y sitemap verificados. `WEB_ORIGIN` y la guarda del importador FCFS usan el dominio nuevo. No hubo migración ni cambio de datos deportivos. [Evidencia](evidencias/t09-dominio-alacancha-top-2026-11-12.md).
 
 **11/11/2026 — T01, cambio de contraseña en código local:** cualquier cuenta iniciada puede cambiar la propia con un campo; el superadmin puede cambiar la ajena desde la ficha. Sesiones anteriores revocadas y auditoría sin secretos. La vista pública no ofrece la acción. Se corrigió la barra móvil a 320 px. **94/94 pruebas, tipos y build correctos**; revisión en teléfono físico y despliegue pendientes. [Evidencia](evidencias/t01-cambio-contrasena-2026-11-11.md).

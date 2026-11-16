@@ -4,6 +4,7 @@ import { knockoutRoundName, previewCompetitionBracket, type FixtureOverview, typ
 import Icon from './Icon.vue';
 import BracketView from './BracketView.vue';
 import SportTabs from './SportTabs.vue';
+import AnnouncedFixtureMatches from './AnnouncedFixtureMatches.vue';
 
 interface CaseRow { id: string; entry_id: string; team_name: string; summary: string; fine_amount_guaranies: number | null }
 interface StatsRow {
@@ -13,8 +14,30 @@ interface StatsRow {
   defense: Array<{ entryId: string; played: number; goalsAgainst: number }>;
   tables: Array<{ groupNo: number | null; groups: Array<{ position: number; teamIds: string[]; unresolved: boolean }>; totals: Array<{ teamId: string; points: number; played: number; goalsFor: number; goalsAgainst: number }> }>;
 }
+type AnnouncedFixture={revision:number;rounds:Array<{ordinal:number;matches:Array<{homeEntryId:string;awayEntryId:string}>}>;teams:Array<{entry_id:string;team_id:string;name:string;color:string;has_shield:boolean}>};
 const props = defineProps<{ tournament: TournamentSummary; categories: TournamentSummary[]; entries: TeamSummary[]; days: MatchdaySummary[]; officialMatchIds: string[]; scores:Record<string,{home:number;away:number}>; cases: Record<string, CaseRow[]>; stats: Record<string, StatsRow>; brackets: Record<string, FixtureOverview>; positionBlueprint?:PositionBlueprintView & {categoryId?:string}; positionCompetition?:PositionCompetitionView|null; section: string; dayId?: string; canManage: boolean; organizationId: string; csrfToken:string }>();
 const emit=defineEmits<{refresh:[]}>();
+const announcedFixtures=ref<Record<string,AnnouncedFixture>>({});
+const announcedState=ref<'loading'|'ready'|'error'>('loading');
+const announcedRound=ref(1);
+watch(()=>[props.organizationId,props.tournament.id,props.categories.map(item=>item.category_id).join(','),props.section].join(':'),async(_key,_old,onCleanup)=>{
+  announcedFixtures.value={};announcedRound.value=1;
+  if(!['fixture','partidos'].includes(props.section)){announcedState.value='ready';return;}
+  announcedState.value='loading';
+  const controller=new AbortController();onCleanup(()=>controller.abort());
+  try{
+    const plans=await Promise.all(props.categories.map(async category=>{
+      const response=await fetch(`/api/v1/public/organizations/${props.organizationId}/categories/${category.category_id}/fixture/announced`,{signal:controller.signal,credentials:'same-origin'});
+      if(response.status===404)return null;
+      if(!response.ok)throw new Error('No se pudo cargar el calendario anunciado.');
+      return [category.category_id,await response.json() as AnnouncedFixture] as const;
+    }));
+    if(!controller.signal.aborted){announcedFixtures.value=Object.fromEntries(plans.filter((plan):plan is NonNullable<typeof plan>=>plan!==null));announcedState.value='ready';}
+  }catch(cause){if(!controller.signal.aborted)announcedState.value='error';}
+},{immediate:true});
+const announcedPlans=computed(()=>props.categories.flatMap(category=>announcedFixtures.value[category.category_id]?[{category,plan:announcedFixtures.value[category.category_id]}]:[]));
+const scheduledPairs=computed(()=>new Set(props.days.filter(day=>!day.archivedAt).flatMap(day=>day.matches.map(match=>`${match.category_id}:${[match.home_entry_id,match.away_entry_id].sort().join(':')}`))));
+const pendingAnnouncedPlans=computed(()=>announcedPlans.value.map(({category,plan})=>({category,plan:{...plan,rounds:plan.rounds.map(round=>({...round,matches:round.matches.filter(match=>!scheduledPairs.value.has(`${category.category_id}:${[match.homeEntryId,match.awayEntryId].sort().join(':')}`))})).filter(round=>round.matches.length)}})).filter(item=>item.plan.rounds.length));
 const statsCategoryId=ref(props.categories[0]?.category_id||'');
 const statsTab=ref('classification');
 const matchesTab=ref('dates');
@@ -32,7 +55,7 @@ const activeDays=computed(()=>props.days.filter(day=>!day.archivedAt));
 const archivedDays=computed(()=>props.days.filter(day=>!!day.archivedAt));
 const restoringDay=ref('');
 async function restoreDay(dayId:string){if(restoringDay.value)return;restoringDay.value=dayId;drawError.value='';try{const response=await fetch(`/api/v1/organizations/${props.organizationId}/matchdays/${dayId}/restore`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':props.csrfToken}});const data=await response.json();if(!response.ok)throw new Error(data.message||'No se pudo recuperar.');emit('refresh');}catch(cause){drawError.value=cause instanceof Error?cause.message:'No se pudo recuperar.';}finally{restoringDay.value='';}}
-const drawable=computed(()=>props.categories.filter(category=>category.rule_status==='published'&&category.rules.competitionPlan?.rounds[0]?.pairing!=='positions'&&props.entries.filter(entry=>entry.category_id===category.category_id&&entry.status==='active').length>=2&&props.brackets[category.category_id]?.phase?.status!=='generated'&&!props.days.some(day=>day.matches.some(match=>match.category_id===category.category_id))));
+const drawable=computed(()=>props.categories.filter(category=>announcedState.value==='ready'&&!announcedFixtures.value[category.category_id]&&category.rule_status==='published'&&category.rules.competitionPlan?.rounds[0]?.pairing!=='positions'&&props.entries.filter(entry=>entry.category_id===category.category_id&&entry.status==='active').length>=2&&props.brackets[category.category_id]?.phase?.status!=='generated'&&!props.days.some(day=>day.matches.some(match=>match.category_id===category.category_id))));
 const drawMode=computed(()=>props.categories.find(item=>item.category_id===drawCategoryId.value)?.rules.initialPhase?.mode);
 function openDraw(){drawCategoryId.value=drawable.value[0]?.category_id||'';drawLegs.value=props.categories.find(item=>item.category_id===drawCategoryId.value)?.rules.initialPhase?.legs===2?2:1;drawError.value='';drawOpen.value=true;}
 async function draw(){if(!drawCategoryId.value||drawBusy.value)return;drawBusy.value=true;drawError.value='';try{const root=`/api/v1/organizations/${props.organizationId}/categories/${drawCategoryId.value}/fixture`;const send=async(path:string,body:object)=>{const response=await fetch(root+path,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':props.csrfToken},body:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw new Error(value.message||'No se pudo sortear.');return value;};const phase=await send('/phase',{});await send('/generate',{expectedRevision:phase.revision,...(drawMode.value==='knockout'?{}:{legs:drawLegs.value}),createMatchdays:true});drawOpen.value=false;emit('refresh');}catch(cause){drawError.value=cause instanceof Error?cause.message:'No se pudo sortear.';}finally{drawBusy.value=false;}}
@@ -93,8 +116,17 @@ function openBracketMatch(matchId:string){const day=props.days.find(item=>item.m
     <div v-else-if="section === 'fixture'">
       <div class="between"><h2>Fixture</h2><div class="workspace-actions"><button v-if="canManage&&drawable.length" type="button" class="btn" @click="openDraw">Sortear</button><a v-if="canManage" class="btn primary" :href="`#/torneo/${tournament.id}/fixture/new`">Nueva fecha</a></div></div>
       <form v-if="drawOpen" class="fixture-edit stack" @submit.prevent="draw"><div class="between"><h3>Sortear fixture</h3><button type="button" class="btn" @click="drawOpen=false">Cerrar</button></div><div v-if="drawable.length>1" class="choices"><button v-for="category in drawable" :key="category.category_id" type="button" class="choice" :aria-pressed="drawCategoryId===category.category_id" @click="drawCategoryId=category.category_id">{{ category.category_name }}</button></div><div v-if="drawMode!=='knockout'" class="choices"><button type="button" class="choice" :aria-pressed="drawLegs===1" @click="drawLegs=1">Una rueda</button><button type="button" class="choice" :aria-pressed="drawLegs===2" @click="drawLegs=2">Dos ruedas</button></div><button class="btn primary full" :disabled="drawBusy">{{ drawMode==='knockout'?'Crear cuadro y primera fecha':'Crear fechas y partidos' }}</button><p v-if="drawError" role="alert" class="notice amber">{{ drawError }}</p></form>
+      <p v-if="announcedState==='loading'" class="notice neutral" role="status">Cargando calendario anunciado…</p>
+      <p v-else-if="announcedState==='error'" class="notice amber" role="alert">No se pudo cargar el calendario anunciado. Recargá esta pantalla.</p>
+      <section v-for="{category,plan} in announcedPlans" :key="category.category_id" class="workspace-announced">
+        <h3>Calendario anunciado{{ categories.length>1?` · ${category.category_name}`:'' }}</h3>
+        <p class="small muted">Publicado · {{ plan.rounds.length }} jornadas · {{ plan.rounds.reduce((sum,round)=>sum+round.matches.length,0) }} cruces · fechas pendientes.</p>
+        <div class="choices" role="group" :aria-label="`Jornadas de ${category.category_name}`"><button v-for="round in plan.rounds" :key="round.ordinal" type="button" class="choice" :aria-pressed="announcedRound===round.ordinal" @click="announcedRound=round.ordinal">J{{ round.ordinal }}</button></div>
+        <AnnouncedFixtureMatches :rounds="plan.rounds.filter(round=>round.ordinal===announcedRound)" :teams="plan.teams" :organization-id="organizationId" :interactive="false" />
+      </section>
       <h3 v-if="activeDays.length" class="section-gap">Fechas</h3>
       <div v-for="day in activeDays" :key="day.id" class="fixture-day"><div class="fixture-day-head"><a :href="`#/torneo/${tournament.id}/partidos/${day.id}`"><strong>{{ dayTitle(day) }}</strong><small>{{ day.status === 'published' ? 'Publicada' : 'Borrador' }} · {{ matches(day).length }} {{ matches(day).length===1?'partido':'partidos' }}</small></a><div class="fixture-day-actions"><a v-if="day.status === 'published' && canManage" :href="`#/flyers/${tournament.id}/matchday/${day.id}`"><Icon name="file" />Flyer</a><a v-if="canManage" :href="`#/torneo/${tournament.id}/fixture/${day.id}`"><Icon name="edit" />Editar</a></div></div><a v-for="match in matches(day)" :key="match.id" class="fixture-day-match" :href="`#/torneo/${tournament.id}/partidos/${day.id}`"><time>{{ match.match_time||'—' }}</time><span class="fixture-day-sides"><span class="fixture-day-side"><img v-if="entryShield(match.home_entry_id)" :src="entryShield(match.home_entry_id)!" alt="" class="fixture-day-mark"><span v-else class="fixture-day-mark placeholder" :style="{background:entryColor(match.home_entry_id)}">{{ initials(match.home_name) }}</span><strong>{{ match.home_name }}</strong></span><span class="fixture-day-side"><img v-if="entryShield(match.away_entry_id)" :src="entryShield(match.away_entry_id)!" alt="" class="fixture-day-mark"><span v-else class="fixture-day-mark placeholder" :style="{background:entryColor(match.away_entry_id)}">{{ initials(match.away_name) }}</span><strong>{{ match.away_name }}</strong></span></span><span class="fixture-day-score"><b>{{ scores[match.id]?.home ?? '–' }}</b><b>{{ scores[match.id]?.away ?? '–' }}</b></span></a></div>
+      <p v-if="announcedState==='ready'&&!announcedPlans.length&&!activeDays.length" class="empty-list">Todavía no hay calendario anunciado ni fechas creadas.</p>
       <div v-if="archivedDays.length&&canManage" class="fixture-removed"><span>Fechas retiradas</span><button v-for="day in archivedDays" :key="day.id" type="button" class="text-action" :disabled="!!restoringDay" @click="restoreDay(day.id)">Recuperar Fecha {{ day.ordinal }}</button></div><p v-if="drawError&&!drawOpen" class="notice amber" role="alert">{{ drawError }}</p>
     </div>
     <div v-else-if="section === 'partidos'">
@@ -102,7 +134,14 @@ function openBracketMatch(matchId:string){const day=props.days.find(item=>item.m
       <SportTabs v-if="!dayId&&categories.some(category=>bracketRounds(category).length)" v-model="matchesTab" :tabs="[{key:'dates',label:'Fechas',icon:'ball'},{key:'bracket',label:'Cuadro',icon:'trophy'}]" id="partidos" />
       <div v-if="matchesTab==='bracket'&&!dayId" id="partidos-bracket-panel" role="tabpanel" aria-labelledby="partidos-bracket-tab"><div v-if="categories.length>1" class="sport-category-pills" role="group" aria-label="Categoría"><button v-for="category in categories" :key="category.category_id" type="button" :aria-pressed="statsCategory?.category_id===category.category_id" @click="statsCategoryId=category.category_id">{{ category.category_name }}</button></div><BracketView v-if="statsCategory&&bracketRounds(statsCategory).length" :rounds="bracketRounds(statsCategory)" :planned="!brackets[statsCategory.category_id]?.bracket.length" :teams="entries.map(entry=>({id:entry.id,name:entry.name,color:entry.color,has_shield:entry.has_shield}))" :organization-id="organizationId" @open-match="openBracketMatch" /><div v-else class="empty-list">Aún no hay cruces.</div></div>
       <div v-if="matchesTab==='dates'||dayId" id="partidos-dates-panel" role="tabpanel" aria-labelledby="partidos-dates-tab">
-      <div v-if="!visibleDays.some(day => matches(day).length)" class="empty-list">Aún no hay partidos en esta fecha.</div>
+      <p v-if="announcedState==='loading'&&!dayId" class="notice neutral" role="status">Cargando partidos anunciados…</p>
+      <p v-else-if="announcedState==='error'&&!dayId" class="notice amber" role="alert">No se pudieron cargar los partidos anunciados. Recargá esta pantalla.</p>
+      <section v-for="{category,plan} in (!dayId?pendingAnnouncedPlans:[])" :key="category.category_id" class="workspace-announced">
+        <h3>Partidos anunciados{{ categories.length>1?` · ${category.category_name}`:'' }}</h3>
+        <p class="small muted">Pendientes de fecha oficial. Para abrir el acta, primero hay que programar y publicar el partido.</p>
+        <AnnouncedFixtureMatches :rounds="plan.rounds" :teams="plan.teams" :organization-id="organizationId" :interactive="false" />
+      </section>
+      <div v-if="announcedState==='ready'&&!visibleDays.some(day => matches(day).length)&&(!pendingAnnouncedPlans.length||!!dayId)" class="empty-list">{{ dayId?'Aún no hay partidos en esta fecha.':'Todavía no hay partidos programados.' }}</div>
       <section v-for="day in visibleDays.filter(item => matches(item).length)" :key="day.id" class="workspace-day"><div v-if="!dayId" class="matchday-heading"><h3>{{ dayTitle(day) }}</h3><a :href="`#/torneo/${tournament.id}/fixture/${day.id}`">Fixture <Icon name="arrow" /></a></div><div v-for="match in matches(day)" :key="match.id" class="match-strip"><a :href="`#/partido/${match.category_id}/${match.id}`" class="match-strip-main"><span class="match-strip-team"><img v-if="entryShield(match.home_entry_id)" class="match-strip-mark shield" :src="entryShield(match.home_entry_id)!" :alt="`Escudo de ${match.home_name}`"><span v-else class="match-strip-mark" :style="{background:entryColor(match.home_entry_id)}">{{ initials(match.home_name) }}</span><strong>{{ match.home_name }}</strong></span><span class="match-strip-time"><b :class="{result:!!scores[match.id]}">{{ scores[match.id]?`${scores[match.id].home} : ${scores[match.id].away}`:match.match_time||'—' }}</b><small>{{ scores[match.id]?'Final':match.match_date||'Sin fecha' }}</small></span><span class="match-strip-team away"><img v-if="entryShield(match.away_entry_id)" class="match-strip-mark shield" :src="entryShield(match.away_entry_id)!" :alt="`Escudo de ${match.away_name}`"><span v-else class="match-strip-mark" :style="{background:entryColor(match.away_entry_id)}">{{ initials(match.away_name) }}</span><strong>{{ match.away_name }}</strong></span></a><a v-if="canManage && day.status === 'published'" class="match-strip-flyer" :href="`#/flyers/${tournament.id}/${matchFlyerKind(match.id)}/${match.id}`"><Icon name="file" />Flyer</a></div></section>
       </div>
     </div>
