@@ -26,6 +26,12 @@ source /srv/torneos/staging.env
 runuser -u torneos -- env DATABASE_URL="$DATABASE_URL" /usr/local/bin/node --import tsx packages/db/src/migrate.ts
 systemctl restart torneos-api torneos-worker torneos-staging-api torneos-staging-worker
 systemctl is-active torneos-api torneos-worker torneos-staging-api torneos-staging-worker
-curl --fail --silent --show-error http://127.0.0.1:4312/ready >/dev/null
-curl --fail --silent --show-error http://127.0.0.1:4313/ready >/dev/null
+for port in 4312 4313; do
+  ready=0
+  for attempt in {1..20}; do
+    if curl --fail --silent "http://127.0.0.1:${port}/ready" >/dev/null; then ready=1; break; fi
+    sleep 1
+  done
+  [[ "$ready" == 1 ]] || { echo "API ${port} no respondió /ready." >&2; exit 1; }
+done
 echo 'Fixture Sanber publicado y servicios listos.'
