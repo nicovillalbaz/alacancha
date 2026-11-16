@@ -22,7 +22,7 @@ try{
     FROM categories c JOIN editions e ON e.organization_id=c.organization_id AND e.id=c.edition_id
     JOIN tournaments t ON t.organization_id=e.organization_id AND t.id=e.tournament_id
     WHERE c.organization_id=$1 AND c.id=$2 AND t.id=$3`,[organizationId,categoryId,tournamentId]);
-  if(!state||state.name!=='Copa Sanber'||state.tournament_status!=='draft'||state.edition_status!=='draft'||state.category_status!=='draft'||state.team_limit!==10||state.team_count!==10||state.official_drafts!==0)throw new Error('El estado de Copa Sanber cambió; no se publicó el reglamento.');
+  if(!state||state.name!=='Copa Sanber'||state.tournament_status!=='draft'||state.edition_status!=='draft'||state.category_status!=='draft'||(state.team_limit!==null&&state.team_limit!==10)||state.team_count!==10||state.official_drafts!==0)throw new Error('El estado de Copa Sanber cambió; no se publicó el reglamento.');
 
   const {rows:[rule]}=await pool.query('SELECT version,revision,status,rules FROM rule_versions WHERE organization_id=$1 AND category_id=$2 ORDER BY version DESC LIMIT 1',[organizationId,categoryId]);
   if(!rule||rule.version!==1||rule.revision!==2||rule.status!=='draft'||rule.rules.initialPhase!==null||rule.rules.competitionPlan!==null)throw new Error('El borrador de Sanber cambió; revisión manual requerida.');
