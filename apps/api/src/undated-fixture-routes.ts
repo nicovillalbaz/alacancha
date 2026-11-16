@@ -9,12 +9,13 @@ const planSchema=z.object({expectedRevision:z.number().int().nonnegative(),round
 
 export function validateRoundRobin(rounds:z.infer<typeof roundSchema>[],entryIds:string[],qualificationCount:number,fail:(status:number,code:string,message:string)=>never){
   const count=entryIds.length;
-  if(count!==10||rounds.length!==9||qualificationCount!==8)
-    fail(409,'FIXTURE_FORMAT','El calendario requiere 10 equipos, nueve jornadas y ocho clasificados.');
+  const expectedRounds=count%2===0?count-1:count;
+  if(count<2||count>128||rounds.length!==expectedRounds||qualificationCount<2||qualificationCount>count||(qualificationCount&(qualificationCount-1))!==0)
+    fail(409,'FIXTURE_FORMAT','La rueda única debe incluir a todos los equipos y clasificar una cantidad válida para el cuadro.');
   const valid=new Set(entryIds),pairs=new Set<string>();
   for(let index=0;index<rounds.length;index++){
     const round=rounds[index];
-    if(round.ordinal!==index+1||round.matches.length!==count/2)fail(400,'FIXTURE_ROUND','Cada jornada debe tener exactamente cinco partidos, en orden.');
+    if(round.ordinal!==index+1||round.matches.length!==Math.floor(count/2))fail(400,'FIXTURE_ROUND','Cada jornada debe incluir todos los partidos de la rueda, en orden.');
     const seen=new Set<string>();
     for(const match of round.matches){
       const {homeEntryId:home,awayEntryId:away}=match;

@@ -32,11 +32,18 @@ const announcedMode=computed(()=>!!announced.value&&!props.fixture.some(day=>day
 const announcedStandings=computed(()=>[...(announced.value?.teams||[])].sort((a,b)=>a.name.localeCompare(b.name,'es')));
 const announcedHome=computed(()=>announced.value?.teams.find(team=>team.entry_id===selectedAnnouncedMatch.value?.homeEntryId));
 const announcedAway=computed(()=>announced.value?.teams.find(team=>team.entry_id===selectedAnnouncedMatch.value?.awayEntryId));
-const announcedFinals=computed<PlannedRound[]>(()=>[
-  {size:8,name:'Cuartos de final',pairing:'draw',legs:1,ties:Array.from({length:4},(_,index)=>({slot:index+1,home:'Por definir',away:'Por definir'}))},
-  {size:4,name:'Semifinales',pairing:announced.value?.semifinalPairing==='in_person_draw'?'draw':'positions',legs:1,ties:Array.from({length:2},(_,index)=>({slot:index+1,home:'Por definir',away:'Por definir'}))},
-  {size:2,name:'Final',pairing:'positions',legs:1,ties:[{slot:1,home:'Ganador de llave 2.1',away:'Ganador de llave 2.2'}]},
-]);
+const announcedFinals=computed<PlannedRound[]>(()=>{
+  const rounds:PlannedRound[]=[];
+  const qualifiers=announced.value?.qualificationCount||0;
+  for(let size=qualifiers;size>=2;size/=2){
+    const pairing=size===2?'positions':size===4?announced.value?.semifinalPairing==='in_person_draw'?'draw':'positions':size===qualifiers&&announced.value?.quarterPairing==='in_person_draw'?'draw':'positions';
+    const previous=rounds.length;
+    rounds.push({size,name:knockoutRoundName(size),pairing,legs:1,ties:Array.from({length:size/2},(_,index)=>({slot:index+1,
+      home:previous&&pairing!=='draw'?`Ganador de llave ${previous}.${index*2+1}`:'Por definir',
+      away:previous&&pairing!=='draw'?`Ganador de llave ${previous}.${index*2+2}`:'Por definir'}))});
+  }
+  return rounds;
+});
 const normalizeSearch=(value:string)=>value.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLocaleLowerCase('es');
 const menuItems=computed(()=>props.catalog.filter(item=>(!props.organization||item.organization_id===props.organization.id)&&normalizeSearch(item.name).includes(normalizeSearch(tournamentSearch.value.trim()))));
 const hasEmblem=(id:string)=>props.tournaments.some(item=>item.id===id&&item.has_emblem);

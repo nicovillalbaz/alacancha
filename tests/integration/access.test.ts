@@ -335,6 +335,32 @@ test('Sanber sintético: abrir un cruce prepara cinco partidos, publica sin fech
   assert.equal(announced.statusCode,200,announced.body);
   assert.equal(announced.json().rounds.reduce((sum:number,round:{matches:unknown[]})=>sum+round.matches.length,0),45);
 });
+test('calendario anunciado de cuatro equipos reutiliza publicación y acta sin reglas de Copa Sanber',async()=>{
+  const created=await newTournament();assert.equal(created.response.statusCode,201,created.response.body);
+  const {tournamentId,categoryId}=created.response.json();
+  const entries:string[]=[];
+  for(let index=0;index<4;index++){
+    const team=await request(adminA,'POST',`/organizations/${ids.a}/teams`,{requestId:randomUUID(),name:`Copa sintética ${runId} ${index+1}`,color:'#165D46',categoryId});
+    assert.equal(team.statusCode,201,team.body);entries.push(team.json().entryId);
+  }
+  assert.equal((await request(adminA,'PATCH',`/organizations/${ids.a}/tournaments/${tournamentId}/public-preview`,{publicVisible:true})).statusCode,200);
+  assert.equal((await request(adminA,'POST',`/organizations/${ids.a}/categories/${categoryId}/rules/publish`,{reason:'Reglamento de prueba para cuatro equipos',expectedRevision:1})).statusCode,200);
+  const pairs=[[[0,1],[2,3]],[[0,2],[1,3]],[[0,3],[1,2]]];
+  const rounds=pairs.map((games,index)=>({ordinal:index+1,matches:games.map(([home,away])=>({homeEntryId:entries[home],awayEntryId:entries[away]}))}));
+  const root=`/organizations/${ids.a}/categories/${categoryId}/fixture/announced`;
+  const saved=await app.inject({method:'PUT',url:`/api/v1${root}`,headers:headers(adminA),payload:{expectedRevision:0,rounds,qualificationCount:2,semifinalPairing:'pending',reason:'Rueda única de cuatro equipos'}});
+  assert.equal(saved.statusCode,200,saved.body);
+  assert.equal((await request(adminA,'POST',`${root}/publish`,{expectedRevision:1,reason:'Calendario de cuatro equipos confirmado'})).statusCode,200);
+  const prepare=`${root}/rounds/1/prepare`,input={expectedRevision:1,...rounds[0].matches[0]};
+  assert.equal((await request(adminB,'POST',prepare,input)).statusCode,403);
+  const result=await request(adminA,'POST',prepare,input);assert.equal(result.statusCode,200,result.body);
+  assert.equal(result.json().matches.length,2);
+  const dayId=result.json().matchdayId;
+  const preview=await request(adminA,'GET',`/organizations/${ids.a}/matchdays/${dayId}/preview`);
+  assert.deepEqual(preview.json().missing,[]);
+  assert.equal((await request(adminA,'POST',`/organizations/${ids.a}/matchdays/${dayId}/publish`,{expectedRevision:preview.json().revision,reason:'Jornada de dos partidos sin fecha'})).statusCode,201);
+  assert.equal((await request(adminA,'POST',`/organizations/${ids.a}/matches/${result.json().matchId}/record/start`,{})).statusCode,201);
+});
 test('migración repetible y seed rechazado fuera de las bases locales autorizadas', async () => {
   const { rows: [beforeCount] } = await pool.query('SELECT count(*)::int total FROM schema_migrations');
   await migrate(pool);
