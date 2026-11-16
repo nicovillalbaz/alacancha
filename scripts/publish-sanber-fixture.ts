@@ -5,7 +5,7 @@ import { createPool } from '@torneos/db';
 
 const config=readConfig(),target=process.env.FSBFS_FIXTURE_TARGET;
 const database=new URL(config.databaseUrl);
-if(process.env.NODE_ENV!=='production'||!['production','rehearsal'].includes(target||'')||database.hostname!=='127.0.0.1'||database.pathname!==(target==='production'?'/torneos_prod':'/torneos_fsbfs_rehearsal')||config.origin!=='https://alacancha.top')throw new Error('Destino de Copa Sanber no autorizado.');
+if(process.env.NODE_ENV!=='production'||!['production','rehearsal'].includes(target||'')||database.hostname!=='127.0.0.1'||database.pathname!==(target==='production'?'/torneos_prod':'/torneos_sanber_fixture_rehearsal')||config.origin!=='https://alacancha.top')throw new Error('Destino de Copa Sanber no autorizado.');
 const organizationId='7a8be048-ffce-4e14-9213-cb0d902e326d',categoryId='198ee7f1-a932-4fce-9165-33dd23d89ed8';
 const names:Record<string,string>={A:'Concepción Fútbol Club',B:'San Cristóbal',C:'Deportivo Puerta del Lago',D:'Villa Delfina',E:'Sport Comando',F:'Santa Rosa FC',G:'Los Russia FC',H:'Sport Center',I:'Sport Santa Lucía',J:'3 de Febrero'};
 const pairs=['AH BC DG EF JI','CA FJ GE HD IB','AI BF DC HG JE','CH EB FA GJ ID','AE BJ CG DF HI','ED FH GB IC JA','AB CF DJ HE IG','AG BD EC FI JH','CJ DA GF HB IE'];
@@ -19,7 +19,7 @@ try{
   if(fullSet.size!==45||rounds.some(round=>new Set(round.matches.flatMap(match=>[match.homeEntryId,match.awayEntryId])).size!==10))throw new Error('La transcripción no forma una rueda única completa.');
   const {rows:[state]}=await pool.query(`SELECT t.name,t.public_preview_at,t.status tournament_status,c.status category_status,rv.status rule_status,(SELECT count(*)::int FROM draft_matches WHERE organization_id=$1 AND category_id=$2) official_drafts FROM categories c JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id JOIN tournaments t ON t.organization_id=ed.organization_id AND t.id=ed.tournament_id JOIN rule_versions rv ON rv.organization_id=c.organization_id AND rv.category_id=c.id WHERE c.organization_id=$1 AND c.id=$2 ORDER BY rv.version DESC LIMIT 1`,[organizationId,categoryId]);
   if(!state||state.name!=='Copa Sanber'||!state.public_preview_at||state.tournament_status!=='draft'||state.category_status!=='draft'||state.rule_status!=='draft'||state.official_drafts!==0)throw new Error('El estado de Copa Sanber cambió; revisión manual requerida.');
-  const credential=await readFile(`/srv/torneos/private/fsbfs-access-${target}.txt`,'utf8');
+  const credential=await readFile('/srv/torneos/private/fsbfs-access-production.txt','utf8');
   const password=credential.match(/^Contraseña: (.+)$/m)?.[1];if(!password)throw new Error('Falta la credencial organizadora privada.');
   const login=await app.inject({method:'POST',url:'/api/v1/auth/login',payload:{username:'usuariofsbfs',password}});
   if(login.statusCode!==200)throw new Error(`No se pudo autenticar al organizador: ${login.statusCode}`);
