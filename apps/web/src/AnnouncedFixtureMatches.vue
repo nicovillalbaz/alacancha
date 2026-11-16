@@ -4,17 +4,18 @@ import Icon from './Icon.vue';
 
 type Team={entry_id:string;team_id:string;name:string;color:string;has_shield:boolean};
 type Round={ordinal:number;matches:Array<{homeEntryId:string;awayEntryId:string}>};
-const props=withDefaults(defineProps<{rounds:Round[];teams:Team[];organizationId?:string;interactive?:boolean}>(),{interactive:true});
+const props=withDefaults(defineProps<{rounds:Round[];teams:Team[];organizationId?:string;interactive?:boolean;busy?:boolean;statusByPair?:Record<string,{score:string|null;label:string}>}>(),{interactive:true,busy:false,statusByPair:()=>({})});
 const emit=defineEmits<{ 'open-match':[ordinal:number,match:{homeEntryId:string;awayEntryId:string}] }>();
 const teamByEntry=(id:string)=>props.teams.find(team=>team.entry_id===id);
+const status=(match:{homeEntryId:string;awayEntryId:string})=>props.statusByPair[`${match.homeEntryId}:${match.awayEntryId}`];
 </script>
 
 <template>
   <section v-for="round in rounds" :key="round.ordinal" class="announced-round">
     <h2>Jornada {{ round.ordinal }}</h2>
-    <component :is="interactive?'button':'div'" v-for="(match,index) in round.matches" :key="index" :type="interactive?'button':undefined" class="announced-match" :class="{'read-only':!interactive}" :aria-label="interactive?`Abrir partido: ${teamByEntry(match.homeEntryId)?.name} contra ${teamByEntry(match.awayEntryId)?.name}, jornada ${round.ordinal}, pendiente de fecha`:undefined" @click="interactive&&emit('open-match',round.ordinal,match)">
+    <component :is="interactive?'button':'div'" v-for="(match,index) in round.matches" :key="index" :type="interactive?'button':undefined" :disabled="interactive&&busy" class="announced-match" :class="{'read-only':!interactive}" :aria-label="interactive?`Abrir partido: ${teamByEntry(match.homeEntryId)?.name} contra ${teamByEntry(match.awayEntryId)?.name}, jornada ${round.ordinal}, pendiente de fecha`:undefined" @click="interactive&&!busy&&emit('open-match',round.ordinal,match)">
       <span class="announced-side"><TeamCrest size="sm" :name="teamByEntry(match.homeEntryId)?.name||'Equipo'" :team-id="teamByEntry(match.homeEntryId)?.team_id" :organization-id="organizationId" :color="teamByEntry(match.homeEntryId)?.color" :has-shield="teamByEntry(match.homeEntryId)?.has_shield" /><strong>{{ teamByEntry(match.homeEntryId)?.name }}</strong></span>
-      <span class="announced-center"><b>vs</b><small>Pendiente de fecha</small></span>
+      <span class="announced-center"><b>{{ status(match)?.score||'vs' }}</b><small>{{ status(match)?.label||'Pendiente de fecha' }}</small></span>
       <span class="announced-side away"><TeamCrest size="sm" :name="teamByEntry(match.awayEntryId)?.name||'Equipo'" :team-id="teamByEntry(match.awayEntryId)?.team_id" :organization-id="organizationId" :color="teamByEntry(match.awayEntryId)?.color" :has-shield="teamByEntry(match.awayEntryId)?.has_shield" /><strong>{{ teamByEntry(match.awayEntryId)?.name }}</strong></span>
       <Icon v-if="interactive" name="arrow" class="announced-arrow" />
     </component>

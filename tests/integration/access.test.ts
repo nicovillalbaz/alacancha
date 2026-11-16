@@ -290,6 +290,51 @@ test('limitación de intentos responde sin revelar si el usuario existe', async 
     assert.equal(response.statusCode, index < 10 ? 401 : 429);
   }
 });
+
+test('Sanber sintético: abrir un cruce prepara cinco partidos, publica sin fecha y permite cargar acta', async()=>{
+  const created=await newTournament();assert.equal(created.response.statusCode,201,created.response.body);
+  const {tournamentId,categoryId}=created.response.json();
+  const entries:string[]=[];
+  for(let index=0;index<10;index++){
+    const team=await request(adminA,'POST',`/organizations/${ids.a}/teams`,{requestId:randomUUID(),name:`Sanber sintético ${runId} ${index+1}`,color:'#165D46',categoryId});
+    assert.equal(team.statusCode,201,team.body);entries.push(team.json().entryId);
+  }
+  const preview=await request(adminA,'PATCH',`/organizations/${ids.a}/tournaments/${tournamentId}/public-preview`,{publicVisible:true});
+  assert.equal(preview.statusCode,200,preview.body);
+  const rule=await request(adminA,'POST',`/organizations/${ids.a}/categories/${categoryId}/rules/publish`,{reason:'Reglamento sintético para calendario',expectedRevision:1});
+  assert.equal(rule.statusCode,200,rule.body);
+  const pairLines=['AH BC DG EF JI','CA FJ GE HD IB','AI BF DC HG JE','CH EB FA GJ ID','AE BJ CG DF HI','ED FH GB IC JA','AB CF DJ HE IG','AG BD EC FI JH','CJ DA GF HB IE'];
+  const rounds=pairLines.map((line,index)=>({ordinal:index+1,matches:line.split(' ').map(pair=>({homeEntryId:entries[pair.charCodeAt(0)-65],awayEntryId:entries[pair.charCodeAt(1)-65]}))}));
+  const root=`/api/v1/organizations/${ids.a}/categories/${categoryId}/fixture/announced`;
+  const saved=await app.inject({method:'PUT',url:root,headers:headers(adminA),payload:{expectedRevision:0,rounds,qualificationCount:8,semifinalPairing:'in_person_draw',reason:'Calendario sintético de nueve jornadas'}});
+  assert.equal(saved.statusCode,200,saved.body);
+  const published=await request(adminA,'POST',`/organizations/${ids.a}/categories/${categoryId}/fixture/announced/publish`,{expectedRevision:1,reason:'Calendario sintético confirmado'});
+  assert.equal(published.statusCode,200,published.body);
+  const preparePath=`/organizations/${ids.a}/categories/${categoryId}/fixture/announced/rounds/1/prepare`;
+  const input={expectedRevision:1,...rounds[0].matches[0]};
+  assert.equal((await request(adminB,'POST',preparePath,input)).statusCode,403);
+  assert.equal((await request(teamA,'POST',preparePath,input)).statusCode,403);
+  const wrong=await request(adminA,'POST',preparePath,{...input,awayEntryId:rounds[0].matches[1].awayEntryId});
+  assert.equal(wrong.statusCode,404,wrong.body);
+  const prepared=await request(adminA,'POST',preparePath,input);assert.equal(prepared.statusCode,200,prepared.body);
+  assert.equal(prepared.json().matches.length,5);
+  assert.equal(prepared.json().created,5);
+  const repeated=await request(adminA,'POST',preparePath,input);assert.equal(repeated.statusCode,200,repeated.body);
+  assert.equal(repeated.json().matchId,prepared.json().matchId);assert.equal(repeated.json().created,0);
+  const dayId=prepared.json().matchdayId;
+  const readiness=await request(adminA,'GET',`/organizations/${ids.a}/matchdays/${dayId}/preview`);
+  assert.equal(readiness.statusCode,200,readiness.body);assert.deepEqual(readiness.json().missing,[]);
+  const dayPublished=await request(adminA,'POST',`/organizations/${ids.a}/matchdays/${dayId}/publish`,{expectedRevision:readiness.json().revision,reason:'Jornada sintética sin fecha confirmada'});
+  assert.equal(dayPublished.statusCode,201,dayPublished.body);
+  const started=await request(adminA,'POST',`/organizations/${ids.a}/matches/${prepared.json().matchId}/record/start`,{});
+  assert.equal(started.statusCode,201,started.body);
+  const publicDays=await app.inject(`/api/v1/public/organizations/${ids.a}/fixture`);
+  assert.equal(publicDays.statusCode,200,publicDays.body);
+  assert.equal(publicDays.json().find((day:{id:string})=>day.id===dayId)?.matches.length,5);
+  const announced=await app.inject(`/api/v1/public/organizations/${ids.a}/categories/${categoryId}/fixture/announced`);
+  assert.equal(announced.statusCode,200,announced.body);
+  assert.equal(announced.json().rounds.reduce((sum:number,round:{matches:unknown[]})=>sum+round.matches.length,0),45);
+});
 test('migración repetible y seed rechazado fuera de las bases locales autorizadas', async () => {
   const { rows: [beforeCount] } = await pool.query('SELECT count(*)::int total FROM schema_migrations');
   await migrate(pool);

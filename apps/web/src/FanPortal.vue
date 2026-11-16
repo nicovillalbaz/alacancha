@@ -42,10 +42,8 @@ const menuItems=computed(()=>props.catalog.filter(item=>(!props.organization||it
 const hasEmblem=(id:string)=>props.tournaments.some(item=>item.id===id&&item.has_emblem);
 const emblemUrl=(organizationId:string,tournamentId:string)=>`/api/v1/public/organizations/${organizationId}/tournaments/${tournamentId}/emblem`;
 const tabs=computed(()=>[
-  ...(announcedMode.value?[{key:'matches',label:'Partidos',icon:'ball'}]:[]),
-  ...(announcedMode.value?[{key:'announced',label:'Fixture',icon:'calendar'}]:[]),
-  ...(announcedMode.value?[{key:'standings',label:'Clasificación',icon:'chart'},{key:'scorers',label:'Goleadores',icon:'trophy'},{key:'defense',label:'Valla menos vencida',icon:'shield'}]:[]),
-  ...(currentTournament.value?.presentation_only||announcedMode.value?[]:[
+  ...(announced.value?[{key:'matches',label:'Partidos',icon:'ball'},{key:'announced',label:'Fixture',icon:'calendar'},{key:'standings',label:'Clasificación',icon:'chart'},{key:'scorers',label:'Goleadores',icon:'trophy'},{key:'defense',label:'Valla menos vencida',icon:'shield'}]:[]),
+  ...(currentTournament.value?.presentation_only||announced.value?[]:[
   {key:'matches',label:'Partidos',icon:'ball'},
   ...(category.value?.rules?.initialPhase?.mode==='knockout'?[]:[{key:'standings',label:'Clasificación',icon:'chart'}]),
   {key:'scorers',label:'Goleadores',icon:'trophy'},
@@ -55,6 +53,25 @@ const tabs=computed(()=>[
 ]);
 const stats=computed(()=>props.statistics[currentCategoryId.value]);
 const days=computed(()=>props.fixture.map(day=>({...day,matches:day.matches.filter(match=>match.category_id===currentCategoryId.value)})).filter(day=>day.matches.length));
+const publishedAnnouncedMatches=computed(()=>{
+  const result:Record<string,FanMatch>={};
+  for(const round of announced.value?.rounds||[])for(const pair of round.matches){
+    const home=announced.value?.teams.find(team=>team.entry_id===pair.homeEntryId)?.team_id;
+    const away=announced.value?.teams.find(team=>team.entry_id===pair.awayEntryId)?.team_id;
+    const match=days.value.find(day=>day.ordinal===round.ordinal)?.matches.find(item=>home&&away&&[item.home_team_id,item.away_team_id].sort().join(':')===[home,away].sort().join(':'));
+    if(match)result[`${pair.homeEntryId}:${pair.awayEntryId}`]=match;
+  }
+  return result;
+});
+const announcedStatuses=computed(()=>Object.fromEntries(Object.entries(publishedAnnouncedMatches.value).map(([key,match])=>{
+  const homeEntryId=key.split(':')[0],homeTeamId=announced.value?.teams.find(team=>team.entry_id===homeEntryId)?.team_id;
+  const reversed=match.home_team_id!==homeTeamId;
+  const score=match.result?`${reversed?match.result.score.away:match.result.score.home} : ${reversed?match.result.score.home:match.result.score.away}`:null;
+  const label=match.result?.status==='official'?'Final':match.result?.status==='provisional'?'Provisional':match.match_date?shortDate(match.match_date):'Publicado · fecha pendiente';
+  return [key,{score,label}];
+})));
+const pendingAnnouncedRounds=computed(()=>announced.value?.rounds.map(round=>({...round,matches:round.matches.filter(pair=>!publishedAnnouncedMatches.value[`${pair.homeEntryId}:${pair.awayEntryId}`])})).filter(round=>round.matches.length)||[]);
+function openAnnouncedMatch(ordinal:number,pair:{homeEntryId:string;awayEntryId:string}){const published=publishedAnnouncedMatches.value[`${pair.homeEntryId}:${pair.awayEntryId}`];if(published)selectedMatch.value=published;else selectedAnnouncedMatch.value={ordinal,...pair};}
 const bracket=computed(()=>props.brackets.find(item=>item.category_id===currentCategoryId.value));
 const leagueBracket=computed(()=>category.value?.rules?.initialPhase?.mode==='league'&&!!bracket.value);
 const bracketRounds=computed<PlannedRound[]>(()=>[...new Set((bracket.value?.slots||[]).map(slot=>slot.stage))].map(stage=>{const ties=(bracket.value?.slots||[]).filter(slot=>slot.stage===stage).sort((a,b)=>a.slot-b.slot);const size=ties.length*2;return {size,name:stage===1&&bracket.value?.repechage?'Repechaje':knockoutRoundName(size),pairing:'positions' as const,legs:ties.some(tie=>tie.twoLegs)?2 as const:1 as const,ties};}));
@@ -98,7 +115,7 @@ function flyerUrl(item:FanFlyer){return `/api/v1/public/organizations/${props.or
       </template>
       <template v-else-if="selectedMatch">
         <div class="fan-detail-top"><button type="button" class="fan-close" aria-label="Cerrar partido" @click="closeDetail"><Icon name="close" /></button><span>{{ matchTitle(selectedMatch) }}</span><a v-if="flyer('result',selectedMatch.id)||flyer('match',selectedMatch.id)" class="fan-flyer-link" :href="flyerUrl(flyer('result',selectedMatch.id)||flyer('match',selectedMatch.id)!)" target="_blank" rel="noopener"><Icon name="download" /> Flyer</a></div>
-        <section class="fan-scoreboard" aria-label="Resultado del partido"><p class="fan-match-state">{{ selectedMatch.result?.status==='official'?'FINAL':selectedMatch.result?.status==='provisional'?'PROVISIONAL':shortDate(selectedMatch.match_date)+' · '+selectedMatch.match_time }}</p><div class="fan-score-grid"><div class="fan-score-team"><TeamCrest size="lg" :name="selectedMatch.home_name" :team-id="selectedMatch.home_team_id" :organization-id="organization?.id" :color="team(selectedMatch.home_team_id)?.color" :has-shield="team(selectedMatch.home_team_id)?.has_shield" /><strong :title="selectedMatch.home_name">{{ selectedMatch.home_name }}</strong></div><div class="fan-score-number">{{ selectedMatch.result?`${selectedMatch.result.score.home} : ${selectedMatch.result.score.away}`:'—' }}</div><div class="fan-score-team"><TeamCrest size="lg" :name="selectedMatch.away_name" :team-id="selectedMatch.away_team_id" :organization-id="organization?.id" :color="team(selectedMatch.away_team_id)?.color" :has-shield="team(selectedMatch.away_team_id)?.has_shield" /><strong :title="selectedMatch.away_name">{{ selectedMatch.away_name }}</strong></div></div><p class="fan-score-meta">{{ shortDate(selectedMatch.match_date) }} · {{ selectedMatch.match_time }}<template v-if="selectedMatch.venue_name"> · {{ selectedMatch.venue_name }}</template></p><p v-if="selectedMatch.result&&(selectedMatch.result.shootout.home||selectedMatch.result.shootout.away)" class="fan-score-meta">Penales {{ selectedMatch.result.shootout.home }} : {{ selectedMatch.result.shootout.away }}</p></section>
+        <section class="fan-scoreboard" aria-label="Resultado del partido"><p class="fan-match-state">{{ selectedMatch.result?.status==='official'?'FINAL':selectedMatch.result?.status==='provisional'?'PROVISIONAL':selectedMatch.match_date?`${shortDate(selectedMatch.match_date)}${selectedMatch.match_time?` · ${selectedMatch.match_time}`:''}`:'FECHA PENDIENTE' }}</p><div class="fan-score-grid"><div class="fan-score-team"><TeamCrest size="lg" :name="selectedMatch.home_name" :team-id="selectedMatch.home_team_id" :organization-id="organization?.id" :color="team(selectedMatch.home_team_id)?.color" :has-shield="team(selectedMatch.home_team_id)?.has_shield" /><strong :title="selectedMatch.home_name">{{ selectedMatch.home_name }}</strong></div><div class="fan-score-number">{{ selectedMatch.result?`${selectedMatch.result.score.home} : ${selectedMatch.result.score.away}`:'—' }}</div><div class="fan-score-team"><TeamCrest size="lg" :name="selectedMatch.away_name" :team-id="selectedMatch.away_team_id" :organization-id="organization?.id" :color="team(selectedMatch.away_team_id)?.color" :has-shield="team(selectedMatch.away_team_id)?.has_shield" /><strong :title="selectedMatch.away_name">{{ selectedMatch.away_name }}</strong></div></div><p class="fan-score-meta">{{ selectedMatch.match_date?shortDate(selectedMatch.match_date):'Fecha pendiente' }}<template v-if="selectedMatch.match_time"> · {{ selectedMatch.match_time }}</template><template v-if="selectedMatch.venue_name"> · {{ selectedMatch.venue_name }}</template></p><p v-if="selectedMatch.result&&(selectedMatch.result.shootout.home||selectedMatch.result.shootout.away)" class="fan-score-meta">Penales {{ selectedMatch.result.shootout.home }} : {{ selectedMatch.result.shootout.away }}</p></section>
         <div class="fan-content"><h2 class="fan-section-label">Eventos</h2><p v-if="!eventGroups.length" class="fan-empty">Aún sin eventos públicos.</p><section v-for="group in eventGroups" :key="group.code" class="fan-period"><h3>{{ group.label }}</h3><div v-for="event in group.events" :key="event.id" class="fan-event" :class="`is-${event.side}`"><div class="fan-event-side"><SportEventMark :kind="event.kind" :color="event.cardColor||undefined" /><span><strong :title="event.name">{{ event.name }}</strong><small>{{ eventLabel(event) }}<template v-if="event.relatedName"> · {{ event.relatedName }}</template></small></span></div><span class="fan-event-minute">{{ event.minute===null?'':`${event.minute}′` }}</span></div></section></div>
       </template>
       <template v-else-if="selectedTeam">
@@ -110,12 +127,12 @@ function flyerUrl(item:FanFlyer){return `/api/v1/public/organizations/${props.or
           <div class="fan-subtabs" role="group" aria-label="Vista del fixture"><button type="button" :aria-pressed="announcedView==='rounds'" @click="announcedView='rounds'">Jornadas</button><button type="button" :aria-pressed="announcedView==='finals'" @click="announcedView='finals'">Finales</button></div>
           <template v-if="announcedView==='rounds'">
           <div class="fan-plan-rounds" role="group" aria-label="Jornadas del fixture"><button v-for="round in announced.rounds" :key="round.ordinal" type="button" :aria-pressed="announcedRound===round.ordinal" @click="announcedRound=round.ordinal">J{{ round.ordinal }}</button></div>
-          <AnnouncedFixtureMatches :rounds="announced.rounds.filter(item=>item.ordinal===announcedRound)" :teams="announced.teams" :organization-id="organization?.id" @open-match="(ordinal,match)=>selectedAnnouncedMatch={ordinal,...match}" />
+          <AnnouncedFixtureMatches :rounds="announced.rounds.filter(item=>item.ordinal===announcedRound)" :teams="announced.teams" :organization-id="organization?.id" :status-by-pair="announcedStatuses" @open-match="openAnnouncedMatch" />
           </template>
           <template v-else><p class="fan-plan-note">Cuartos: sorteo presencial · Semifinales: {{ announced.semifinalPairing==='in_person_draw'?'sorteo presencial':'cruces por confirmar' }}</p><BracketView :rounds="announcedFinals" planned /></template>
         </section>
         <section v-if="tab==='matches'" id="fan-sections-matches-panel" role="tabpanel" aria-labelledby="fan-sections-matches-tab" class="fan-content">
-          <template v-if="announcedMode&&announced"><p class="fan-plan-note">Partidos anunciados · horarios por confirmar.</p><AnnouncedFixtureMatches :rounds="announced.rounds" :teams="announced.teams" :organization-id="organization?.id" @open-match="(ordinal,match)=>selectedAnnouncedMatch={ordinal,...match}" /></template>
+          <template v-if="announcedMode&&announced"><p class="fan-plan-note">Partidos anunciados · horarios por confirmar.</p><AnnouncedFixtureMatches :rounds="announced.rounds" :teams="announced.teams" :organization-id="organization?.id" :status-by-pair="announcedStatuses" @open-match="openAnnouncedMatch" /></template>
           <template v-else>
           <div v-if="bracket" class="fan-subtabs" role="group" aria-label="Vista de partidos"><button type="button" :aria-pressed="matchesView==='days'" @click="matchesView='days'">Fechas</button><button type="button" :aria-pressed="matchesView==='bracket'" @click="matchesView='bracket'">Cuadro</button></div>
           <template v-if="matchesView==='days'">
@@ -123,12 +140,13 @@ function flyerUrl(item:FanFlyer){return `/api/v1/public/organizations/${props.or
             <section v-for="day in days" :key="day.id" class="fan-day">
               <div class="fan-day-head"><h2>{{ dayTitle(day) }}</h2><a v-if="flyer('matchday',day.id)" class="fan-flyer-link" :href="flyerUrl(flyer('matchday',day.id)!)" target="_blank" rel="noopener"><Icon name="download" /> Flyer</a></div>
               <button v-for="match in day.matches" :key="match.id" type="button" class="fan-match-row" :class="{'is-final':match.result?.status==='official'}" :aria-label="`${match.home_name} contra ${match.away_name}, ${match.result?`${match.result.score.home} a ${match.result.score.away}`:match.match_time}. Ver partido`" @click="selectedMatch=match">
-                <span class="fan-match-date">{{ match.result?.status==='official'?'Final':match.match_time }}<small v-if="match.tie_leg">{{ match.tie_leg }}</small></span>
+                <span class="fan-match-date">{{ match.result?.status==='official'?'Final':match.match_time||'Pendiente' }}<small v-if="match.tie_leg">{{ match.tie_leg }}</small></span>
                 <span class="fan-match-team"><TeamCrest size="sm" :name="match.home_name" :team-id="match.home_team_id" :organization-id="organization?.id" :color="team(match.home_team_id)?.color" :has-shield="team(match.home_team_id)?.has_shield" /><strong :title="match.home_name">{{ match.home_name }}</strong></span>
                 <span class="fan-match-result"><b>{{ match.result?`${match.result.score.home} : ${match.result.score.away}`:'vs' }}</b><small v-if="match.result&&(match.result.shootout.home||match.result.shootout.away)">Pen. {{ match.result.shootout.home }}:{{ match.result.shootout.away }}</small></span>
                 <span class="fan-match-team"><TeamCrest size="sm" :name="match.away_name" :team-id="match.away_team_id" :organization-id="organization?.id" :color="team(match.away_team_id)?.color" :has-shield="team(match.away_team_id)?.has_shield" /><strong :title="match.away_name">{{ match.away_name }}</strong></span><Icon name="arrow" />
               </button>
             </section>
+            <template v-if="announced&&pendingAnnouncedRounds.length"><p class="fan-plan-note fan-plan-after">Partidos pendientes de publicación</p><AnnouncedFixtureMatches :rounds="pendingAnnouncedRounds" :teams="announced.teams" :organization-id="organization?.id" @open-match="openAnnouncedMatch" /></template>
           </template>
           <template v-else><div v-if="flyer('bracket',bracket?.phase_id||'')" class="fan-context-action"><a class="fan-flyer-link" :href="flyerUrl(flyer('bracket',bracket?.phase_id||'')!)" target="_blank" rel="noopener"><Icon name="download" /> Flyer</a></div><BracketView :rounds="bracketRounds" :teams="categoryTeams" :organization-id="organization?.id" @open-match="openBracketMatch" /></template>
           </template>

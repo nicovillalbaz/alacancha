@@ -20,6 +20,18 @@ const emit=defineEmits<{refresh:[]}>();
 const announcedFixtures=ref<Record<string,AnnouncedFixture>>({});
 const announcedState=ref<'loading'|'ready'|'error'>('loading');
 const announcedRound=ref(1);
+const preparingMatch=ref(false),prepareError=ref('');
+async function openAnnouncedMatch(categoryId:string,revision:number,ordinal:number,match:{homeEntryId:string;awayEntryId:string}){
+  if(preparingMatch.value||!props.canManage)return;
+  preparingMatch.value=true;prepareError.value='';
+  try{
+    const response=await fetch(`/api/v1/organizations/${props.organizationId}/categories/${categoryId}/fixture/announced/rounds/${ordinal}/prepare`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':props.csrfToken},body:JSON.stringify({expectedRevision:revision,...match})});
+    const result=await response.json();
+    if(!response.ok)throw new Error(result.message||'No se pudo abrir el partido.');
+    location.hash=`#/partido/${categoryId}/${result.matchId}`;
+  }catch(cause){prepareError.value=cause instanceof Error?cause.message:'No se pudo abrir el partido.';}
+  finally{preparingMatch.value=false;}
+}
 watch(()=>[props.organizationId,props.tournament.id,props.categories.map(item=>item.category_id).join(','),props.section].join(':'),async(_key,_old,onCleanup)=>{
   announcedFixtures.value={};announcedRound.value=1;
   if(!['fixture','partidos'].includes(props.section)){announcedState.value='ready';return;}
@@ -36,6 +48,15 @@ watch(()=>[props.organizationId,props.tournament.id,props.categories.map(item=>i
   }catch(cause){if(!controller.signal.aborted)announcedState.value='error';}
 },{immediate:true});
 const announcedPlans=computed(()=>props.categories.flatMap(category=>announcedFixtures.value[category.category_id]?[{category,plan:announcedFixtures.value[category.category_id]}]:[]));
+function announcedStatuses(categoryId:string,ordinal:number){
+  const day=props.days.find(item=>!item.archivedAt&&item.ordinal===ordinal&&item.matches.some(match=>match.category_id===categoryId));
+  if(!day)return {};
+  return Object.fromEntries(day.matches.filter(match=>match.category_id===categoryId).map(match=>[
+    `${match.home_entry_id}:${match.away_entry_id}`,
+    {score:props.scores[match.id]?`${props.scores[match.id].home} : ${props.scores[match.id].away}`:null,
+      label:props.scores[match.id]?'Final':day.status==='published'?'Publicado · fecha pendiente':'Preparado · sin publicar'}
+  ]));
+}
 const scheduledPairs=computed(()=>new Set(props.days.filter(day=>!day.archivedAt).flatMap(day=>day.matches.map(match=>`${match.category_id}:${[match.home_entry_id,match.away_entry_id].sort().join(':')}`))));
 const pendingAnnouncedPlans=computed(()=>announcedPlans.value.map(({category,plan})=>({category,plan:{...plan,rounds:plan.rounds.map(round=>({...round,matches:round.matches.filter(match=>!scheduledPairs.value.has(`${category.category_id}:${[match.homeEntryId,match.awayEntryId].sort().join(':')}`))})).filter(round=>round.matches.length)}})).filter(item=>item.plan.rounds.length));
 const statsCategoryId=ref(props.categories[0]?.category_id||'');
@@ -122,10 +143,11 @@ function openBracketMatch(matchId:string){const day=props.days.find(item=>item.m
         <h3>Calendario anunciado{{ categories.length>1?` · ${category.category_name}`:'' }}</h3>
         <p class="small muted">Publicado · {{ plan.rounds.length }} jornadas · {{ plan.rounds.reduce((sum,round)=>sum+round.matches.length,0) }} cruces · fechas pendientes.</p>
         <div class="choices" role="group" :aria-label="`Jornadas de ${category.category_name}`"><button v-for="round in plan.rounds" :key="round.ordinal" type="button" class="choice" :aria-pressed="announcedRound===round.ordinal" @click="announcedRound=round.ordinal">J{{ round.ordinal }}</button></div>
-        <AnnouncedFixtureMatches :rounds="plan.rounds.filter(round=>round.ordinal===announcedRound)" :teams="plan.teams" :organization-id="organizationId" :interactive="false" />
+        <AnnouncedFixtureMatches :rounds="plan.rounds.filter(round=>round.ordinal===announcedRound)" :teams="plan.teams" :organization-id="organizationId" :interactive="canManage" :busy="preparingMatch" :status-by-pair="announcedStatuses(category.category_id,announcedRound)" @open-match="(ordinal,match)=>openAnnouncedMatch(category.category_id,plan.revision,ordinal,match)" />
       </section>
+      <p v-if="prepareError" class="notice amber" role="alert">{{ prepareError }}</p>
       <h3 v-if="activeDays.length" class="section-gap">Fechas</h3>
-      <div v-for="day in activeDays" :key="day.id" class="fixture-day"><div class="fixture-day-head"><a :href="`#/torneo/${tournament.id}/partidos/${day.id}`"><strong>{{ dayTitle(day) }}</strong><small>{{ day.status === 'published' ? 'Publicada' : 'Borrador' }} · {{ matches(day).length }} {{ matches(day).length===1?'partido':'partidos' }}</small></a><div class="fixture-day-actions"><a v-if="day.status === 'published' && canManage" :href="`#/flyers/${tournament.id}/matchday/${day.id}`"><Icon name="file" />Flyer</a><a v-if="canManage" :href="`#/torneo/${tournament.id}/fixture/${day.id}`"><Icon name="edit" />Editar</a></div></div><a v-for="match in matches(day)" :key="match.id" class="fixture-day-match" :href="`#/torneo/${tournament.id}/partidos/${day.id}`"><time>{{ match.match_time||'—' }}</time><span class="fixture-day-sides"><span class="fixture-day-side"><img v-if="entryShield(match.home_entry_id)" :src="entryShield(match.home_entry_id)!" alt="" class="fixture-day-mark"><span v-else class="fixture-day-mark placeholder" :style="{background:entryColor(match.home_entry_id)}">{{ initials(match.home_name) }}</span><strong>{{ match.home_name }}</strong></span><span class="fixture-day-side"><img v-if="entryShield(match.away_entry_id)" :src="entryShield(match.away_entry_id)!" alt="" class="fixture-day-mark"><span v-else class="fixture-day-mark placeholder" :style="{background:entryColor(match.away_entry_id)}">{{ initials(match.away_name) }}</span><strong>{{ match.away_name }}</strong></span></span><span class="fixture-day-score"><b>{{ scores[match.id]?.home ?? '–' }}</b><b>{{ scores[match.id]?.away ?? '–' }}</b></span></a></div>
+      <div v-for="day in activeDays" :key="day.id" class="fixture-day"><div class="fixture-day-head"><a :href="`#/torneo/${tournament.id}/partidos/${day.id}`"><strong>{{ dayTitle(day) }}</strong><small>{{ day.status === 'published' ? 'Publicada' : 'Borrador' }} · {{ matches(day).length }} {{ matches(day).length===1?'partido':'partidos' }}</small></a><div class="fixture-day-actions"><a v-if="day.status === 'published' && canManage" :href="`#/flyers/${tournament.id}/matchday/${day.id}`"><Icon name="file" />Flyer</a><a v-if="canManage" :href="`#/torneo/${tournament.id}/fixture/${day.id}`"><Icon name="edit" />Editar</a></div></div><a v-for="match in matches(day)" :key="match.id" class="fixture-day-match" :href="`#/partido/${match.category_id}/${match.id}`"><time>{{ match.match_time||'—' }}</time><span class="fixture-day-sides"><span class="fixture-day-side"><img v-if="entryShield(match.home_entry_id)" :src="entryShield(match.home_entry_id)!" alt="" class="fixture-day-mark"><span v-else class="fixture-day-mark placeholder" :style="{background:entryColor(match.home_entry_id)}">{{ initials(match.home_name) }}</span><strong>{{ match.home_name }}</strong></span><span class="fixture-day-side"><img v-if="entryShield(match.away_entry_id)" :src="entryShield(match.away_entry_id)!" alt="" class="fixture-day-mark"><span v-else class="fixture-day-mark placeholder" :style="{background:entryColor(match.away_entry_id)}">{{ initials(match.away_name) }}</span><strong>{{ match.away_name }}</strong></span></span><span class="fixture-day-score"><b>{{ scores[match.id]?.home ?? '–' }}</b><b>{{ scores[match.id]?.away ?? '–' }}</b></span></a></div>
       <p v-if="announcedState==='ready'&&!announcedPlans.length&&!activeDays.length" class="empty-list">Todavía no hay calendario anunciado ni fechas creadas.</p>
       <div v-if="archivedDays.length&&canManage" class="fixture-removed"><span>Fechas retiradas</span><button v-for="day in archivedDays" :key="day.id" type="button" class="text-action" :disabled="!!restoringDay" @click="restoreDay(day.id)">Recuperar Fecha {{ day.ordinal }}</button></div><p v-if="drawError&&!drawOpen" class="notice amber" role="alert">{{ drawError }}</p>
     </div>
@@ -138,9 +160,10 @@ function openBracketMatch(matchId:string){const day=props.days.find(item=>item.m
       <p v-else-if="announcedState==='error'&&!dayId" class="notice amber" role="alert">No se pudieron cargar los partidos anunciados. Recargá esta pantalla.</p>
       <section v-for="{category,plan} in (!dayId?pendingAnnouncedPlans:[])" :key="category.category_id" class="workspace-announced">
         <h3>Partidos anunciados{{ categories.length>1?` · ${category.category_name}`:'' }}</h3>
-        <p class="small muted">Pendientes de fecha oficial. Para abrir el acta, primero hay que programar y publicar el partido.</p>
-        <AnnouncedFixtureMatches :rounds="plan.rounds" :teams="plan.teams" :organization-id="organizationId" :interactive="false" />
+        <p class="small muted">Abrí un cruce para preparar su jornada y cargar el partido.</p>
+        <AnnouncedFixtureMatches :rounds="plan.rounds" :teams="plan.teams" :organization-id="organizationId" :interactive="canManage" :busy="preparingMatch" @open-match="(ordinal,match)=>openAnnouncedMatch(category.category_id,plan.revision,ordinal,match)" />
       </section>
+      <p v-if="prepareError" class="notice amber" role="alert">{{ prepareError }}</p>
       <div v-if="announcedState==='ready'&&!visibleDays.some(day => matches(day).length)&&(!pendingAnnouncedPlans.length||!!dayId)" class="empty-list">{{ dayId?'Aún no hay partidos en esta fecha.':'Todavía no hay partidos programados.' }}</div>
       <section v-for="day in visibleDays.filter(item => matches(item).length)" :key="day.id" class="workspace-day"><div v-if="!dayId" class="matchday-heading"><h3>{{ dayTitle(day) }}</h3><a :href="`#/torneo/${tournament.id}/fixture/${day.id}`">Fixture <Icon name="arrow" /></a></div><div v-for="match in matches(day)" :key="match.id" class="match-strip"><a :href="`#/partido/${match.category_id}/${match.id}`" class="match-strip-main"><span class="match-strip-team"><img v-if="entryShield(match.home_entry_id)" class="match-strip-mark shield" :src="entryShield(match.home_entry_id)!" :alt="`Escudo de ${match.home_name}`"><span v-else class="match-strip-mark" :style="{background:entryColor(match.home_entry_id)}">{{ initials(match.home_name) }}</span><strong>{{ match.home_name }}</strong></span><span class="match-strip-time"><b :class="{result:!!scores[match.id]}">{{ scores[match.id]?`${scores[match.id].home} : ${scores[match.id].away}`:match.match_time||'—' }}</b><small>{{ scores[match.id]?'Final':match.match_date||'Sin fecha' }}</small></span><span class="match-strip-team away"><img v-if="entryShield(match.away_entry_id)" class="match-strip-mark shield" :src="entryShield(match.away_entry_id)!" :alt="`Escudo de ${match.away_name}`"><span v-else class="match-strip-mark" :style="{background:entryColor(match.away_entry_id)}">{{ initials(match.away_name) }}</span><strong>{{ match.away_name }}</strong></span></a><a v-if="canManage && day.status === 'published'" class="match-strip-flyer" :href="`#/flyers/${tournament.id}/${matchFlyerKind(match.id)}/${match.id}`"><Icon name="file" />Flyer</a></div></section>
       </div>

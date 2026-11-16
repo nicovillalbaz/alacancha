@@ -2026,8 +2026,22 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const snapshot = await matchdaySnapshot(client, organizationId, matchdayId);
     const missing: string[] = [];
     if (!snapshot.length) missing.push('La jornada todavía no tiene partidos programados.');
+    const {rows:[day]}=await client.query('SELECT edition_id,ordinal FROM matchdays WHERE organization_id=$1 AND id=$2',[organizationId,matchdayId]);
+    const {rows:announced}=await client.query(`SELECT f.category_id,p.snapshot FROM undated_fixture_plans f
+      JOIN categories c ON c.organization_id=f.organization_id AND c.id=f.category_id
+      JOIN LATERAL (SELECT snapshot FROM undated_fixture_publications WHERE organization_id=f.organization_id AND plan_id=f.id ORDER BY revision DESC LIMIT 1) p ON true
+      WHERE f.organization_id=$1 AND c.edition_id=$2`,[organizationId,day.edition_id]);
+    const undatedIds=new Set<string>();
+    for(const plan of announced){
+      const round=(plan.snapshot.rounds as Array<{ordinal:number;matches:Array<{homeEntryId:string;awayEntryId:string}>}>).find(item=>item.ordinal===day.ordinal);
+      const actual=snapshot.filter(match=>match.category_id===plan.category_id);
+      if(!round||actual.length!==round.matches.length)continue;
+      const expected=new Set(round.matches.map(pair=>`${pair.homeEntryId}:${pair.awayEntryId}`));
+      if(actual.every(match=>expected.has(`${match.home_entry_id}:${match.away_entry_id}`))&&expected.size===actual.length)
+        for(const match of actual)if(!match.match_date&&!match.match_time&&!match.venue_id)undatedIds.add(match.id);
+    }
     if(snapshot.some(match=>match.position_match&&!match.match_date))missing.push('Indicá la fecha de todos los cruces del plan por posiciones.');
-    if(snapshot.some(match=>!match.position_match&&(!match.match_date||!match.match_time||!match.venue_id)))missing.push('Programá día, hora y sede de todos los partidos antes de publicar.');
+    if(snapshot.some(match=>!match.position_match&&!undatedIds.has(match.id)&&(!match.match_date||!match.match_time||!match.venue_id)))missing.push('Programá día, hora y sede de todos los partidos antes de publicar.');
     const { rows } = await client.query(`SELECT m.id,c.status category_status,ed.status edition_status,t.status tournament_status,h.status home_status,a.status away_status,h.public_visible home_public,a.public_visible away_public
       FROM draft_matches m JOIN categories c ON c.organization_id=m.organization_id AND c.id=m.category_id
       JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id
