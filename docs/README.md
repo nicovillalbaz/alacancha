@@ -32,7 +32,7 @@
 | Orden | [02 — Hoja de ruta](02-hoja-de-ruta.md), [03 — Paso a paso](03-paso-a-paso.md), [tandas](tandas/README.md) | Hitos, dependencias, tickets y demostración de salida. |
 | Construcción | [04 — Estructura](04-estructura-del-proyecto.md), [05 — Arquitectura y datos](05-arquitectura-y-datos.md) | Carpetas, módulos, contratos y persistencia previstos. |
 | Reglas | [06 — Deporte](06-reglas-deportivas.md), [07 — Permisos y seguridad](07-permisos-y-seguridad.md), [08 — Activación](08-activacion-y-control.md), [13 — Buena fe/procedencia](13-lista-buena-fe-y-procedencia.md) | Invariantes que las pruebas deben proteger. |
-| Experiencia | [09 — Flujos](09-flujos-y-pantallas.md), [10 — Visual](10-guia-visual.md) | Navegación, acciones y sistema visual. |
+| Experiencia | [09 — Flujos](09-flujos-y-pantallas.md), [10 — Visual](10-guia-visual.md), [14 — Criterios del propietario](14-criterios-de-diseno-del-propietario.md) | Navegación, acciones, sistema visual y correcciones prioritarias. |
 | Referencias externas | [Investigación de GitHub (09/11/2026)](investigacion-github-2026-11-09.md) | Ideas para evaluar; no son decisiones ni funciones implementadas. |
 | Copa Caacupé 2026 | [Formato confirmado y límites](copa-caacupe-2026-formato.md), [fuentes recibidas](fuentes-fcfs-2026.md) | Tres etapas, interserial, tabla general, calendario por posiciones y decisiones pendientes; la carga local sigue privada. |
 | Ejecución | [11 — Operación y calidad](11-operacion-y-calidad.md), [12 — Catálogo](12-catalogo-funcional.md) | Entornos, Definition of Done y trazabilidad del alcance. |

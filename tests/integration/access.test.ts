@@ -1627,7 +1627,10 @@ test('T04: copa directa respeta participantes, sortea una vez y espera nuevo sor
     await pool.query("INSERT INTO match_acta_snapshots(id,organization_id,match_id,version,kind,event_revision,snapshot,reason,created_by) VALUES($1,$2,$3,1,'approved',0,$4,'Acta sintética',$5)",[snapshotId,ids.a,fixture.id,JSON.stringify({score:{home:0,away:0},shootout:{home:1,away:0},events:[]}),ids.adminA]);
     await pool.query('UPDATE match_records SET approval_id=$2 WHERE id=$1',[recordId,snapshotId]);
   }
-  const advanced=await request(adminA,'POST',`${base}/advance`,{reason:'Sorteo tras actas oficiales sintéticas'});
+  const drawRequired=await request(adminA,'POST',`${base}/advance`,{reason:'Verificar clasificados para sorteo presencial'});
+  assert.equal(drawRequired.statusCode,200,drawRequired.body);assert.equal(drawRequired.json().status,'draw_required');
+  assert.equal(drawRequired.json().candidates.length,4);
+  const advanced=await request(adminA,'POST',`${base}/advance`,{reason:'Cargar cruces del sorteo presencial sintético',sourceKey:drawRequired.json().sourceKey,drawOrder:drawRequired.json().candidates.map((item:{entryId:string})=>item.entryId)});
   assert.equal(advanced.statusCode,200,advanced.body);assert.equal(advanced.json().stage,2);assert.equal(advanced.json().matches,2);
   const next=(await request(adminA,'GET',base)).json();assert.equal(next.bracket.filter((slot:any)=>slot.stage===2&&slot.match_id&&slot.return_match_id).length,2);
   assert.equal((await request(adminA,'POST',`${base}/advance`,{reason:'Reintento de avance'})).json().status,'pending');

@@ -1,0 +1,9 @@
+# T09 — dominio alacancha.top (12/11/2026)
+
+**Alcance:** cambio de origen público y redirección del nombre provisional. Sin migración de base, importación ni modificación de datos deportivos.
+
+- El propietario adquirió `alacancha.top` y creó en Spaceship un registro A `@ → 40.160.139.5`, TTL 30 minutos. Google Public DNS devolvió esa IP para el dominio nuevo.
+- Se inspeccionó el Caddyfile activo (`alacancha.webs.vc` hacia `127.0.0.1:4312`) y `WEB_ORIGIN=https://alacancha.webs.vc`. Caddy, API y worker estaban activos. Se respaldaron `/etc/caddy/Caddyfile` y `/srv/torneos/production.env` antes del cambio.
+- El Caddyfile nuevo pasó `caddy validate`. `alacancha.top` hace proxy hacia `127.0.0.1:4312`; `alacancha.webs.vc` responde `308` hacia `https://alacancha.top{uri}`. El `import` de otro sitio alojado en el VPS se conservó. `WEB_ORIGIN` cambió a `https://alacancha.top` y se reiniciaron API y worker.
+- HTTPS devolvió 200 para `/ready`, `/fcfs-copacaacupe` y `/manifest.webmanifest`. El enlace antiguo `/fcfs-copacaacupe?origen=prueba` devolvió 308 y `Location: https://alacancha.top/fcfs-copacaacupe?origen=prueba`. `robots.txt` anunció `https://alacancha.top/sitemap.xml`, que contiene la portada y el enlace corto de Copa. El HTML de la Copa incluye el enlace canónico `https://alacancha.top/fcfs-copacaacupe`; la página y sus partidos planificados abrieron también en un navegador externo. Caddy, API y worker quedaron activos.
+- La guarda de `scripts/import-fcfs-production.ts` se alineó con el nuevo `WEB_ORIGIN` tanto en el repositorio como en la copia instalada, con respaldo previo; no se ejecutó el importador. Los enlaces antiguos quedan redirigidos, pero una PWA instalada desde el origen anterior puede requerir abrir el dominio nuevo e instalarse allí. Pruebas físicas en Android/iOS y puertas del piloto siguen pendientes.

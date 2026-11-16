@@ -1,5 +1,7 @@
 # 10. Guía visual y sistema de diseño provisional
 
+**Lectura prioritaria:** [criterios de diseño del propietario](14-criterios-de-diseno-del-propietario.md). Reúnen las correcciones posteriores de navegación, densidad, pestañas, partido, tablas y flyers. Las propuestas tempranas de esta guía quedan como antecedente cuando contradicen esas correcciones o [01-decisiones](01-decisiones.md).
+
 **Referencias externas revisadas el 09/11/2026:** [hallazgos de GitHub para pantallas públicas y administrativas](investigacion-github-2026-11-09.md). Son propuestas de comparación; las correcciones del propietario y las decisiones vigentes siguen mandando.
 
 **Referencia añadida el 10/11/2026:** [elnine](https://elnine.com.ar/) organiza la lectura por competencia y utiliza filas de encuentros compactas con hora/estado, equipos y marcador de rápida lectura. Adoptar esa densidad y jerarquía para el portal federativo y las vistas de partido, respetando nuestra navegación por pestañas, los escudos recibidos y el carácter no necesariamente en vivo de estas competencias. No copiar su marca, colores ni funciones ajenas al producto. La entrada de la FPFS debe distinguir con un rótulo breve las copas de clubes de las eliminatorias de selecciones; tocar una competición abre el torneo directamente. [Inventario de fuentes iniciales](fuentes-fcfs-2026.md).

@@ -313,3 +313,11 @@ Se compararon pantallas reales de Copa Fácil y TIMBO y se ajustó la presentaci
 ### 2026-11-12 — T09: escudos de Sanber sobre blanco
 
 Los originales se conservaron y se recortaron los doce logos de Federación San Bernardinense, Copa Sanber y equipos a PNG cuadrados sobre blanco. Se ensayó la sustitución en una restauración aislada de la base y medios; luego se publicó en producción sin borrar imágenes anteriores. Las doce lecturas públicas devolvieron los nuevos PNG; el acceso cruzado entre organizaciones fue denegado con 403. Tipos correctos, cuatro servicios activos, página pública y API 200. A 390 px se vieron los diez escudos en la lista pública. [Evidencia](evidencias/t09-logos-sanber-blanco-2026-11-12.md). Prueba física en teléfono pendiente.
+
+### 2026-11-16 — Criterios de diseño del propietario
+
+Se reunieron en [una guía operativa](14-criterios-de-diseno-del-propietario.md) las correcciones del propietario sobre densidad, navegación por contexto y subpestañas, estilo deportivo, formularios, fixture, partidos, estadísticas, flyers, carga perceptible y validación móvil. Se enlazó desde README y la guía visual para distinguirlas de propuestas tempranas ya reemplazadas. Es documentación de criterio; no cambia pantallas, API, datos ni estados de aceptación.
+
+### 2026-11-16 — T04/T09: fixture anunciado de Copa Sanber
+
+Se transcribió y validó la [hoja del organizador](evidencias/t09-fixture-sanber-2026-11-16.md): 45 parejas distintas en nueve jornadas, sin fechas. La migración 053 añade plan privado y publicaciones inmutables; la API valida diez equipos visibles de la misma categoría, una sola rueda completa, versión y permisos, y expone únicamente la última instantánea pública. El portal móvil distingue «Fixture» anunciado de partidos oficiales y explica cuartos por sorteo presencial, semifinales pendientes y final entre ganadores. La progresión de cuadros con modalidad «sorteo» pide ahora orden de equipos cargado por el organizador; ya no sortea al azar en el servidor. Tipos, compilación, tres pruebas dirigidas y 101/101 pruebas de la suite correctos. Antes de tocar la base real se respaldó y ensayó restauración aislada de 69 tablas (`initial-20261116T110454Z.dump`). La publicación en VPS y las comprobaciones físicas se registrarán aparte una vez ejecutadas.

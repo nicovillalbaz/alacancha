@@ -8,7 +8,7 @@ El [prototipo deportivo](prototipos/01-direccion-visual/README.md) conserva expl
 
 **Entrada pública local:** `http://127.0.0.1:4311/` lista organizaciones con torneos publicados. La ruta de cada organización y torneo es directa; el ingreso de gestión está en `/acceso` y `/panel` resuelve el destino según el rol. Los enlaces antiguos con `#/publico/` siguen funcionando. En producción Fastify entrega la web compilada, las rutas públicas con metadatos y el fallback; el proxy debe enviarle todas las rutas. [Despliegue sin Docker](docs/runbooks/despliegue-vps-sin-docker.md).
 
-**Acceso provisional en el VPS:** [https://alacancha.webs.vc/](https://alacancha.webs.vc/) sirve la aplicación por HTTPS desde el 11/11/2026. La base de producción contiene la Copa Caacupé y su plan parcial público, sin resultados ni posiciones sorteadas. La URL no define el dominio final ni autoriza el piloto. [Evidencia](docs/evidencias/t09-fcfs-produccion-2026-11-11.md).
+**Acceso público en el VPS:** [https://alacancha.top/](https://alacancha.top/) sirve la aplicación por HTTPS desde el 12/11/2026. La dirección anterior `alacancha.webs.vc` redirige permanentemente al nuevo dominio, conservando ruta y parámetros. La base de producción contiene la Copa Caacupé y su plan parcial público, sin resultados ni posiciones sorteadas. El dominio adquirido no resuelve por sí solo el nombre comercial ni autoriza el piloto. [Evidencia](docs/evidencias/t09-dominio-alacancha-top-2026-11-12.md).
 
 T03 agrega jugadores con identidad cifrada, evidencia privada, procedencia y movimientos, elegibilidad por fecha, buena fe y planillas versionadas, importación CSV reversible y PDF privado. El reglamento puede fijar ventanas, campos privados adicionales y comprobante de pase. T04 genera liga, grupos y eliminatoria; conserva partidos borrador T03 compatibles, programa Fechas compartidas, detecta conflictos, reprograma con historial y publica fixture/cuadros autorizados. El avance usa actas T05 y tablas T06 para clasificar, resolver rondas y ejecutar sorteos posteriores. La agenda dispone de catálogo privado de árbitros. [Acta T03](docs/evidencias/t03-cierre-codigo-local.md) · [acta T04](docs/evidencias/t04-agenda-publicacion.md) · [incremento T03/T04](docs/evidencias/t03-t04-cierre-local-2026-10-29.md).
 
@@ -36,7 +36,7 @@ Este repositorio contendrá una plataforma web/PWA de uso **principalmente móvi
 4. [Hoja de ruta](docs/02-hoja-de-ruta.md) y [paso a paso](docs/03-paso-a-paso.md): orden de ejecución y puertas de salida.
 5. [Estructura prevista](docs/04-estructura-del-proyecto.md) y [arquitectura/datos](docs/05-arquitectura-y-datos.md).
 6. [Reglas deportivas](docs/06-reglas-deportivas.md), [permisos](docs/07-permisos-y-seguridad.md), [activación de acceso](docs/08-activacion-y-control.md) y [lista de buena fe/procedencia](docs/13-lista-buena-fe-y-procedencia.md).
-7. [Flujos y pantallas](docs/09-flujos-y-pantallas.md) y [guía visual](docs/10-guia-visual.md).
+7. [Flujos y pantallas](docs/09-flujos-y-pantallas.md), [guía visual](docs/10-guia-visual.md) y [criterios de diseño del propietario](docs/14-criterios-de-diseno-del-propietario.md).
 8. [Operación y calidad](docs/11-operacion-y-calidad.md), [catálogo funcional](docs/12-catalogo-funcional.md) y [tandas detalladas](docs/tandas/README.md).
 9. [Avances](docs/avances.md): estado real, evidencias y próximo trabajo.
 

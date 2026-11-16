@@ -1,4 +1,4 @@
-import { randomInt, randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { audit, transaction, type DatabasePool } from '@torneos/db';
@@ -7,13 +7,14 @@ import { categoryStatistics, withDocumentedTiebreaks } from './statistics.ts';
 import { bestRemainingTie, qualifiedEntries, tieWinner, type ApprovedScore } from './fixture-progress.ts';
 
 interface Slot { id:string;stage:number;slot:number;round_id:string;home_entry_id:string|null;away_entry_id:string|null;home_source_id:string|null;away_source_id:string|null;match_id:string|null;return_match_id:string|null;decider_match_id:string|null;match_home:string|null;match_away:string|null;first_snapshot:ApprovedScore|null;second_snapshot:ApprovedScore|null;third_snapshot:ApprovedScore|null }
-const shuffle = <T>(items:T[]) => { const result=[...items];for(let i=result.length-1;i>0;i--){const j=randomInt(i+1);[result[i],result[j]]=[result[j],result[i]];}return result; };
+const sourceFingerprint=(stage:number,ids:string[])=>createHash('sha256').update(JSON.stringify({stage,ids:[...ids].sort()})).digest('hex');
+const exactOrder=(order:string[]|undefined,ids:string[])=>!!order&&order.length===ids.length&&new Set(order).size===ids.length&&order.every(id=>ids.includes(id));
 
 export function registerFixtureProgressRoutes(app:FastifyInstance,pool:DatabasePool,access:(request:FastifyRequest,organizationId:string,organizerOnly?:boolean)=>Promise<{user_id:string}>,fail:(status:number,code:string,message:string)=>never){
   app.post('/api/v1/organizations/:id/categories/:categoryId/fixture/advance',async(request)=>{
     const {id,categoryId}=request.params as {id:string;categoryId:string};
     const organizationId=z.uuid().parse(id),category=z.uuid().parse(categoryId),actor=await access(request,organizationId,true);
-    const input=z.object({reason:z.string().trim().min(3).max(300),manualOrder:z.array(z.uuid()).min(2).max(256).optional(),sourceKey:z.string().regex(/^[0-9a-f]{64}$/).optional()}).strict().parse(request.body);
+    const input=z.object({reason:z.string().trim().min(3).max(300),manualOrder:z.array(z.uuid()).min(2).max(256).optional(),drawOrder:z.array(z.uuid()).min(2).max(256).optional(),sourceKey:z.string().regex(/^[0-9a-f]{64}$/).optional()}).strict().parse(request.body);
     return transaction(pool,async(client)=>{
       const {rows:[phase]}=await client.query("SELECT * FROM fixture_phases WHERE organization_id=$1 AND category_id=$2 AND status='generated' FOR UPDATE",[organizationId,category]);
       if(!phase)fail(409,'FIXTURE_REQUIRED','Generá primero la fase de esta categoría.');
@@ -48,7 +49,12 @@ export function registerFixtureProgressRoutes(app:FastifyInstance,pool:DatabaseP
           if(tie.length&&criteria.includes('manual_draw'))return {status:'tie',sourceKey:projection.sourceKey,candidates:tie.map(entryId=>({entryId,name:projection.entries.find(entry=>entry.id===entryId)?.name||'Equipo'})),message:'Elegí el orden de los equipos empatados en el corte y documentá el motivo.'};
           fail(409,'QUALIFICATION_TIE','La clasificación o el corte de mejores restantes necesita un desempate documentado.');
         }
-        const ordered=plan.rounds[0].pairing==='draw'?shuffle(selected):selected;
+        if(plan.rounds[0].pairing==='draw'){
+          if(!input.drawOrder)return {status:'draw_required',stage:1,sourceKey:projection.sourceKey,candidates:selected.map(entryId=>({entryId,name:projection.entries.find(entry=>entry.id===entryId)?.name||'Equipo'})),message:'Cargá los cruces definidos en el sorteo presencial, en orden de llave.'};
+          if(input.sourceKey!==projection.sourceKey||!exactOrder(input.drawOrder,selected))fail(409,'DRAW_CHANGED','Los clasificados cambiaron o el sorteo contiene equipos incorrectos. Revisá de nuevo.');
+        }
+        const drawOrder=input.drawOrder||[];
+        const ordered=plan.rounds[0].pairing==='draw'?[...drawOrder.filter((_,index)=>index%2===0),...drawOrder.filter((_,index)=>index%2===1).reverse()]:selected;
         const bracket=knockoutBracket(ordered,plan.bracketSize).filter((item)=>item.stage===1);
         const {rows:[max]}=await client.query('SELECT coalesce(max(ordinal),0)::int ordinal FROM fixture_rounds WHERE organization_id=$1 AND phase_id=$2',[organizationId,phase.id]);
         const homeRound=randomUUID(),backRound=plan.rounds[0].legs===2?randomUUID():null;
@@ -63,7 +69,7 @@ export function registerFixtureProgressRoutes(app:FastifyInstance,pool:DatabaseP
             VALUES($1,$2,$3,$4,1,$5,$6,$7,$8,$9)`,[slotId,organizationId,phase.id,homeRound,item.slot,item.homeEntryId,item.awayEntryId,matchId,returnMatchId]);
         }
         await client.query('UPDATE fixture_phases SET revision=revision+1 WHERE id=$1',[phase.id]);
-        await audit(client,actor.user_id,organizationId,'fixture.qualification_generated',phase.id,input.reason,null,{categoryId:category,sourceKey:projection.sourceKey,ordered,manualOrder:input.manualOrder||null,bracketSize:plan.bracketSize,matches:created});
+        await audit(client,actor.user_id,organizationId,'fixture.qualification_generated',phase.id,input.reason,null,{categoryId:category,sourceKey:projection.sourceKey,ordered,drawOrder:input.drawOrder||null,manualOrder:input.manualOrder||null,bracketSize:plan.bracketSize,matches:created});
         return {status:'generated',stage:1,matches:created,qualified:ordered.length};
       };
       const addMatch=async(roundId:string,leg:1|2|3,home:string,away:string)=>{
@@ -118,7 +124,14 @@ export function registerFixtureProgressRoutes(app:FastifyInstance,pool:DatabaseP
       const last=stages.at(-1)!;
       const target=last+1,maxStage=plan?.rounds.length??Math.log2(slots.filter((slot)=>slot.stage===1).length*2);
       if(target>maxStage)return {status:'complete',championEntryId:winners.get(slots.find((slot)=>slot.stage===last)!.id)||null};
-      const previous=slots.filter((slot)=>slot.stage===last),draw=plan?.rounds[target-1]?.pairing==='draw',sources=draw?shuffle(previous):previous;
+      const previous=slots.filter((slot)=>slot.stage===last),draw=plan?.rounds[target-1]?.pairing==='draw';
+      const candidateIds=previous.map(slot=>winners.get(slot.id)!).filter(Boolean),drawSourceKey=sourceFingerprint(target,candidateIds);
+      if(draw&&!input.drawOrder){
+        const {rows:names}=await client.query('SELECT e.id,t.name FROM team_entries e JOIN teams t ON t.organization_id=e.organization_id AND t.id=e.team_id WHERE e.organization_id=$1 AND e.category_id=$2 AND e.id=ANY($3::uuid[])',[organizationId,category,candidateIds]);
+        return {status:'draw_required',stage:target,sourceKey:drawSourceKey,candidates:candidateIds.map(entryId=>({entryId,name:names.find(row=>row.id===entryId)?.name||'Equipo'})),message:'Cargá los cruces definidos en el sorteo presencial, en orden de llave.'};
+      }
+      if(draw&&(input.sourceKey!==drawSourceKey||!exactOrder(input.drawOrder,candidateIds)))fail(409,'DRAW_CHANGED','Los ganadores cambiaron o el sorteo contiene equipos incorrectos. Revisá de nuevo.');
+      const sources=draw?input.drawOrder!.map(entryId=>previous.find(slot=>winners.get(slot.id)===entryId)!):previous;
       const {rows:[max]}=await client.query('SELECT coalesce(max(ordinal),0)::int ordinal FROM fixture_rounds WHERE organization_id=$1 AND phase_id=$2',[organizationId,phase.id]);
       const legs=plan?.rounds[target-1]?.legs??phase.legs,homeRound=randomUUID(),backRound=legs===2?randomUUID():null;
       await client.query('INSERT INTO fixture_rounds(id,organization_id,phase_id,ordinal,leg,group_no) VALUES($1,$2,$3,$4,1,1)',[homeRound,organizationId,phase.id,max.ordinal+1]);
@@ -132,7 +145,7 @@ export function registerFixtureProgressRoutes(app:FastifyInstance,pool:DatabaseP
           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,[randomUUID(),organizationId,phase.id,homeRound,target,index+1,homeSource.id,awaySource.id,matchId,returnMatchId]);made++;
       }
       await client.query('UPDATE fixture_phases SET revision=revision+1 WHERE id=$1',[phase.id]);
-      await audit(client,actor.user_id,organizationId,plan?.rounds[target-1]?.pairing==='draw'?'fixture.round_drawn':'fixture.round_advanced',phase.id,input.reason,null,{stage:target,matches:made,sourceSlots:sources.map((slot)=>slot.id)});
+      await audit(client,actor.user_id,organizationId,plan?.rounds[target-1]?.pairing==='draw'?'fixture.round_drawn':'fixture.round_advanced',phase.id,input.reason,null,{stage:target,matches:made,sourceSlots:sources.map((slot)=>slot.id),drawOrder:input.drawOrder||null});
       return {status:'generated',stage:target,matches:made};
     });
   });

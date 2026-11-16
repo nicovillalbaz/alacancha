@@ -20,6 +20,7 @@ import { activeSuspensionReasons, recordSuspensionService, registerDisciplineRou
 import { registerFlyerRoutes } from './flyers.ts';
 import { registerTournamentPaymentRoutes } from './tournament-payments.ts';
 import { registerFixtureProgressRoutes } from './fixture-progress-routes.ts';
+import { registerUndatedFixtureRoutes } from './undated-fixture-routes.ts';
 import { registerFixtureRefereeRoutes } from './fixture-referees-routes.ts';
 import { tieWinner, type ApprovedScore } from './fixture-progress.ts';
 import { positionCompetitionState, syncPositionMatches } from './position-competition.ts';
@@ -1990,6 +1991,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     return reply.code(result.reused ? 200 : 201).send(result);
   });
   registerFixtureProgressRoutes(app,pool,organizationAccess,fail);
+  registerUndatedFixtureRoutes(app,pool,organizationAccess,fail);
   registerFixtureRefereeRoutes(app,pool,organizationAccess,fail);
   async function scheduleContext(client: PoolClient, organizationId: string, matchId: string, input: z.infer<typeof fixtureScheduleSchema>) {
     const { rows: [match] } = await client.query(`SELECT m.id,m.category_id,m.home_entry_id,m.away_entry_id,m.match_date,m.matchday_id,m.referee_id,m.schedule_revision,

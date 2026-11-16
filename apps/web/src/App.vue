@@ -99,6 +99,8 @@ const playerTab = ref('record');
 const disciplineTab = ref('cases'), disciplineSettingsTab = ref('case');
 const fixtureAdvanceReason = ref('');
 const fixtureTie=ref<{categoryId:string;sourceKey:string;candidates:Array<{entryId:string;name:string}>;order:string[]}|null>(null);
+const fixtureDraw=ref<{categoryId:string;sourceKey:string;candidates:Array<{entryId:string;name:string}>;order:string[]}|null>(null);
+function fixtureDrawName(index:number){const draw=fixtureDraw.value;return draw?.candidates.find(item=>item.entryId===draw.order[index])?.name||'Equipo';}
 const capture = ref<MatchCaptureView | null>(null);
 const capturePreview=ref<{day:MatchdaySummary;match:MatchdaySummary['matches'][number]}|null>(null);
 const captureStartBlocked=ref(false);
@@ -146,6 +148,8 @@ const publicTournaments = ref<PublicTournamentSummary[]>([]);
 const publicCatalog=ref<PublicCatalogItem[]>([]);
 const publicOrganizations=ref<PublicOrganizationItem[]>([]);
 const publicDraws=ref<PublicDraw[]>([]);
+type AnnouncedFixture={revision:number;rounds:Array<{ordinal:number;matches:Array<{homeEntryId:string;awayEntryId:string}>}>;qualificationCount:number;quarterPairing:'in_person_draw';semifinalPairing:'pending'|'in_person_draw'|'bracket';finalPairing:'winners';teams:Array<{entry_id:string;team_id:string;name:string;color:string;has_shield:boolean}>};
+const publicAnnouncedFixtures=ref<Record<string,AnnouncedFixture>>({});
 const publicResultsRevision=ref(0);
 const publicTournament=computed(()=>publicTournaments.value.find(item=>item.id===parts.value[2])||null);
 const matchdays = ref<MatchdaySummary[]>([]), publicFixture = ref<PublicFixtureDay[]>([]), publicBrackets = ref<PublicBracket[]>([]), publicStatistics = ref<Record<string,PublicStats>>({});
@@ -490,6 +494,7 @@ async function loadDraftMatches(entryId: string) {
 async function loadFixture(categoryId: string) {
   if (!user.value?.organizationId) return;
   if(fixtureTie.value?.categoryId!==categoryId)fixtureTie.value=null;
+  if(fixtureDraw.value?.categoryId!==categoryId)fixtureDraw.value=null;
   fixture.value = await api<FixtureOverview>(`/organizations/${user.value.organizationId}/categories/${categoryId}/fixture`);
 }
 async function loadMatchdays(editionId: string) {
@@ -606,11 +611,14 @@ async function advanceFixture() {
   await perform(async () => {
     if (fixtureAdvanceReason.value.trim().length < 3) throw new Error('Escribí el motivo para avanzar el cuadro.');
     const tie=fixtureTie.value?.categoryId===selectedTournament.value!.category_id?fixtureTie.value:null;
+    const draw=fixtureDraw.value?.categoryId===selectedTournament.value!.category_id?fixtureDraw.value:null;
     if(tie && tie.order.length!==tie.candidates.length)throw new Error('Ordená todos los equipos empatados antes de avanzar.');
-    const result = await api<{status:string;stage?:number;matches?:number;message?:string;championEntryId?:string;sourceKey?:string;candidates?:Array<{entryId:string;name:string}>}>(`/organizations/${user.value!.organizationId}/categories/${selectedTournament.value!.category_id}/fixture/advance`, 'POST', { reason: fixtureAdvanceReason.value,...(tie?{manualOrder:tie.order,sourceKey:tie.sourceKey}:{}) });
+    if(draw && draw.order.length!==draw.candidates.length)throw new Error('Asigná todos los equipos a los cruces del sorteo.');
+    const result = await api<{status:string;stage?:number;matches?:number;message?:string;championEntryId?:string;sourceKey?:string;candidates?:Array<{entryId:string;name:string}>}>(`/organizations/${user.value!.organizationId}/categories/${selectedTournament.value!.category_id}/fixture/advance`, 'POST', { reason: fixtureAdvanceReason.value,...(tie?{manualOrder:tie.order,sourceKey:tie.sourceKey}:{}),...(draw?{drawOrder:draw.order,sourceKey:draw.sourceKey}:{}) });
     await loadFixture(selectedTournament.value!.category_id);
     if(result.status==='tie'&&result.sourceKey&&result.candidates){fixtureTie.value={categoryId:selectedTournament.value!.category_id,sourceKey:result.sourceKey,candidates:result.candidates,order:[]};notify(result.message||'Ordená el empate de mejores restantes.');}
-    else if (result.status === 'generated') { fixtureTie.value=null;fixtureAdvanceReason.value = ''; notify(`Ronda ${result.stage} preparada con ${result.matches} cruces privados.`); }
+    else if(result.status==='draw_required'&&result.sourceKey&&result.candidates){fixtureDraw.value={categoryId:selectedTournament.value!.category_id,sourceKey:result.sourceKey,candidates:result.candidates,order:[]};notify(result.message||'Cargá el sorteo presencial.');}
+    else if (result.status === 'generated') { fixtureTie.value=null;fixtureDraw.value=null;fixtureAdvanceReason.value = ''; notify(`Ronda ${result.stage} preparada con ${result.matches} cruces privados.`); }
     else if (result.status === 'complete') notify('El cuadro tiene campeón según las actas oficiales.');
     else notify(result.message || 'Todavía hay resultados pendientes.');
   });
@@ -1278,7 +1286,7 @@ async function loadView(force = false) {
       return;
     }
     if (parts.value[0] === 'publico') {
-      publicOrganization.value = null; publicTournaments.value = []; publicTeams.value = []; publicSponsors.value = []; publicFixture.value = []; publicBrackets.value = []; publicStatistics.value = {}; publicFlyers.value=[]; publicDraws.value=[];
+      publicOrganization.value = null; publicTournaments.value = []; publicTeams.value = []; publicSponsors.value = []; publicFixture.value = []; publicBrackets.value = []; publicStatistics.value = {}; publicFlyers.value=[]; publicDraws.value=[];publicAnnouncedFixtures.value={};
       if(!viewParts[1]){const organizations=await api<PublicOrganizationItem[]>('/public/organizations');if(epoch!==routeEpoch)return;publicOrganizations.value=organizations;setPublicPageMeta('A la cancha · Torneos','Encontrá organizaciones, torneos, partidos, resultados y estadísticas.',`${location.origin}/`);return;}
       const organizationId=viewParts[1];
       const [result,draws] = await Promise.all([api<{ organization: PublicOrganization; tournaments: PublicTournamentSummary[]; teams: typeof publicTeams.value; sponsors: typeof publicSponsors.value }>(`/public/organizations/${organizationId}/tournaments`),api<PublicDraw[]>(`/public/organizations/${organizationId}/draws`)]);
@@ -1293,9 +1301,12 @@ async function loadView(force = false) {
       if(epoch!==routeEpoch)return;
       publicOrganization.value = result.organization; publicTournaments.value = tournamentId?result.tournaments.filter(item=>item.id===tournamentId):result.tournaments; publicTeams.value = result.teams.filter(team=>publicTournaments.value.some(item=>item.category_id===team.category_id)); publicSponsors.value = result.sponsors.filter(sponsor=>!tournamentId||sponsor.tournament_id===tournamentId);
       publicFixture.value = tournamentId?published.filter(day=>day.tournament_id===tournamentId):published; publicBrackets.value = tournamentId?brackets.filter(item=>item.tournament_id===tournamentId):brackets;publicFlyers.value=tournamentId?sharedFlyers.filter(item=>item.tournamentId===tournamentId):sharedFlyers;
+      const announced=await Promise.allSettled(result.tournaments.filter(item=>item.presentation_only&&(!tournamentId||item.id===tournamentId)).map(item=>api<AnnouncedFixture>(`/public/organizations/${organizationId}/categories/${item.category_id}/fixture/announced`)));
+      if(epoch!==routeEpoch)return;
+      publicAnnouncedFixtures.value=Object.fromEntries(result.tournaments.filter(item=>item.presentation_only&&(!tournamentId||item.id===tournamentId)).flatMap((item,index)=>announced[index].status==='fulfilled'?[[item.category_id,announced[index].value]]:[]));
       const publicName=tournamentId?(publicTournament.value?.name||draws.find(item=>item.tournament_id===tournamentId)?.tournament_name):(result.organization as unknown as {name:string}|null)?.name||'Torneos';
       const title=tournamentId?`${publicName} · ${result.organization.name}`:`${publicName} · Torneos`;
-      const description=tournamentId&&previewOnly?`Equipos de ${publicName}. Fixture y formato pendientes.`:tournamentId?`Partidos, fixture, clasificación y goleadores de ${publicName}.`:`Torneos, partidos, resultados y estadísticas de ${publicName}.`;
+      const description=tournamentId&&previewOnly?(Object.keys(publicAnnouncedFixtures.value).length?`Fixture anunciado de ${publicName}: nueve jornadas sin fechas confirmadas, diez equipos y ocho clasificados.`:`Equipos de ${publicName}. Fixture y formato pendientes.`):tournamentId?`Partidos, fixture, clasificación y goleadores de ${publicName}.`:`Torneos, partidos, resultados y estadísticas de ${publicName}.`;
       const alias=tournamentId?publicCatalog.value.find(item=>item.id===tournamentId)?.public_slug:null;
       const canonical=`${location.origin}${alias?`/${alias}`:`/${result.organization.public_slug}${tournamentId?`/${tournamentId}`:''}`}`;
       const hasEmblem=publicTournament.value?.has_emblem&&(publicTournament.value.status==='published'||publicTournament.value.presentation_only)||draws.some(item=>item.tournament_id===tournamentId&&item.has_emblem);
@@ -1522,7 +1533,7 @@ onUnmounted(() => { publicResultsStream?.close();privateMatchStream?.close();win
       </template>
       <template v-else-if="parts[0] === 'publico'">
         <PublicPositionPortal v-if="publicDraws.length && (parts[2] ? publicDraws.some(item=>item.tournament_id===parts[2]) : !publicTournaments.length)" :organization="publicOrganization" :draws="publicDraws" :selected-tournament-id="parts[2]||''" :results-revision="publicResultsRevision" @navigate="go" />
-        <FanPortal v-else :catalog="publicCatalog" :organization="publicOrganization" :selected-tournament-id="parts[2]||''" :tournaments="publicTournaments" :fixture="publicFixture" :brackets="publicBrackets" :statistics="publicStatistics" :teams="publicTeams" :flyers="publicFlyers" :loading="loading" :error="error" @navigate="go" />
+        <FanPortal v-else :catalog="publicCatalog" :organization="publicOrganization" :selected-tournament-id="parts[2]||''" :tournaments="publicTournaments" :fixture="publicFixture" :announced-fixtures="publicAnnouncedFixtures" :brackets="publicBrackets" :statistics="publicStatistics" :teams="publicTeams" :flyers="publicFlyers" :loading="loading" :error="error" @navigate="go" />
       </template>
       <template v-else-if="parts[0] === 'portal' || parts[0] === 'panel'"><p v-if="error" role="alert">{{ error }} <a href="/">Organizaciones</a></p><p v-else role="status">Abriendo…</p></template>
       <template v-else>
@@ -1696,8 +1707,9 @@ onUnmounted(() => { publicResultsStream?.close();privateMatchStream?.close();win
         <section v-if="fixture.phase?.status === 'generated' && canManageTournaments() && (fixture.phase.mode === 'knockout' || selectedTournament.rules.competitionPlan)" class="panel pad stack mt">
           <h2>Avanzar el cuadro</h2>
           <div v-if="fixtureTie?.categoryId===selectedTournament.category_id" class="stack notice amber"><strong>Desempate de mejores restantes</strong><p>Elegí el orden de los equipos empatados. El motivo quedará en auditoría.</p><div class="choices" role="group" aria-label="Orden manual de clasificados"><button v-for="candidate in fixtureTie.candidates" :key="candidate.entryId" type="button" class="choice" :disabled="fixtureTie.order.includes(candidate.entryId)" @click="fixtureTie.order.push(candidate.entryId)">{{ fixtureTie.order.includes(candidate.entryId) ? fixtureTie.order.indexOf(candidate.entryId)+1 + '. ' : '' }}{{ candidate.name }}</button></div><button type="button" class="btn" @click="fixtureTie.order=[]">Reiniciar orden</button><button type="button" class="btn" @click="fixtureTie=null">Volver a comprobar la tabla</button></div>
+          <div v-if="fixtureDraw?.categoryId===selectedTournament.category_id" class="stack notice amber"><strong>Cruces del sorteo presencial</strong><p>Tocá los equipos en el orden extraído: los puestos 1–2 forman la llave 1, 3–4 la llave 2, y así sucesivamente. Revisá los cruces antes de confirmar; quedarán registrados en auditoría.</p><div class="choices" role="group" aria-label="Orden de equipos sorteados"><button v-for="candidate in fixtureDraw.candidates" :key="candidate.entryId" type="button" class="choice" :disabled="fixtureDraw.order.includes(candidate.entryId)" @click="fixtureDraw.order.push(candidate.entryId)">{{ fixtureDraw.order.includes(candidate.entryId) ? fixtureDraw.order.indexOf(candidate.entryId)+1 + '. ' : '' }}{{ candidate.name }}</button></div><p v-for="index in Math.floor(fixtureDraw.order.length/2)" :key="index">Llave {{ index }}: {{ fixtureDrawName((index-1)*2) }} vs {{ fixtureDrawName((index-1)*2+1) }}</p><button type="button" class="btn" @click="fixtureDraw.order=[]">Reiniciar cruces</button></div>
           <div class="field"><label for="fixture-advance-reason">Motivo</label><input id="fixture-advance-reason" v-model="fixtureAdvanceReason" minlength="3" maxlength="300" placeholder="Ej. Clasificados de la fase oficial"></div>
-          <button type="button" class="btn primary full" :disabled="busy || fixtureAdvanceReason.trim().length < 3 || (fixtureTie?.categoryId===selectedTournament.category_id && fixtureTie.order.length!==fixtureTie.candidates.length)" @click="advanceFixture">{{ fixtureTie?.categoryId===selectedTournament.category_id ? 'Confirmar orden y preparar ronda' : 'Comprobar actas y preparar siguiente ronda' }}</button>
+          <button type="button" class="btn primary full" :disabled="busy || fixtureAdvanceReason.trim().length < 3 || (fixtureTie?.categoryId===selectedTournament.category_id && fixtureTie.order.length!==fixtureTie.candidates.length) || (fixtureDraw?.categoryId===selectedTournament.category_id && fixtureDraw.order.length!==fixtureDraw.candidates.length)" @click="advanceFixture">{{ fixtureDraw?.categoryId===selectedTournament.category_id ? 'Confirmar cruces presenciales' : fixtureTie?.categoryId===selectedTournament.category_id ? 'Confirmar orden y preparar ronda' : 'Comprobar actas y preparar siguiente ronda' }}</button>
         </section>
         <section v-if="fixture.phase?.status === 'generated'" class="stack mt"><div class="between wrap"><h2>Fechas de {{ selectedTournament.edition_name }}</h2><button v-if="canManageTournaments()" type="button" class="btn" :disabled="busy" @click="createMatchday">Agregar Fecha {{ Math.max(0, ...matchdays.map(day => day.ordinal)) + 1 }}</button></div><p v-if="!matchdays.length" class="notice neutral">Creá la primera Fecha para programar los cruces.</p><div v-for="day in matchdays" :key="day.id" class="panel pad stack"><div class="between wrap"><h3>Fecha {{ day.ordinal }}</h3><span class="badge" :class="day.status === 'published' ? 'active' : 'pending'">{{ day.status === 'published' ? 'Publicada' : 'Privada' }}</span></div><p v-if="!day.matches.length" class="small muted">Todavía sin partidos.</p><div v-for="match in day.matches" :key="match.id" class="team-person"><div><strong>{{ match.home_name }} vs {{ match.away_name }}</strong><p class="small muted">{{ match.category_name }} · {{ match.match_date }} {{ match.match_time }} · {{ match.venue_name }} / {{ match.court_label }}</p></div></div><button v-if="canManageTournaments() && day.status === 'draft'" type="button" class="btn full" :disabled="busy" @click="previewMatchday(day.id)">Revisar publicación</button><div v-if="matchdayPreview?.id === day.id" class="stack"><div v-if="matchdayPreview.missing.length" class="notice amber" role="alert"><p v-for="item in matchdayPreview.missing" :key="item">{{ item }}</p></div><div v-else class="notice neutral">{{ matchdayPreview.snapshot.length }} partidos listos para publicar.</div><div class="field"><label for="matchday-publish-reason">Motivo de publicación</label><input id="matchday-publish-reason" v-model="matchdayPublishReason" minlength="3" maxlength="300" placeholder="Ej. Horarios confirmados"></div><button type="button" class="btn primary full" :disabled="busy || !!matchdayPreview.missing.length || matchdayPublishReason.trim().length < 3" @click="publishMatchday">Confirmar publicación</button></div></div></section>
         <section v-if="fixture.groups.length" class="stack mt"><h2>Grupos</h2><div v-for="groupNo in [...new Set(fixture.groups.map(group => group.group_no))]" :key="groupNo" class="panel pad stack"><h3>Grupo {{ groupNo }}</h3><p v-for="entry in fixture.groups.filter(group => group.group_no === groupNo)" :key="entry.entry_id">{{ entry.team_name }}</p></div></section>
