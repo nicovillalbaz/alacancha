@@ -201,7 +201,12 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     if (!parsed.success) fail(409, 'RULES_INCOMPLETE', 'El reglamento publicado necesita revisión.');
     const { rows: [goodFaith] } = await pool.query("SELECT version,snapshot FROM good_faith_versions WHERE organization_id=$1 AND entry_id=$2 AND status='approved' ORDER BY version DESC LIMIT 1", [organizationId, entry]);
     if (!goodFaith) fail(409, 'GOOD_FAITH_REQUIRED', 'Aprobá la lista de buena fe antes de armar la planilla.');
-    return { match, rule: { version: rule.version as number, config: parsed.data! }, goodFaith: { version: goodFaith.version as number, snapshot: goodFaith.snapshot as Array<{ registrationId: string }> } };
+    const { rows: addedByActa } = await pool.query(`SELECT DISTINCT pr.id registration_id FROM player_registrations pr
+      JOIN audit_logs a ON a.organization_id=pr.organization_id AND a.resource_id=pr.id AND a.action='match.quick_player_approved'
+      WHERE pr.organization_id=$1 AND pr.entry_id=$2 AND pr.status='approved' AND pr.reverted_at IS NULL`, [organizationId, entry]);
+    const snapshot = goodFaith.snapshot as Array<{ registrationId: string }>;
+    const known = new Set(snapshot.map(player => player.registrationId));
+    return { match, rule: { version: rule.version as number, config: parsed.data! }, goodFaith: { version: goodFaith.version as number, snapshot: [...snapshot, ...addedByActa.filter(row => !known.has(row.registration_id)).map(row => ({ registrationId: row.registration_id as string }))] } };
   }
   async function lineupMatchAccess(organizationId: string, matchId: string, entry: string) {
     const { rows: [match] } = await pool.query('SELECT 1 FROM draft_matches WHERE organization_id=$1 AND id=$2 AND (home_entry_id=$3 OR away_entry_id=$3)', [organizationId, matchId, entry]);
@@ -2784,7 +2789,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     allowedKinds.push('yellow','second_yellow','red','substitution');
     const customCards = periods.success ? periods.data.advanced?.discipline.customCards || [] : [];
     if (customCards.length) allowedKinds.push('custom_card');
-    return { matchId, status: record.status, revision: record.revision, submissionId:record.submission_id, approvalId:record.approval_id, warnings:roster?.warnings||[], allowedKinds,customCards,substitutionNeedsWindow:false, home: { entryId: record.home_entry_id, teamId: record.home_team_id, name: record.home_name, color: record.home_color, hasShield: record.home_has_shield, canAddPlayer: record.status==='capturing' && !record.home_lineup_id, players: players('home',record.home_lineup_id) }, away: { entryId: record.away_entry_id, teamId: record.away_team_id, name: record.away_name, color: record.away_color, hasShield: record.away_has_shield, canAddPlayer: record.status==='capturing' && !record.away_lineup_id, players: players('away',record.away_lineup_id) }, score,shootout,unattributedGoals,
+    return { matchId, status: record.status, revision: record.revision, submissionId:record.submission_id, approvalId:record.approval_id, warnings:(roster?.warnings||[]).map(warning=>warning==='Hay jugadores cargados solo con nombre y apellido. Completá sus datos y revisá la buena fe.' && record.status==='official'?'Hay jugadores incorporados por acta con datos por completar según el reglamento.':warning), allowedKinds,customCards,substitutionNeedsWindow:false, home: { entryId: record.home_entry_id, teamId: record.home_team_id, name: record.home_name, color: record.home_color, hasShield: record.home_has_shield, canAddPlayer: record.status==='capturing' && !record.home_lineup_id, players: players('home',record.home_lineup_id) }, away: { entryId: record.away_entry_id, teamId: record.away_team_id, name: record.away_name, color: record.away_color, hasShield: record.away_has_shield, canAddPlayer: record.status==='capturing' && !record.away_lineup_id, players: players('away',record.away_lineup_id) }, score,shootout,unattributedGoals,
       periods: periods.success ? periods.data.periods.map((period) => period.name) : [],
       events };
   }
@@ -3044,13 +3049,40 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       const voidedEventIds=new Set(actaEvents.filter(event=>event.kind==='void').map(event=>event.voidsEventId));
       const activePlayers=[...new Set(actaEvents.filter(event=>event.kind!=='void'&&!voidedEventIds.has(event.id)).map(event=>event.registrationId).filter((id):id is string=>!!id))];
       if(activePlayers.length){
-        const {rows:publishedNames}=await client.query(`INSERT INTO player_publications(organization_id,registration_id,visible,reason,decided_by)
-          SELECT a.organization_id,a.resource_id,true,'Nombre publicado con el acta oficial del partido', $4
+        const {rows:quickPlayers}=await client.query(`SELECT DISTINCT a.resource_id registration_id,pr.entry_id
           FROM audit_logs a JOIN player_registrations pr ON pr.organization_id=a.organization_id AND pr.id=a.resource_id
           WHERE a.organization_id=$1 AND a.action='match.quick_player_created' AND a.after_data->>'matchId'=$2
-            AND a.resource_id=ANY($3::uuid[]) AND pr.reverted_at IS NULL
-          ON CONFLICT (organization_id,registration_id) DO NOTHING RETURNING registration_id`,[organizationId,match,activePlayers,actor.user_id]);
+            AND a.resource_id=ANY($3::uuid[]) AND pr.reverted_at IS NULL AND pr.status NOT IN ('rejected','observed')`,[organizationId,match,activePlayers]);
+        const quickIds=quickPlayers.map(row=>row.registration_id as string);
+        if(quickIds.length){
+        const {rows:publishedNames}=await client.query(`INSERT INTO player_publications(organization_id,registration_id,visible,reason,decided_by)
+          SELECT $1,candidate.id,true,'Nombre publicado con el acta oficial del partido',$3
+          FROM unnest($2::uuid[]) AS candidate(id)
+          ON CONFLICT (organization_id,registration_id) DO NOTHING RETURNING registration_id`,[organizationId,quickIds,actor.user_id]);
         if(publishedNames.length)await audit(client,actor.user_id,organizationId,'match.quick_players_names_published',match,'Acta oficial aprobada',null,{registrationIds:publishedNames.map(row=>row.registration_id)});
+        const {rows:approvedQuick}=await client.query(`UPDATE player_registrations SET status='approved',revision=revision+1,updated_at=now()
+          WHERE organization_id=$1 AND id=ANY($2::uuid[]) AND status IN ('draft','submitted')
+          RETURNING id,entry_id`,[organizationId,quickIds]);
+        for(const player of approvedQuick)await audit(client,actor.user_id,organizationId,'match.quick_player_approved',player.id,'Jugador incorporado por acta oficial',null,{matchId:match,entryId:player.entry_id});
+        for(const entryId of [...new Set(approvedQuick.map(player=>player.entry_id as string))].sort()){
+          await client.query('SELECT id FROM team_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE',[organizationId,entryId]);
+          const {rowCount:hasApproved}=await client.query("SELECT 1 FROM good_faith_versions WHERE organization_id=$1 AND entry_id=$2 AND status='approved' LIMIT 1",[organizationId,entryId]);
+          if(hasApproved)continue;
+          const {rows:[latest]}=await client.query('SELECT id,version,status FROM good_faith_versions WHERE organization_id=$1 AND entry_id=$2 ORDER BY version DESC LIMIT 1 FOR UPDATE',[organizationId,entryId]);
+          if(latest?.status==='submitted'){
+            await client.query("UPDATE good_faith_versions SET status='observed',review_reason='Lista superada por la incorporación de jugadores mediante acta oficial',reviewed_by=$2,reviewed_at=now() WHERE id=$1",[latest.id,actor.user_id]);
+            await audit(client,actor.user_id,organizationId,'good_faith.observed',latest.id,'Lista superada por acta oficial',{status:'submitted'},{status:'observed',entryId,version:latest.version});
+          }
+          const {rows:approvedRoster}=await client.query(`SELECT pr.id registration_id,pr.player_id,p.given_names,p.family_names,to_char(p.birth_date,'YYYY-MM-DD') birth_date,pr.registration_number,pr.origin_kind
+            FROM player_registrations pr JOIN players p ON p.organization_id=pr.organization_id AND p.id=pr.player_id
+            WHERE pr.organization_id=$1 AND pr.entry_id=$2 AND pr.status='approved' AND pr.reverted_at IS NULL ORDER BY pr.created_at,pr.id`,[organizationId,entryId]);
+          const rosterSnapshot=approvedRoster.map(row=>({registrationId:row.registration_id,playerId:row.player_id,givenNames:row.given_names,familyNames:row.family_names,birthDate:row.birth_date,registrationNumber:row.registration_number,originKind:row.origin_kind}));
+          const versionId=randomUUID(),version=(latest?.version||0)+1;
+          await client.query(`INSERT INTO good_faith_versions(id,organization_id,entry_id,version,status,snapshot,submit_reason,submitted_by,review_reason,reviewed_by,reviewed_at)
+            VALUES($1,$2,$3,$4,'approved',$5,'Alta por acta oficial',$6,'Aprobación del acta oficial',$6,now())`,[versionId,organizationId,entryId,version,JSON.stringify(rosterSnapshot),actor.user_id]);
+          await audit(client,actor.user_id,organizationId,'good_faith.approved_by_match',versionId,'Alta por acta oficial',null,{entryId,version,players:rosterSnapshot.length,matchId:match});
+        }
+        }
       }
       const {rows:[tie]}=await client.query(`SELECT s.id,s.phase_id,s.stage,s.match_id,s.return_match_id,s.decider_match_id,m.home_entry_id,m.away_entry_id,p.rule_version,p.category_id
         FROM fixture_bracket_slots s JOIN draft_matches m ON m.organization_id=s.organization_id AND m.id=s.match_id
