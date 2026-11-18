@@ -374,7 +374,7 @@ function publicTeam(teamId:string){return publicTeams.value.find(team=>team.id==
 function publicTeamByName(name:string,categoryId:string){return publicTeams.value.find(team=>team.category_id===categoryId&&team.name===name);}
 function go(path: string, preferredAlias = '') {
   const target=path==='publico'?'/':path==='acceso'?'/acceso':path==='panel'?'/panel':path.startsWith('publico/')?(()=>{const [,organizationId,tournamentId]=path.split('/');const alias=preferredAlias||publicCatalog.value.find(item=>item.id===tournamentId)?.public_slug||publicOrganizations.value.find(item=>item.id===organizationId&&item.single_tournament_id===tournamentId)?.single_tournament_slug;if(alias)return `/${alias}`;const slug=publicOrganization.value?.id===organizationId?publicOrganization.value.public_slug:publicOrganizations.value.find(item=>item.id===organizationId)?.public_slug||publicCatalog.value.find(item=>item.organization_id===organizationId)?.organization_slug;return slug?`/${slug}${tournamentId?`/${tournamentId}`:''}`:`/#/${path}`;})():`/#/${path}`;
-  if(target===location.pathname+location.hash&&route.value===path){window.scrollTo(0,0);return;}
+  if(target===location.pathname+location.search+location.hash&&route.value===path){window.scrollTo(0,0);return;}
   if(!target.includes('#/'))cleanRouteCache.set(target,path);
   history.pushState(null,'',target);route.value=path;window.scrollTo(0,0);
 }
@@ -511,15 +511,19 @@ async function loadTournamentSection() {
   const organizationId = user.value?.organizationId;
   const tournament = selectedTournament.value;
   if (!organizationId || !tournament) return;
+  const requestEpoch=routeEpoch;
   const categories = tournamentCategories.value;
   const section=tournamentSection.value;
   const needsBlueprint=['fixture','partidos','estadisticas'].includes(section);
   await Promise.all([needsBlueprint ? (async()=>{
     const categoryId = tournament.category_id;
-    if (workspaceBlueprint.value.categoryId !== categoryId) workspaceBlueprint.value = { blueprint:null, slots:[], games:[] };
-    workspaceBlueprint.value={...(await api<PositionBlueprintView>(`/organizations/${organizationId}/categories/${categoryId}/fixture/blueprint`)),categoryId};
-    workspaceCompetition.value=workspaceBlueprint.value.blueprint?await api<PositionCompetitionView>(`/organizations/${organizationId}/categories/${categoryId}/fixture/blueprint/competition`):null;
+    if (workspaceBlueprint.value.categoryId !== categoryId) {workspaceBlueprint.value = { blueprint:null, slots:[], games:[] };workspaceCompetition.value=null;}
+    const blueprint=await api<PositionBlueprintView>(`/organizations/${organizationId}/categories/${categoryId}/fixture/blueprint`);
+    const competition=blueprint.blueprint?await api<PositionCompetitionView>(`/organizations/${organizationId}/categories/${categoryId}/fixture/blueprint/competition`):null;
+    if(requestEpoch!==routeEpoch||selectedTournament.value?.category_id!==categoryId)return;
+    workspaceBlueprint.value={...blueprint,categoryId};workspaceCompetition.value=competition;
   })():Promise.resolve(),['equipos','pagos','estadisticas','fixture','partidos'].includes(section)?loadTeams():Promise.resolve()]);
+  if(requestEpoch!==routeEpoch||selectedTournament.value?.id!==tournament.id)return;
   if (needsBlueprint && workspaceBlueprint.value.blueprint && !(section==='fixture'&&parts.value[3])) return;
   if (section === 'multas' && canManageTournaments()) {
     const results = await Promise.all(categories.map(async category => [category.category_id, await api<DisciplineCase[]>(`/organizations/${organizationId}/categories/${category.category_id}/discipline/cases`)] as const));
@@ -1690,7 +1694,8 @@ onUnmounted(() => { publicResultsStream?.close();privateMatchStream?.close();win
 
       <div v-else-if="!user.platformAdmin && ['torneo','categoria'].includes(parts[0]) && selectedTournament" class="form-page">
         <h1 v-if="parts[0] === 'torneo'" class="sr-only" tabindex="-1">{{ selectedTournament.name }}</h1><div v-else class="heading"><h1 tabindex="-1">{{ selectedTournament.category_name }}</h1><span class="badge" :class="selectedTournament.rule_status === 'published' ? 'active' : 'pending'">{{ selectedTournament.rule_status === 'published' ? 'Oficial' : 'Borrador' }}</span></div>
-        <PaymentsWorkspace v-if="parts[0] === 'torneo' && tournamentSection === 'pagos' && canManageTournaments()" :key="selectedTournament.id" :organization-id="user.organizationId!" :tournament-id="selectedTournament.id" :teams="tournamentEntries" :categories="tournamentCategories" :initial-entry-id="parts[3] === 'tarifas' ? '' : parts[3]" :show-rates="parts[3] === 'tarifas'" :csrf-token="user.csrfToken" @refresh="loadTournaments" />
+        <div v-if="parts[0] === 'torneo' && loading && ['fixture','partidos','estadisticas'].includes(tournamentSection)" class="loading" role="status">Cargando torneo…</div>
+        <PaymentsWorkspace v-else-if="parts[0] === 'torneo' && tournamentSection === 'pagos' && canManageTournaments()" :key="selectedTournament.id" :organization-id="user.organizationId!" :tournament-id="selectedTournament.id" :teams="tournamentEntries" :categories="tournamentCategories" :initial-entry-id="parts[3] === 'tarifas' ? '' : parts[3]" :show-rates="parts[3] === 'tarifas'" :csrf-token="user.csrfToken" @refresh="loadTournaments" />
         <FixtureDayEditor v-else-if="parts[0] === 'torneo' && tournamentSection === 'fixture' && parts[3] && canManageTournaments()" :tournament="selectedTournament" :categories="tournamentCategories" :entries="tournamentEntries" :days="tournamentDays" :day-id="parts[3]" :focus-match-id="parts[4]" :venues="tournamentResources.venues" :official-match-ids="workspaceOfficialMatchIds" :organization-id="user.organizationId!" :csrf-token="user.csrfToken" @refresh="loadTournamentSection" />
         <PositionBlueprint v-else-if="parts[0] === 'torneo' && tournamentSection === 'fixture' && workspaceBlueprint.blueprint && workspaceBlueprint.categoryId === selectedTournament.category_id" :view="workspaceBlueprint" :competition="workspaceCompetition" :entries="tournamentEntries" :can-manage="canManageTournaments()" :organization-id="user.organizationId!" :category-id="selectedTournament.category_id" :tournament-id="selectedTournament.id" :csrf-token="user.csrfToken" @refresh="loadTournamentSection" />
         <PositionMatches v-else-if="parts[0] === 'torneo' && tournamentSection === 'partidos' && workspaceBlueprint.blueprint && workspaceBlueprint.categoryId === selectedTournament.category_id" :view="workspaceBlueprint" :competition="workspaceCompetition" :entries="tournamentEntries" :organization-id="user.organizationId!" :category-id="selectedTournament.category_id" :tournament-id="selectedTournament.id" />

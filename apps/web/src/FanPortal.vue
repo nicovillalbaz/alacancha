@@ -7,6 +7,7 @@ import PublicMatchTimeline from './PublicMatchTimeline.vue';
 import TeamCrest from './TeamCrest.vue';
 import BracketView from './BracketView.vue';
 import AnnouncedFixtureMatches from './AnnouncedFixtureMatches.vue';
+import {closePublicDetail,pushPublicNavigation,readPublicNavigation} from './public-navigation.ts';
 
 type FanEvent={id:string;kind:string;side:'home'|'away'|'unknown';period:string|null;minute:number|null;cardLabel:string|null;cardColor:string|null;name:string;relatedName:string|null};
 type FanMatch={id:string;category_id:string;category_name:string;home_name:string;away_name:string;home_team_id:string;away_team_id:string;venue_name:string;court_label:string;match_date:string;match_time:string;tie_leg?:string|null;result:{status:'provisional'|'official';score:{home:number;away:number};shootout:{home:number;away:number};events:FanEvent[]}|null};
@@ -20,9 +21,12 @@ type FanTournament=Omit<TournamentSummary,'rules'> & {rules:TournamentSummary['r
 type AnnouncedFixture={revision:number;rounds:Array<{ordinal:number;matches:Array<{homeEntryId:string;awayEntryId:string}>}>;qualificationCount:number;quarterPairing:'in_person_draw';semifinalPairing:'pending'|'in_person_draw'|'bracket';finalPairing:'winners';teams:Array<{entry_id:string;team_id:string;name:string;color:string;has_shield:boolean}>};
 const props=defineProps<{catalog:CatalogItem[];organization:{id:string;name:string;logo_id?:string|null}|null;selectedTournamentId:string;tournaments:FanTournament[];fixture:FanDay[];announcedFixtures:Record<string,AnnouncedFixture>;brackets:FanBracket[];statistics:Record<string,FanStats>;teams:FanTeam[];flyers:FanFlyer[];loading:boolean;error:string}>();
 const emit=defineEmits<{navigate:[path:string]}>();
-onMounted(()=>document.documentElement.classList.add('fan-scroll'));
-onUnmounted(()=>document.documentElement.classList.remove('fan-scroll'));
-const tab=ref('matches'),matchesView=ref<'days'|'bracket'>('days'),standingsView=ref<'league'|'bracket'>('league'),categoryId=ref(''),announcedRound=ref(1),announcedView=ref<'rounds'|'finals'>('rounds'),selectedMatch=ref<FanMatch|null>(null),selectedAnnouncedMatch=ref<{ordinal:number;homeEntryId:string;awayEntryId:string}|null>(null),selectedTeam=ref<FanTeam|null>(null),selectorOpen=ref(!props.selectedTournamentId),tournamentSearch=ref('');
+const tabToView:Record<string,string>={matches:'partidos',announced:'fixture',standings:'clasificacion',scorers:'goleadores',defense:'valla',teams:'equipos'};
+const viewToTab=Object.fromEntries(Object.entries(tabToView).map(([key,value])=>[value,key]));
+let restoringNavigation=false,restoreEpoch=0;
+onMounted(()=>{document.documentElement.classList.add('fan-scroll');restorePublicLocation();window.addEventListener('popstate',restorePublicLocation);});
+onUnmounted(()=>{document.documentElement.classList.remove('fan-scroll');window.removeEventListener('popstate',restorePublicLocation);});
+const tab=ref(viewToTab[readPublicNavigation(location.search).view]||'matches'),matchesView=ref<'days'|'bracket'>('days'),standingsView=ref<'league'|'bracket'>('league'),categoryId=ref(''),announcedRound=ref(1),announcedView=ref<'rounds'|'finals'>('rounds'),selectedMatch=ref<FanMatch|null>(null),selectedAnnouncedMatch=ref<{ordinal:number;homeEntryId:string;awayEntryId:string}|null>(null),selectedTeam=ref<FanTeam|null>(null),selectorOpen=ref(!props.selectedTournamentId),tournamentSearch=ref('');
 const currentTournament=computed(()=>props.tournaments.find(item=>item.id===props.selectedTournamentId)||null);
 const categories=computed(()=>props.tournaments.filter(item=>item.id===props.selectedTournamentId));
 const category=computed(()=>categories.value.find(item=>item.category_id===categoryId.value)||categories.value[0]||null);
@@ -78,7 +82,7 @@ const announcedStatuses=computed(()=>Object.fromEntries(Object.entries(published
   return [key,{score,label}];
 })));
 const pendingAnnouncedRounds=computed(()=>announced.value?.rounds.map(round=>({...round,matches:round.matches.filter(pair=>!publishedAnnouncedMatches.value[`${pair.homeEntryId}:${pair.awayEntryId}`])})).filter(round=>round.matches.length)||[]);
-function openAnnouncedMatch(ordinal:number,pair:{homeEntryId:string;awayEntryId:string}){const published=publishedAnnouncedMatches.value[`${pair.homeEntryId}:${pair.awayEntryId}`];if(published)selectedMatch.value=published;else selectedAnnouncedMatch.value={ordinal,...pair};}
+function openAnnouncedMatch(ordinal:number,pair:{homeEntryId:string;awayEntryId:string}){const published=publishedAnnouncedMatches.value[`${pair.homeEntryId}:${pair.awayEntryId}`];if(published)openMatch(published);else{selectedAnnouncedMatch.value={ordinal,...pair};const index=announced.value?.rounds.find(item=>item.ordinal===ordinal)?.matches.findIndex(item=>item.homeEntryId===pair.homeEntryId&&item.awayEntryId===pair.awayEntryId)??-1;if(!restoringNavigation&&index>=0)pushPublicNavigation(tabToView[tab.value]||'partidos',{kind:'cruce',id:`${ordinal}-${index+1}`});}}
 const bracket=computed(()=>props.brackets.find(item=>item.category_id===currentCategoryId.value));
 const leagueBracket=computed(()=>category.value?.rules?.initialPhase?.mode==='league'&&!!bracket.value);
 const bracketRounds=computed<PlannedRound[]>(()=>[...new Set((bracket.value?.slots||[]).map(slot=>slot.stage))].map(stage=>{const ties=(bracket.value?.slots||[]).filter(slot=>slot.stage===stage).sort((a,b)=>a.slot-b.slot);const size=ties.length*2;return {size,name:stage===1&&bracket.value?.repechage?'Repechaje':knockoutRoundName(size),pairing:'positions' as const,legs:ties.some(tie=>tie.twoLegs)?2 as const:1 as const,ties};}));
@@ -87,20 +91,41 @@ const categoryTeams=computed(()=>props.teams.filter(team=>team.category_id===cur
 const defense=computed(()=>(stats.value?.defense||[]).filter(row=>row.played>0).sort((a,b)=>a.goalsAgainst-b.goalsAgainst||a.teamName.localeCompare(b.teamName,'es')));
 const activeStatFlyer=computed(()=>tab.value==='standings'&&leagueBracket.value&&standingsView.value==='bracket'?flyer('bracket',bracket.value?.phase_id||''):['standings','scorers','defense'].includes(tab.value)?flyer(tab.value,currentCategoryId.value):undefined);
 const roster=computed(()=>stats.value?.rosters?.find(item=>item.entryId===selectedTeam.value?.entry_id)?.players||[]);
-watch(()=>props.selectedTournamentId,id=>{tab.value=props.tournaments.find(item=>item.id===id)?.presentation_only?(props.announcedFixtures[props.tournaments.find(item=>item.id===id)?.category_id||'']?'matches':'teams'):'matches';matchesView.value='days';standingsView.value='league';categoryId.value='';announcedRound.value=1;announcedView.value='rounds';selectedMatch.value=null;selectedAnnouncedMatch.value=null;selectedTeam.value=null;selectorOpen.value=!id;tournamentSearch.value='';});
+watch(()=>props.selectedTournamentId,id=>{restoringNavigation=true;matchesView.value='days';standingsView.value='league';categoryId.value='';announcedRound.value=1;announcedView.value='rounds';selectedMatch.value=null;selectedAnnouncedMatch.value=null;selectedTeam.value=null;selectorOpen.value=!id;tournamentSearch.value='';restorePublicLocation();});
 watch([currentTournament,announcedMode],([item,hasPlan])=>{if(!tabs.value.some(entry=>entry.key===tab.value))tab.value=hasPlan?'matches':item?.presentation_only?'teams':'matches';},{immediate:true});
 watch(category,()=>{selectedMatch.value=null;selectedAnnouncedMatch.value=null;selectedTeam.value=null;standingsView.value='league';announcedRound.value=1;announcedView.value='rounds';if(!tabs.value.some(item=>item.key===tab.value))tab.value=currentTournament.value?.presentation_only?(announcedMode.value?'matches':'teams'):'matches';});
+watch(()=>props.fixture,days=>{if(!selectedMatch.value)return;const latest=days.flatMap(day=>day.matches).find(item=>item.id===selectedMatch.value?.id);if(latest)selectedMatch.value=latest;else if(!props.loading){selectedMatch.value=null;pushPublicNavigation(tabToView[tab.value]||'partidos',null,true);}});
 let listScrollY=0;
 watch([selectedMatch,selectedAnnouncedMatch,selectedTeam],([match,announcedMatch,team],[previousMatch,previousAnnouncedMatch,previousTeam])=>{if((match||announcedMatch||team)&&!(previousMatch||previousAnnouncedMatch||previousTeam)){listScrollY=window.scrollY;void nextTick(()=>window.scrollTo(0,0));}else if(!match&&!announcedMatch&&!team&&(previousMatch||previousAnnouncedMatch||previousTeam)){void nextTick(()=>window.scrollTo(0,listScrollY));}});
-function chooseTournament(item:CatalogItem){selectorOpen.value=false;tournamentSearch.value='';emit('navigate',`publico/${item.organization_id}/${item.id}`);}
+function chooseTournament(item:CatalogItem){selectorOpen.value=false;tournamentSearch.value='';if(item.id!==props.selectedTournamentId)emit('navigate',`publico/${item.organization_id}/${item.id}`);}
 async function toggleSelector(){selectorOpen.value=!selectorOpen.value;if(selectorOpen.value){await nextTick();document.getElementById('fan-tournament-search')?.focus();}}
 function team(id:string){return props.teams.find(item=>item.id===id&&item.category_id===currentCategoryId.value);}
 function byName(name:string){return categoryTeams.value.find(item=>item.name===name);}
 function shortDate(value:string){const [y,m,d]=value.split('-');return `${d}/${m}/${y}`;}
 function dayTitle(day:FanDay){const names=[...new Set(day.matches.map(match=>roundByMatchId.value.get(match.id)))];if(names.length===1&&names[0]){const legs=[...new Set(day.matches.map(match=>match.tie_leg))];return legs.length===1&&legs[0]?`${names[0]} · ${legs[0]}`:names[0];}return names.length>1&&names.every(Boolean)?'Eliminación':`Fecha ${day.ordinal}`;}
 function matchTitle(match:FanMatch){const day=days.value.find(item=>item.matches.some(entry=>entry.id===match.id));return `${roundByMatchId.value.get(match.id)||`Fecha ${day?.ordinal||''}`}${match.tie_leg?` · ${match.tie_leg}`:''}`;}
-function openBracketMatch(id:string){const match=days.value.flatMap(day=>day.matches).find(item=>item.id===id);if(match)selectedMatch.value=match;}
-function closeDetail(){selectedMatch.value=null;selectedAnnouncedMatch.value=null;selectedTeam.value=null;}
+function openMatch(match:FanMatch){selectedMatch.value=match;if(!restoringNavigation)pushPublicNavigation(tabToView[tab.value]||'partidos',{kind:'partido',id:match.id});}
+function openTeam(item:FanTeam){selectedTeam.value=item;if(!restoringNavigation)pushPublicNavigation('equipos',{kind:'equipo',id:item.entry_id});}
+function openBracketMatch(id:string){const match=days.value.flatMap(day=>day.matches).find(item=>item.id===id);if(match)openMatch(match);}
+function closeDetail(){selectedMatch.value=null;selectedAnnouncedMatch.value=null;selectedTeam.value=null;closePublicDetail(tabToView[tab.value]||'partidos');}
+function restorePublicLocation(){
+  const epoch=++restoreEpoch;
+  const state=readPublicNavigation(location.search),requested=viewToTab[state.view]||'matches';
+  restoringNavigation=true;
+  const match=state.detail?.kind==='partido'?props.fixture.flatMap(day=>day.matches).find(item=>item.id===state.detail?.id):undefined;
+  const team=state.detail?.kind==='equipo'?props.teams.find(item=>item.entry_id===state.detail?.id):undefined;
+  if(match||team)categoryId.value=(match||team)!.category_id;
+  tab.value=tabs.value.some(item=>item.key===requested)?requested:tabs.value[0]?.key||'matches';
+  selectedMatch.value=null;selectedAnnouncedMatch.value=null;selectedTeam.value=null;
+  void nextTick(()=>{
+    if(epoch!==restoreEpoch)return;
+    if(match)openMatch(match);
+    else if(team)openTeam(team);
+    else if(state.detail?.kind==='cruce'){const [ordinal,index]=state.detail.id.split('-').map(Number),pair=announced.value?.rounds.find(item=>item.ordinal===ordinal)?.matches[index-1];if(pair)openAnnouncedMatch(ordinal,pair);}
+    restoringNavigation=false;
+  });
+}
+watch(tab,value=>{if(!restoringNavigation&&!props.loading){pushPublicNavigation(tabToView[value]||'partidos');void nextTick(()=>window.scrollTo(0,0));}},{flush:'sync'});
 function flyer(kind:string,sourceId:string){return props.flyers.find(item=>item.kind===kind&&item.sourceId===sourceId);}
 function flyerUrl(item:FanFlyer){return `/api/v1/public/organizations/${props.organization?.id}/flyers/${item.id}/file`;}
 </script>
@@ -143,7 +168,7 @@ function flyerUrl(item:FanFlyer){return `/api/v1/public/organizations/${props.or
             <p v-if="!days.length" class="fan-empty">Aún no hay partidos publicados.</p>
             <section v-for="day in days" :key="day.id" class="fan-day">
               <div class="fan-day-head"><h2>{{ dayTitle(day) }}</h2><a v-if="flyer('matchday',day.id)" class="fan-flyer-link" :href="flyerUrl(flyer('matchday',day.id)!)" target="_blank" rel="noopener"><Icon name="download" /> Flyer</a></div>
-              <button v-for="match in day.matches" :key="match.id" type="button" class="fan-match-row" :class="{'is-final':match.result?.status==='official'}" :aria-label="`${match.home_name} contra ${match.away_name}, ${match.result?`${match.result.score.home} a ${match.result.score.away}`:match.match_time}. Ver partido`" @click="selectedMatch=match">
+              <button v-for="match in day.matches" :key="match.id" type="button" class="fan-match-row" :class="{'is-final':match.result?.status==='official'}" :aria-label="`${match.home_name} contra ${match.away_name}, ${match.result?`${match.result.score.home} a ${match.result.score.away}`:match.match_time}. Ver partido`" @click="openMatch(match)">
                 <span class="fan-match-date">{{ match.result?.status==='official'?'Final':match.match_time||'Pendiente' }}<small v-if="match.tie_leg">{{ match.tie_leg }}</small></span>
                 <span class="fan-match-team"><TeamCrest size="sm" :name="match.home_name" :team-id="match.home_team_id" :organization-id="organization?.id" :color="team(match.home_team_id)?.color" :has-shield="team(match.home_team_id)?.has_shield" /><strong :title="match.home_name">{{ match.home_name }}</strong></span>
                 <span class="fan-match-result"><b>{{ match.result?`${match.result.score.home} : ${match.result.score.away}`:'vs' }}</b><small v-if="match.result&&(match.result.shootout.home||match.result.shootout.away)">Pen. {{ match.result.shootout.home }}:{{ match.result.shootout.away }}</small></span>
@@ -169,7 +194,7 @@ function flyerUrl(item:FanFlyer){return `/api/v1/public/organizations/${props.or
         </section>
         <section v-if="tab==='scorers'" id="fan-sections-scorers-panel" role="tabpanel" aria-labelledby="fan-sections-scorers-tab" class="fan-content"><p v-if="!stats?.scorers?.length" class="fan-empty">Aún no hay goleadores publicados.</p><div v-for="(player,index) in stats?.scorers||[]" :key="`${player.name}-${index}`" class="fan-scorer-row"><span class="fan-rank">{{ index+1 }}</span><TeamCrest size="sm" :name="player.teamName" :team-id="byName(player.teamName)?.id" :organization-id="organization?.id" :color="byName(player.teamName)?.color" :has-shield="byName(player.teamName)?.has_shield" /><span><strong :title="player.name">{{ player.name }}</strong><small :title="player.teamName">{{ player.teamName }}</small></span><b>{{ player.goals }}</b></div></section>
         <section v-if="tab==='defense'" id="fan-sections-defense-panel" role="tabpanel" aria-labelledby="fan-sections-defense-tab" class="fan-content"><p v-if="!defense.length" class="fan-empty">Aún no hay partidos oficiales.</p><div v-else class="fan-defense-head"><span>Equipo</span><span>PJ</span><span>GC</span></div><div v-for="(row,index) in defense" :key="row.teamName" class="fan-defense-row"><span class="fan-rank">{{ index+1 }}</span><TeamCrest size="sm" :name="row.teamName" :team-id="byName(row.teamName)?.id" :organization-id="organization?.id" :color="byName(row.teamName)?.color" :has-shield="byName(row.teamName)?.has_shield" /><strong :title="row.teamName">{{ row.teamName }}</strong><span>{{ row.played }}</span><b>{{ row.goalsAgainst }}</b></div></section>
-        <section v-if="tab==='teams'" id="fan-sections-teams-panel" role="tabpanel" aria-labelledby="fan-sections-teams-tab" class="fan-content"><p v-if="!categoryTeams.length" class="fan-empty">Aún no hay equipos publicados.</p><button v-for="item in categoryTeams" :key="item.entry_id" type="button" class="fan-team-row" @click="selectedTeam=item"><TeamCrest :name="item.name" :team-id="item.id" :organization-id="organization?.id" :color="item.color" :has-shield="item.has_shield" /><strong :title="item.name">{{ item.name }}</strong><Icon name="arrow" /></button></section>
+        <section v-if="tab==='teams'" id="fan-sections-teams-panel" role="tabpanel" aria-labelledby="fan-sections-teams-tab" class="fan-content"><p v-if="!categoryTeams.length" class="fan-empty">Aún no hay equipos publicados.</p><button v-for="item in categoryTeams" :key="item.entry_id" type="button" class="fan-team-row" @click="openTeam(item)"><TeamCrest :name="item.name" :team-id="item.id" :organization-id="organization?.id" :color="item.color" :has-shield="item.has_shield" /><strong :title="item.name">{{ item.name }}</strong><Icon name="arrow" /></button></section>
       </template>
     </template>
   </div>

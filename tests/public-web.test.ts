@@ -66,6 +66,10 @@ test('alias de torneo abre directo, conserva SEO y redirige enlaces largos', asy
     assert.match(direct.body,/data-public-tournament-id="33333333-3333-4333-8333-333333333333"/);
     assert.match(direct.body,/rel="canonical" href="https:\/\/torneos.example\/fcfs-copacaacupe"/);
     assert.match(direct.body,/og:image/);
+    const classification=await app.inject('/fcfs-copacaacupe?vista=clasificacion');
+    assert.equal(classification.statusCode,200);
+    assert.match(classification.body,/rel="canonical" href="https:\/\/torneos.example\/fcfs-copacaacupe"/);
+    assert.match(classification.body,/data-public-tournament-id="33333333-3333-4333-8333-333333333333"/);
     for(const oldPath of ['/federacion-larga',`/federacion-larga/${tournamentId}`]){
       const old=await app.inject(oldPath);assert.equal(old.statusCode,308);assert.equal(old.headers.location,'https://torneos.example/fcfs-copacaacupe');
     }
