@@ -29,6 +29,7 @@ test('SEO entrega solo torneos públicos, HTML de cada URL y acceso no indexable
     const sitemap=await app.inject('/sitemap.xml');assert.equal(sitemap.statusCode,200);assert.match(sitemap.body,/federacion-prueba\/22222222/);assert.doesNotMatch(sitemap.body,/borrador/);
     const robots=await app.inject('/robots.txt');assert.match(robots.body,/Disallow: \/acceso/);assert.match(robots.body,/Allow: \/api\/v1\/public\//);
     const login=await app.inject('/acceso');assert.equal(login.statusCode,200);assert.match(login.body,/noindex,nofollow/);
+    const panel=await app.inject('/panel/torneo/22222222-2222-4222-8222-222222222222/estadisticas');assert.equal(panel.statusCode,200);assert.match(panel.body,/noindex,nofollow/);
     assert.doesNotMatch(root.body,/googletagmanager/);
     const unknown=await app.inject('/borrador');assert.equal(unknown.statusCode,404);assert.match(unknown.body,/noindex,nofollow/);
     const asset=await app.inject('/assets/app.js');assert.equal(asset.statusCode,200);assert.match(String(asset.headers['content-type']||''),/javascript/);

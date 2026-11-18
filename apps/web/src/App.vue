@@ -8,6 +8,7 @@ import SportTabs from './SportTabs.vue';
 import SportEventMark from './SportEventMark.vue';
 import PublicMatchRow from './PublicMatchRow.vue';
 import InstallButton from './InstallButton.vue';
+import {cleanLegacyHash,routeFromUrl} from './client-route.ts';
 import { queueMatchEvent,queuedMatchEvents,removeQueuedMatchEvent,type QueuedMatchEvent } from './offline-events.ts';
 
 const LoadingScreen = defineComponent(() => () => h('p', { class: 'small muted pad', role: 'status' }, 'Cargando…'));
@@ -50,14 +51,7 @@ interface FineCatalogItem { id:string;code:string;version:number;label:string;am
 interface PrivateStats { officialMatches:number; entries:Array<{id:string;name:string;groupNo:number|null}>; players:Array<{ registrationId:string;entryId:string;name:string;publicName:boolean;goals:number;yellowCards:number;redCards:number;appearances:number }>;defense:Array<{entryId:string;played:number;goalsAgainst:number}>;tables:Array<{groupNo:number|null;groups:Array<{position:number;teamIds:string[];unresolved:boolean}>;totals:Array<{teamId:string;points:number;played:number;wins:number;goalsFor:number;goalsAgainst:number}>}> }
 class RequestError extends Error { constructor(message: string, public code = '', public status = 0) { super(message); } }
 function routeFromLocation(){
-  if(location.hash.startsWith('#/'))return location.hash.slice(2);
-  const segments=location.pathname.split('/').filter(Boolean);
-  if(!segments.length)return 'publico';
-  if(segments.length===1&&['acceso','panel'].includes(segments[0]))return segments[0];
-  const mount=document.getElementById('app')?.dataset;
-  if(mount?.publicOrganizationId&&mount.publicPath===location.pathname&&segments.length<=2)return `publico/${mount.publicOrganizationId}${mount.publicTournamentId?`/${mount.publicTournamentId}`:''}`;
-  if(segments.length<=2&&/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(segments[0])&&(!segments[1]||/^[0-9a-f-]{36}$/i.test(segments[1])))return `portal/${segments.join('/')}`;
-  return 'publico';
+  return routeFromUrl(location.pathname,location.hash,document.getElementById('app')?.dataset);
 }
 function setPublicPageMeta(title:string,description:string,canonical:string,image=''){
   document.title=title;
@@ -373,7 +367,7 @@ function initials(value: string) { return value.trim().split(/\s+/).slice(0, 2).
 function publicTeam(teamId:string){return publicTeams.value.find(team=>team.id===teamId);}
 function publicTeamByName(name:string,categoryId:string){return publicTeams.value.find(team=>team.category_id===categoryId&&team.name===name);}
 function go(path: string, preferredAlias = '') {
-  const target=path==='publico'?'/':path==='acceso'?'/acceso':path==='panel'?'/panel':path.startsWith('publico/')?(()=>{const [,organizationId,tournamentId]=path.split('/');const alias=preferredAlias||publicCatalog.value.find(item=>item.id===tournamentId)?.public_slug||publicOrganizations.value.find(item=>item.id===organizationId&&item.single_tournament_id===tournamentId)?.single_tournament_slug;if(alias)return `/${alias}`;const slug=publicOrganization.value?.id===organizationId?publicOrganization.value.public_slug:publicOrganizations.value.find(item=>item.id===organizationId)?.public_slug||publicCatalog.value.find(item=>item.organization_id===organizationId)?.organization_slug;return slug?`/${slug}${tournamentId?`/${tournamentId}`:''}`:`/#/${path}`;})():`/#/${path}`;
+  const target=path==='publico'?'/':path==='acceso'?'/acceso':path==='panel'?'/panel':path.startsWith('publico/')?(()=>{const [,organizationId,tournamentId]=path.split('/');const alias=preferredAlias||publicCatalog.value.find(item=>item.id===tournamentId)?.public_slug||publicOrganizations.value.find(item=>item.id===organizationId&&item.single_tournament_id===tournamentId)?.single_tournament_slug;if(alias)return `/${alias}`;const slug=publicOrganization.value?.id===organizationId?publicOrganization.value.public_slug:publicOrganizations.value.find(item=>item.id===organizationId)?.public_slug||publicCatalog.value.find(item=>item.organization_id===organizationId)?.organization_slug;return slug?`/${slug}${tournamentId?`/${tournamentId}`:''}`:`/#/${path}`;})():['invitacion','recuperacion'].includes(path.split('/')[0])?`/#/${path}`:`/panel/${path}`;
   if(target===location.pathname+location.search+location.hash&&route.value===path){window.scrollTo(0,0);return;}
   if(!target.includes('#/'))cleanRouteCache.set(target,path);
   history.pushState(null,'',target);route.value=path;window.scrollTo(0,0);
@@ -1354,6 +1348,7 @@ async function loadView(force = false) {
       const hasEmblem=publicTournament.value?.has_emblem&&(publicTournament.value.status==='published'||publicTournament.value.presentation_only)||draws.some(item=>item.tournament_id===tournamentId&&item.has_emblem);
       const image=hasEmblem?`${location.origin}/api/v1/public/organizations/${result.organization.id}/tournaments/${tournamentId}/emblem`:result.organization.logo_id?`${location.origin}/api/v1/public/organizations/${result.organization.id}/logo`:'';
       setPublicPageMeta(title,description,canonical,image);
+      if(location.hash.startsWith('#/publico/')){history.replaceState(null,'',canonical);cleanRouteCache.set(new URL(canonical).pathname,route.value);}
       const stream=previewOnly?null:new EventSource(`/api/v1/public/organizations/${organizationId}/results/stream`);publicResultsStream=stream;
       const currentPublicView=()=>epoch===routeEpoch&&parts.value[0]==='publico'&&parts.value[1]===organizationId&&parts.value[2]===tournamentId;
       const refreshResults=()=>{void api<PublicFixtureDay[]>(`/public/organizations/${organizationId}/fixture`).then(days=>{if(currentPublicView())publicFixture.value=tournamentId?days.filter(day=>day.tournament_id===tournamentId):days;}).catch(()=>{});void Promise.allSettled(publicTournaments.value.map(item=>api<PublicStats>(`/public/organizations/${organizationId}/categories/${item.category_id}/statistics`))).then(results=>{if(currentPublicView())publicStatistics.value=Object.fromEntries(publicTournaments.value.flatMap((item,index)=>results[index].status==='fulfilled'?[[item.category_id,results[index].value]]:[]));});};
@@ -1543,13 +1538,25 @@ async function acceptLink() {
 }
 function signInForLink() { returnRoute.value = route.value; login.username = tokenInfo.value?.username || ''; go('acceso'); }
 function dateLabel(value: string) { return new Intl.DateTimeFormat('es-PY', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Asuncion' }).format(new Date(value)); }
-const routeChanged = () => { route.value = location.hash.startsWith('#/')?routeFromLocation():cleanRouteCache.get(location.pathname)||routeFromLocation(); };
+const routeChanged = () => {
+  const cleanTarget=cleanLegacyHash(location.hash);
+  if(cleanTarget)history.replaceState(null,'',cleanTarget);
+  route.value = location.hash.startsWith('#/')?routeFromLocation():cleanRouteCache.get(location.pathname)||routeFromLocation();
+};
+const internalLinkClicked = (event:MouseEvent) => {
+  if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey||!(event.target instanceof Element))return;
+  const link=event.target.closest<HTMLAnchorElement>('a[href^="#/"]');
+  if(!link||link.target||link.hasAttribute('download'))return;
+  const destination=link.getAttribute('href')?.slice(2)||'';
+  if(!destination||['invitacion','recuperacion'].includes(destination.split('/')[0]))return;
+  event.preventDefault();go(destination);
+};
 const connectionChanged = () => { online.value = navigator.onLine; if(online.value && queuedCapture.value.length) void syncCaptureQueue(); };
 watch(route, (next, previous) => { success.value = ''; publishPreviewCategory.value = ''; showRuleEditor.value = next.startsWith('categoria/') && next.endsWith('/tarjetas'); if (next.startsWith('planilla/') && next !== previous) lineupSearch.value = ''; if (next.startsWith('fixture/') && next !== previous) fixtureSeedOrder.value = []; if (next.startsWith('equipo/') && next !== previous) { teamAction.value = null; teamTab.value='players'; } if (next.startsWith('jugador/') && next !== previous) playerTab.value='record'; if (next.startsWith('disciplina/') && next !== previous) {disciplineTab.value='cases';disciplineSettingsTab.value='case';} if (next.startsWith('partido/') && next !== previous) matchTab.value='events'; void loadView().then(async()=>{if(next.endsWith('/tarjetas')){await nextTick(); document.getElementById('rule-cards')?.scrollIntoView({block:'start'});}}); if(!next.endsWith('/tarjetas'))window.scrollTo(0, 0); });
 watch(route, () => { passwordDraft.value = ''; ownPasswordOpen.value = false; adminPasswordTarget.value = ''; });
 watch([route, user], async () => { await nextTick(); document.querySelector<HTMLElement>('.bottom-nav a[aria-current="page"]')?.scrollIntoView({ inline: 'center', block: 'nearest' }); }, { flush: 'post' });
-onMounted(() => { window.addEventListener('hashchange', routeChanged); window.addEventListener('popstate', routeChanged); window.addEventListener('online', connectionChanged); window.addEventListener('offline', connectionChanged); loadView(); });
-onUnmounted(() => { publicResultsStream?.close();privateMatchStream?.close();window.removeEventListener('hashchange', routeChanged); window.removeEventListener('popstate', routeChanged); window.removeEventListener('online', connectionChanged); window.removeEventListener('offline', connectionChanged); clearTimeout(toastTimer);if(loadingTimer)clearTimeout(loadingTimer); });
+onMounted(() => { window.addEventListener('hashchange', routeChanged); window.addEventListener('popstate', routeChanged); document.addEventListener('click',internalLinkClicked); window.addEventListener('online', connectionChanged); window.addEventListener('offline', connectionChanged); routeChanged(); loadView(); });
+onUnmounted(() => { publicResultsStream?.close();privateMatchStream?.close();window.removeEventListener('hashchange', routeChanged); window.removeEventListener('popstate', routeChanged);document.removeEventListener('click',internalLinkClicked); window.removeEventListener('online', connectionChanged); window.removeEventListener('offline', connectionChanged); clearTimeout(toastTimer);if(loadingTimer)clearTimeout(loadingTimer); });
 </script>
 
 <template>
