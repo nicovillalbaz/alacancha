@@ -1162,6 +1162,25 @@ test('T04/T05: una jornada de Copa con fecha prevista se publica y abre el acta 
   assert.equal(nameOnly.statusCode,201,nameOnly.body);
   const card=await request(adminA,'POST',`${root}/matches/${match.id}/events`,{clientEventId:randomUUID(),kind:'yellow',teamEntryId:quickPlayer.teamEntryId,registrationId:quickPlayer.registrationId,relatedRegistrationId:null,incidentNote:null,cardCode:null,windowNo:null,period:'PT',minute:null});
   assert.equal(card.statusCode,201,card.body);assert.equal(card.json().score.home,1);assert.equal(card.json().events.length,2);
+  const hiddenId=randomUUID();
+  const hiddenPlayer={...quickPlayer,registrationId:hiddenId,givenNames:'Rosa',familyNames:'Duarte',event:{...quickPlayer.event,clientEventId:hiddenId,registrationId:hiddenId,kind:'yellow'}};
+  assert.equal((await request(adminA,'POST',`${root}/matches/${match.id}/record/players`,hiddenPlayer)).statusCode,201);
+  assert.equal((await request(adminA,'POST',`${root}/registrations/${hiddenId}/publication`,{visible:false,reason:'Nombre reservado por decisión de la organización'})).statusCode,200);
+  assert.equal((await pool.query('SELECT 1 FROM player_publications WHERE organization_id=$1 AND registration_id=$2',[ids.a,registrationId])).rowCount,0);
+  assert.equal((await request(adminA,'POST',`${root}/matches/${match.id}/acta/submit`,{reason:'Prueba de alta rápida'})).statusCode,201);
+  const approved=await request(adminA,'POST',`${root}/matches/${match.id}/acta/approve`,{reason:'Prueba de publicación automática',overrideSignoffs:true});
+  assert.equal(approved.statusCode,201,approved.body);
+  const {rows:publication}=await pool.query('SELECT registration_id,visible FROM player_publications WHERE organization_id=$1 AND registration_id=ANY($2::uuid[]) ORDER BY registration_id',[ids.a,[registrationId,hiddenId]]);
+  assert.equal(publication.find(row=>row.registration_id===registrationId)?.visible,true);
+  assert.equal(publication.find(row=>row.registration_id===hiddenId)?.visible,false);
+  const publicResult=(await app.inject(`/api/v1/public/organizations/${ids.a}/fixture`)).json().flatMap((day:any)=>day.matches).find((item:any)=>item.id===match.id)?.result;
+  assert.ok(publicResult?.events.some((event:any)=>event.name==='Lucía Benítez'&&event.side==='home'&&event.period==='PT'));
+  assert.ok(publicResult?.events.some((event:any)=>event.name==='Jugador'&&event.kind==='yellow'));
+  const publicStatistics=(await app.inject(`/api/v1/public/organizations/${ids.a}/categories/${categoryId}/statistics`)).json();
+  assert.ok(publicStatistics.scorers.some((player:any)=>player.name==='Lucía Benítez'&&player.goals===1));
+  assert.equal(publicStatistics.scorers.some((player:any)=>player.name==='Rosa Duarte'),false);
+  assert.ok(publicStatistics.tables.some((table:any)=>table.rows.some((row:any)=>row.played===1)));
+  assert.equal((await pool.query('SELECT status FROM player_registrations WHERE organization_id=$1 AND id=$2',[ids.a,registrationId])).rows[0].status,'draft');
 });
 
 test('T04: orden manual de grupos y general avanza solo con actas vigentes y permiso propio',async()=>{

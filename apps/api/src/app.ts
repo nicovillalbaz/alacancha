@@ -3038,6 +3038,20 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       const {rows:[signs]}=await client.query('SELECT count(*)::int total FROM match_acta_signoffs WHERE organization_id=$1 AND snapshot_id=$2',[organizationId,record.submission_id]);
       if (signs.total<2 && !input.overrideSignoffs) fail(409,'SIGNOFFS_PENDING','Faltan conformidades de los equipos. Marcá la aprobación excepcional y justificá el motivo.');
       const result=await appendActa(client,organizationId,match,record,'approved',input.reason,actor.user_id);
+      // La autorización del nombre nace del alta rápida vinculada a un evento
+      // vigente del acta aprobada. Una decisión manual anterior prevalece.
+      const actaEvents=result.snapshot.events as MatchJournalEvent[];
+      const voidedEventIds=new Set(actaEvents.filter(event=>event.kind==='void').map(event=>event.voidsEventId));
+      const activePlayers=[...new Set(actaEvents.filter(event=>event.kind!=='void'&&!voidedEventIds.has(event.id)).map(event=>event.registrationId).filter((id):id is string=>!!id))];
+      if(activePlayers.length){
+        const {rows:publishedNames}=await client.query(`INSERT INTO player_publications(organization_id,registration_id,visible,reason,decided_by)
+          SELECT a.organization_id,a.resource_id,true,'Nombre publicado con el acta oficial del partido', $4
+          FROM audit_logs a JOIN player_registrations pr ON pr.organization_id=a.organization_id AND pr.id=a.resource_id
+          WHERE a.organization_id=$1 AND a.action='match.quick_player_created' AND a.after_data->>'matchId'=$2
+            AND a.resource_id=ANY($3::uuid[]) AND pr.reverted_at IS NULL
+          ON CONFLICT (organization_id,registration_id) DO NOTHING RETURNING registration_id`,[organizationId,match,activePlayers,actor.user_id]);
+        if(publishedNames.length)await audit(client,actor.user_id,organizationId,'match.quick_players_names_published',match,'Acta oficial aprobada',null,{registrationIds:publishedNames.map(row=>row.registration_id)});
+      }
       const {rows:[tie]}=await client.query(`SELECT s.id,s.phase_id,s.stage,s.match_id,s.return_match_id,s.decider_match_id,m.home_entry_id,m.away_entry_id,p.rule_version,p.category_id
         FROM fixture_bracket_slots s JOIN draft_matches m ON m.organization_id=s.organization_id AND m.id=s.match_id
         JOIN fixture_phases p ON p.organization_id=s.organization_id AND p.id=s.phase_id
