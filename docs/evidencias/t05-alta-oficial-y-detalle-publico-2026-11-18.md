@@ -10,3 +10,9 @@
 ## Verificación
 
 La prueba sintética cubre permiso denegado entre organizaciones, idempotencia de alta, aprobación de dos jugadores (uno con nombre público oculto), creación de primera lista aprobada, una rectificación con nuevo jugador sin cambiar la versión de esa lista y su selección en una planilla posterior. La clasificación y los goleadores se comprueban desde el portal público. El diseño se compila con Vue; revisión física a 320/390 px, teclado, texto largo y red inestable pendiente.
+
+## Producción y revisión visual
+
+- Commit `b273753` compilado en el VPS. Respaldo `initial-20261118T112435Z.dump` restaurado con 71 tablas. En la copia descartable la regularización aprobó 4 fichas y creó 2 primeras listas; una segunda ejecución hizo 0 cambios. Producción dio los mismos 4/2. Las 9 altas rápidas de Caacupé figuran aprobadas.
+- API y web responden; dos partidos oficiales conservan 16 eventos con nombre, 10 goles atribuidos, cuatro participaciones en clasificación y 10 goles en goleadores. No se observaron errores en el journal de API en los diez minutos de la verificación.
+- Capturas del detalle público: [390 px](t05-match-mobile-20261118.png) y [320 px](t05-match-320-20261118.png). Un navegador sin sesión en el VPS cargó el partido; ancho de documento igual al viewport en ambos tamaños, dos escudos visibles. A 320 px los filtros dieron 9 eventos completos, 5 goles y 4 tarjetas. Los nombres largos se recortan, conservando el dato completo en la respuesta pública. La aceptación en teléfono físico, con teclado y red inestable sigue pendiente.
