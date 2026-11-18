@@ -71,6 +71,8 @@ function setPublicPageMeta(title:string,description:string,canonical:string,imag
 }
 const initialRoute=routeFromLocation();
 const route = ref(initialRoute);
+const cleanRouteCache = new Map<string,string>();
+if(!location.hash.startsWith('#/'))cleanRouteCache.set(location.pathname,initialRoute);
 const user = ref<CurrentUser | null>(null);
 const members = ref<Administrator[]>([]);
 const organizations = ref<OrganizationSummary[]>([]);
@@ -232,7 +234,7 @@ const publicOrganization = ref<PublicOrganization | null>(null);
 const publicTeams = ref<Array<{ id: string; entry_id:string; name: string; color: string; has_shield: boolean; category_id: string }>>([]);
 const activity = ref<Audit[]>([]);
 const technicalErrors=ref<TechnicalError[]>([]),activityTab=ref<'changes'|'errors'>('changes');
-const loading = ref(false), loadingVisual = ref(false), busy = ref(false), error = ref(''), success = ref(''), online = ref(navigator.onLine);
+const loading = ref(initialRoute.startsWith('publico')), loadingVisual = ref(false), busy = ref(false), error = ref(''), success = ref(''), online = ref(navigator.onLine);
 let loadingTimer:ReturnType<typeof setTimeout>|null=null;
 const errorCode = ref('');
 const login = reactive({ username: '', password: '' });
@@ -372,6 +374,8 @@ function publicTeam(teamId:string){return publicTeams.value.find(team=>team.id==
 function publicTeamByName(name:string,categoryId:string){return publicTeams.value.find(team=>team.category_id===categoryId&&team.name===name);}
 function go(path: string, preferredAlias = '') {
   const target=path==='publico'?'/':path==='acceso'?'/acceso':path==='panel'?'/panel':path.startsWith('publico/')?(()=>{const [,organizationId,tournamentId]=path.split('/');const alias=preferredAlias||publicCatalog.value.find(item=>item.id===tournamentId)?.public_slug||publicOrganizations.value.find(item=>item.id===organizationId&&item.single_tournament_id===tournamentId)?.single_tournament_slug;if(alias)return `/${alias}`;const slug=publicOrganization.value?.id===organizationId?publicOrganization.value.public_slug:publicOrganizations.value.find(item=>item.id===organizationId)?.public_slug||publicCatalog.value.find(item=>item.organization_id===organizationId)?.organization_slug;return slug?`/${slug}${tournamentId?`/${tournamentId}`:''}`:`/#/${path}`;})():`/#/${path}`;
+  if(target===location.pathname+location.hash&&route.value===path){window.scrollTo(0,0);return;}
+  if(!target.includes('#/'))cleanRouteCache.set(target,path);
   history.pushState(null,'',target);route.value=path;window.scrollTo(0,0);
 }
 function openPublicOrganization(id:string){const item=publicOrganizations.value.find(row=>row.id===id);go(item?.tournament_count===1&&item.single_tournament_id?`publico/${id}/${item.single_tournament_id}`:`publico/${id}`,item?.single_tournament_slug||'');}
@@ -1307,12 +1311,15 @@ async function loadView(force = false) {
       if(epoch!==routeEpoch)return;
       const tournamentId=selected.kind==='tournament'?selected.tournament_id||'':viewParts[2]||(selected.tournament_count===1?selected.single_tournament_id||'':'');
       if(selected.kind==='organization'&&!viewParts[2]&&tournamentId&&selected.single_tournament_slug)history.replaceState(null,'',`/${selected.single_tournament_slug}`);
-      route.value=`publico/${selected.organization_id}${tournamentId?`/${tournamentId}`:''}`;
+      const resolvedRoute=`publico/${selected.organization_id}${tournamentId?`/${tournamentId}`:''}`;
+      cleanRouteCache.set(location.pathname,resolvedRoute);
+      route.value=resolvedRoute;
       return;
     }
     if (parts.value[0] === 'publico') {
+      publicResultsStream?.close();publicResultsStream=null;
       publicOrganization.value = null; publicTournaments.value = []; publicTeams.value = []; publicSponsors.value = []; publicFixture.value = []; publicBrackets.value = []; publicStatistics.value = {}; publicFlyers.value=[]; publicDraws.value=[];publicAnnouncedFixtures.value={};
-      if(!viewParts[1]){const organizations=await api<PublicOrganizationItem[]>('/public/organizations');if(epoch!==routeEpoch)return;publicOrganizations.value=organizations;setPublicPageMeta('A la cancha · Torneos','Encontrá organizaciones, torneos, partidos, resultados y estadísticas.',`${location.origin}/`);return;}
+      if(!viewParts[1]){publicOrganizations.value=[];const organizations=await api<PublicOrganizationItem[]>('/public/organizations');if(epoch!==routeEpoch)return;publicOrganizations.value=organizations;setPublicPageMeta('A la cancha · Torneos','Encontrá organizaciones, torneos, partidos, resultados y estadísticas.',`${location.origin}/`);return;}
       const organizationId=viewParts[1];
       const [result,draws] = await Promise.all([api<{ organization: PublicOrganization; tournaments: PublicTournamentSummary[]; teams: typeof publicTeams.value; sponsors: typeof publicSponsors.value }>(`/public/organizations/${organizationId}/tournaments`),api<PublicDraw[]>(`/public/organizations/${organizationId}/draws`)]);
       if(epoch!==routeEpoch)return;
@@ -1322,14 +1329,19 @@ async function loadView(force = false) {
       if(tournamentId&&!result.tournaments.some(item=>item.id===tournamentId)&&!draws.some(item=>item.tournament_id===tournamentId))throw new RequestError('Este torneo todavía no está publicado.','NOT_FOUND',404);
       const positionPortal=draws.length>0&&(tournamentId?draws.some(item=>item.tournament_id===tournamentId):!result.tournaments.length);
       const previewOnly=result.tournaments.length>0&&result.tournaments.filter(item=>!tournamentId||item.id===tournamentId).every(item=>item.presentation_only);
-      const [published,brackets,sharedFlyers]=positionPortal||previewOnly?[[] as PublicFixtureDay[],[] as PublicBracket[],[] as typeof publicFlyers.value]:await Promise.all([api<PublicFixtureDay[]>(`/public/organizations/${organizationId}/fixture`),api<PublicBracket[]>(`/public/organizations/${organizationId}/brackets`),api<typeof publicFlyers.value>(`/public/organizations/${organizationId}/flyers`)]);
+      const announcedCandidates=result.tournaments.filter(item=>item.has_announced_fixture&&(!tournamentId||item.id===tournamentId));
+      const statsCandidates=positionPortal?[]:result.tournaments.filter(item=>!tournamentId||item.id===tournamentId);
+      const [core,announced,statResults]=await Promise.all([
+        positionPortal||previewOnly?Promise.resolve<[PublicFixtureDay[],PublicBracket[],typeof publicFlyers.value]>([[],[],[]]):Promise.all([api<PublicFixtureDay[]>(`/public/organizations/${organizationId}/fixture`),api<PublicBracket[]>(`/public/organizations/${organizationId}/brackets`),api<typeof publicFlyers.value>(`/public/organizations/${organizationId}/flyers`)]),
+        Promise.allSettled(announcedCandidates.map(item=>api<AnnouncedFixture>(`/public/organizations/${organizationId}/categories/${item.category_id}/fixture/announced`))),
+        Promise.allSettled(statsCandidates.map(item=>item.presentation_only?Promise.resolve({available:false} as PublicStats):api<PublicStats>(`/public/organizations/${organizationId}/categories/${item.category_id}/statistics`))),
+      ]);
       if(epoch!==routeEpoch)return;
+      const [published,brackets,sharedFlyers]=core;
       publicOrganization.value = result.organization; publicTournaments.value = tournamentId?result.tournaments.filter(item=>item.id===tournamentId):result.tournaments; publicTeams.value = result.teams.filter(team=>publicTournaments.value.some(item=>item.category_id===team.category_id)); publicSponsors.value = result.sponsors.filter(sponsor=>!tournamentId||sponsor.tournament_id===tournamentId);
       publicFixture.value = tournamentId?published.filter(day=>day.tournament_id===tournamentId):published; publicBrackets.value = tournamentId?brackets.filter(item=>item.tournament_id===tournamentId):brackets;publicFlyers.value=tournamentId?sharedFlyers.filter(item=>item.tournamentId===tournamentId):sharedFlyers;
-      const announcedCandidates=result.tournaments.filter(item=>item.has_announced_fixture&&(!tournamentId||item.id===tournamentId));
-      const announced=await Promise.allSettled(announcedCandidates.map(item=>api<AnnouncedFixture>(`/public/organizations/${organizationId}/categories/${item.category_id}/fixture/announced`)));
-      if(epoch!==routeEpoch)return;
       publicAnnouncedFixtures.value=Object.fromEntries(announcedCandidates.flatMap((item,index)=>announced[index].status==='fulfilled'?[[item.category_id,announced[index].value]]:[]));
+      publicStatistics.value = Object.fromEntries(statsCandidates.flatMap((item,index)=>statResults[index].status==='fulfilled'?[[item.category_id,statResults[index].value]]:[]));
       const publicName=tournamentId?(publicTournament.value?.name||draws.find(item=>item.tournament_id===tournamentId)?.tournament_name):(result.organization as unknown as {name:string}|null)?.name||'Torneos';
       const title=tournamentId?`${publicName} · ${result.organization.name}`:`${publicName} · Torneos`;
       const description=tournamentId&&previewOnly?(Object.keys(publicAnnouncedFixtures.value).length?`Fixture anunciado de ${publicName}: nueve jornadas sin fechas confirmadas, diez equipos y ocho clasificados.`:`Equipos de ${publicName}. Fixture y formato pendientes.`):tournamentId?`Partidos, fixture, clasificación y goleadores de ${publicName}.`:`Torneos, partidos, resultados y estadísticas de ${publicName}.`;
@@ -1338,10 +1350,7 @@ async function loadView(force = false) {
       const hasEmblem=publicTournament.value?.has_emblem&&(publicTournament.value.status==='published'||publicTournament.value.presentation_only)||draws.some(item=>item.tournament_id===tournamentId&&item.has_emblem);
       const image=hasEmblem?`${location.origin}/api/v1/public/organizations/${result.organization.id}/tournaments/${tournamentId}/emblem`:result.organization.logo_id?`${location.origin}/api/v1/public/organizations/${result.organization.id}/logo`:'';
       setPublicPageMeta(title,description,canonical,image);
-      const statResults = positionPortal?[]:await Promise.allSettled(result.tournaments.map(item => item.presentation_only?Promise.resolve({available:false} as PublicStats):api<PublicStats>(`/public/organizations/${organizationId}/categories/${item.category_id}/statistics`)));
-      if(epoch!==routeEpoch)return;
-      publicStatistics.value = Object.fromEntries(result.tournaments.flatMap((item, index) => statResults[index].status === 'fulfilled' ? [[item.category_id, statResults[index].value]] : []));
-      publicResultsStream?.close();const stream=previewOnly?null:new EventSource(`/api/v1/public/organizations/${organizationId}/results/stream`);publicResultsStream=stream;
+      const stream=previewOnly?null:new EventSource(`/api/v1/public/organizations/${organizationId}/results/stream`);publicResultsStream=stream;
       const currentPublicView=()=>epoch===routeEpoch&&parts.value[0]==='publico'&&parts.value[1]===organizationId&&parts.value[2]===tournamentId;
       const refreshResults=()=>{void api<PublicFixtureDay[]>(`/public/organizations/${organizationId}/fixture`).then(days=>{if(currentPublicView())publicFixture.value=tournamentId?days.filter(day=>day.tournament_id===tournamentId):days;}).catch(()=>{});void Promise.allSettled(publicTournaments.value.map(item=>api<PublicStats>(`/public/organizations/${organizationId}/categories/${item.category_id}/statistics`))).then(results=>{if(currentPublicView())publicStatistics.value=Object.fromEntries(publicTournaments.value.flatMap((item,index)=>results[index].status==='fulfilled'?[[item.category_id,results[index].value]]:[]));});};
       const drawOrganizationId=organizationId;
@@ -1530,7 +1539,7 @@ async function acceptLink() {
 }
 function signInForLink() { returnRoute.value = route.value; login.username = tokenInfo.value?.username || ''; go('acceso'); }
 function dateLabel(value: string) { return new Intl.DateTimeFormat('es-PY', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Asuncion' }).format(new Date(value)); }
-const routeChanged = () => { route.value = routeFromLocation(); };
+const routeChanged = () => { route.value = location.hash.startsWith('#/')?routeFromLocation():cleanRouteCache.get(location.pathname)||routeFromLocation(); };
 const connectionChanged = () => { online.value = navigator.onLine; if(online.value && queuedCapture.value.length) void syncCaptureQueue(); };
 watch(route, (next, previous) => { success.value = ''; publishPreviewCategory.value = ''; showRuleEditor.value = next.startsWith('categoria/') && next.endsWith('/tarjetas'); if (next.startsWith('planilla/') && next !== previous) lineupSearch.value = ''; if (next.startsWith('fixture/') && next !== previous) fixtureSeedOrder.value = []; if (next.startsWith('equipo/') && next !== previous) { teamAction.value = null; teamTab.value='players'; } if (next.startsWith('jugador/') && next !== previous) playerTab.value='record'; if (next.startsWith('disciplina/') && next !== previous) {disciplineTab.value='cases';disciplineSettingsTab.value='case';} if (next.startsWith('partido/') && next !== previous) matchTab.value='events'; void loadView().then(async()=>{if(next.endsWith('/tarjetas')){await nextTick(); document.getElementById('rule-cards')?.scrollIntoView({block:'start'});}}); if(!next.endsWith('/tarjetas'))window.scrollTo(0, 0); });
 watch(route, () => { passwordDraft.value = ''; ownPasswordOpen.value = false; adminPasswordTarget.value = ''; });
@@ -1558,8 +1567,9 @@ onUnmounted(() => { publicResultsStream?.close();privateMatchStream?.close();win
         <PublicDirectory :organizations="publicOrganizations" :loading="loading" :error="error" @select="openPublicOrganization" @select-tournament="(organizationId, tournamentId, slug) => go(`publico/${organizationId}/${tournamentId}`, slug || '')" />
       </template>
       <template v-else-if="parts[0] === 'publico'">
+        <div v-if="!publicOrganization && !error" class="fan-status" role="status">Cargando torneo…</div>
         <PublicPositionPortal v-if="publicDraws.length && (parts[2] ? publicDraws.some(item=>item.tournament_id===parts[2]) : !publicTournaments.length)" :organization="publicOrganization" :draws="publicDraws" :selected-tournament-id="parts[2]||''" :results-revision="publicResultsRevision" @navigate="go" />
-        <FanPortal v-else :catalog="publicCatalog" :organization="publicOrganization" :selected-tournament-id="parts[2]||''" :tournaments="publicTournaments" :fixture="publicFixture" :announced-fixtures="publicAnnouncedFixtures" :brackets="publicBrackets" :statistics="publicStatistics" :teams="publicTeams" :flyers="publicFlyers" :loading="loading" :error="error" @navigate="go" />
+        <FanPortal v-else-if="publicOrganization || error" :catalog="publicCatalog" :organization="publicOrganization" :selected-tournament-id="parts[2]||''" :tournaments="publicTournaments" :fixture="publicFixture" :announced-fixtures="publicAnnouncedFixtures" :brackets="publicBrackets" :statistics="publicStatistics" :teams="publicTeams" :flyers="publicFlyers" :loading="loading" :error="error" @navigate="go" />
       </template>
       <template v-else-if="parts[0] === 'portal' || parts[0] === 'panel'"><p v-if="error" role="alert">{{ error }} <a href="/">Organizaciones</a></p><p v-else role="status">Abriendo…</p></template>
       <template v-else>
