@@ -512,7 +512,17 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     WHERE t.organization_id=$1 AND ($2::uuid IS NULL OR t.id=$2) AND ($3::boolean=false OR (t.status='published' AND e.status='published' AND c.status='published' AND r.status='published') OR t.public_preview_at IS NOT NULL)
     ORDER BY t.created_at DESC,c.created_at,c.id LIMIT 200`;
   const tournamentRows = `SELECT ${tournamentListFields},t.timezone,e.id edition_id,e.name edition_name,c.preset,c.team_limit,r.version rule_version,r.revision rule_revision,r.status rule_status,CASE WHEN r.rules IS NULL THEN NULL ELSE r.rules || jsonb_build_object('maxBenchStaff',COALESCE(r.rules->'maxBenchStaff','0'::jsonb),'substitutions',COALESCE(r.rules->'substitutions','null'::jsonb),'eligibility',COALESCE(r.rules->'eligibility','null'::jsonb),'advanced',COALESCE(r.rules->'advanced','null'::jsonb),'initialPhase',COALESCE(r.rules->'initialPhase','null'::jsonb)) END rules ${tournamentListSource}`;
+  const publicBracketAvailable = `EXISTS (SELECT 1 FROM fixture_bracket_slots bs WHERE bs.organization_id=p.organization_id AND bs.phase_id=p.id AND bs.stage=1 AND bs.match_id IS NOT NULL)
+    AND NOT EXISTS (SELECT 1 FROM fixture_bracket_slots bs LEFT JOIN draft_matches m ON m.organization_id=bs.organization_id AND m.id=bs.match_id
+      LEFT JOIN matchdays md ON md.organization_id=m.organization_id AND md.id=m.matchday_id
+      LEFT JOIN draft_matches back ON back.organization_id=bs.organization_id AND back.id=bs.return_match_id
+      LEFT JOIN matchdays backday ON backday.organization_id=back.organization_id AND backday.id=back.matchday_id
+      WHERE bs.organization_id=p.organization_id AND bs.phase_id=p.id AND bs.stage=1
+      AND ((bs.match_id IS NOT NULL AND md.status IS DISTINCT FROM 'published') OR (bs.return_match_id IS NOT NULL AND backday.status IS DISTINCT FROM 'published')))`;
   const publicTournamentRows = `SELECT ${tournamentListFields},
+    (t.status='published' AND e.status='published' AND c.status='published' AND EXISTS (
+      SELECT 1 FROM fixture_phases p WHERE p.organization_id=c.organization_id AND p.category_id=c.id AND p.status='generated' AND ${publicBracketAvailable}
+    )) has_public_bracket,
     CASE WHEN r.rules IS NULL THEN NULL ELSE jsonb_build_object('initialPhase',
       CASE WHEN r.rules->'initialPhase'->>'mode' IS NULL THEN NULL
       ELSE jsonb_build_object('mode',r.rules->'initialPhase'->>'mode') END)
@@ -2647,20 +2657,17 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
   });
   app.get('/api/v1/public/organizations/:id/brackets', async (request) => {
     const organizationId = uuid((request.params as { id: string }).id);
+    const query = request.query as { torneo?: string };
+    const tournamentId = query.torneo === undefined ? null : uuid(query.torneo);
     const { rows: phases } = await pool.query(`SELECT p.id,p.rule_version,c.id category_id,c.name category_name,ed.name edition_name,t.id tournament_id,t.name tournament_name FROM fixture_phases p
       JOIN categories c ON c.organization_id=p.organization_id AND c.id=p.category_id
       JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id
       JOIN tournaments t ON t.organization_id=ed.organization_id AND t.id=ed.tournament_id
       JOIN organizations o ON o.id=p.organization_id
       WHERE p.organization_id=$1 AND p.status='generated' AND c.status='published' AND ed.status='published' AND t.status='published' AND o.status='active'
-      AND EXISTS (SELECT 1 FROM fixture_bracket_slots bs WHERE bs.organization_id=p.organization_id AND bs.phase_id=p.id AND bs.stage=1 AND bs.match_id IS NOT NULL)
-      AND NOT EXISTS (SELECT 1 FROM fixture_bracket_slots bs LEFT JOIN draft_matches m ON m.organization_id=bs.organization_id AND m.id=bs.match_id
-        LEFT JOIN matchdays md ON md.organization_id=m.organization_id AND md.id=m.matchday_id
-        LEFT JOIN draft_matches back ON back.organization_id=bs.organization_id AND back.id=bs.return_match_id
-        LEFT JOIN matchdays backday ON backday.organization_id=back.organization_id AND backday.id=back.matchday_id
-        WHERE bs.organization_id=p.organization_id AND bs.phase_id=p.id AND bs.stage=1
-        AND ((bs.match_id IS NOT NULL AND md.status IS DISTINCT FROM 'published') OR (bs.return_match_id IS NOT NULL AND backday.status IS DISTINCT FROM 'published')))
-      ORDER BY t.name,ed.name,c.name LIMIT 100`, [organizationId]);
+      AND ($2::uuid IS NULL OR t.id=$2) AND ${publicBracketAvailable}
+      ORDER BY t.name,ed.name,c.name LIMIT 100`, [organizationId, tournamentId]);
+    if (!phases.length) return [];
     const { rows: allowed } = await pool.query("SELECT id FROM team_entries WHERE organization_id=$1 AND status='active' AND public_visible", [organizationId]);
     const visible = new Set(allowed.map((entry) => entry.id));
     const result = [];

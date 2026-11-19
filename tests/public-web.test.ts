@@ -10,7 +10,7 @@ import { registerPublicWebRoutes } from '../apps/api/src/public-web.ts';
 test('SEO entrega solo torneos públicos, HTML de cada URL y acceso no indexable', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'torneos-seo-'));
   const organizationId='11111111-1111-4111-8111-111111111111', tournamentId='22222222-2222-4222-8222-222222222222';
-  const visible = {organization_id:organizationId,organization_name:'Federación de Prueba',public_slug:'federacion-prueba',has_logo:true,tournament_id:tournamentId,tournament_name:'Copa Pública',has_emblem:true,official:true,preview:false,announced_categories:[] as string[]};
+  const visible = {organization_id:organizationId,organization_name:'Federación de Prueba',public_slug:'federacion-prueba',has_logo:true,tournament_id:tournamentId,tournament_name:'Copa Pública',has_emblem:true,official:true,preview:false,position:false,announced_categories:[] as string[]};
   const pool = {query:async(query:string)=>{assert.match(query,/rule_versions r/);assert.match(query,/fixture_position_publications p/);return {rows:[visible]};}} as unknown as DatabasePool;
   const app = Fastify();
   try {
@@ -23,6 +23,11 @@ test('SEO entrega solo torneos públicos, HTML de cada URL y acceso no indexable
     const shell=await app.inject('/index.html');assert.equal(shell.statusCode,200);assert.match(shell.body,/rel="canonical" href="https:\/\/torneos.example\/"/);
     const page=await app.inject('/federacion-prueba/'+tournamentId);assert.equal(page.statusCode,200);assert.match(page.body,/<title>Copa Pública · Federación de Prueba<\/title>/);assert.match(page.body,/rel="canonical" href="https:\/\/torneos.example\/federacion-prueba\//);assert.match(page.body,/og:image/);assert.doesNotMatch(page.body,/content="genérica"/);
     assert.match(page.body,/data-public-fixture="1"/);
+    assert.match(page.body,/data-public-draws="0"/);
+    visible.position=true;
+    const withDraw=await app.inject('/federacion-prueba/'+tournamentId);
+    assert.doesNotMatch(withDraw.body,/data-public-draws="0"/);
+    visible.position=false;
     visible.official=false;
     const partial=await app.inject('/federacion-prueba/'+tournamentId);assert.equal(partial.statusCode,200);assert.match(partial.body,/og:image/);
     visible.preview=true;

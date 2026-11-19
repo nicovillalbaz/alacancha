@@ -80,7 +80,8 @@ export function measurePublicNavigation() {
 export function pushPublicNavigation(view: string, detail: PublicDetail = null, replace = false) {
   const target = publicNavigationUrl(location.pathname, location.search, view, detail);
   if (target === `${location.pathname}${location.search}`) return;
-  history[replace ? 'replaceState' : 'pushState']({alacanchaPublicDetail:!!detail}, '', target);
+  const fromList=!!detail&&(!replace||history.state?.alacanchaPublicDetail===true);
+  history[replace ? 'replaceState' : 'pushState']({alacanchaPublicDetail:fromList}, '', target);
   if (!replace) measurePublicNavigation();
 }
 

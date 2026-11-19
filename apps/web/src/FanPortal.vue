@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import {computed,nextTick,onMounted,onUnmounted,ref,watch} from 'vue';
+import {computed,defineAsyncComponent,nextTick,onMounted,onUnmounted,ref,watch} from 'vue';
 import {knockoutRoundName,type PlannedRound} from '@torneos/shared';
 import Icon from './Icon.vue';
 import SportTabs from './SportTabs.vue';
-import PublicMatchTimeline from './PublicMatchTimeline.vue';
+import PublicFlyers from './PublicFlyers.vue';
 import TeamCrest from './TeamCrest.vue';
-import BracketView from './BracketView.vue';
 import AnnouncedFixtureMatches from './AnnouncedFixtureMatches.vue';
 import {closePublicDetail,pushPublicNavigation,readPublicNavigation,publicSectionHref} from './public-navigation.ts';
 import {recordFanView} from './public-visits.ts';
 import {createPublicReads,type PublicFixtureDay,type PublicFixtureMatchSummary,type PublicPortalTournament} from './public-reads.ts';
+
+const BracketView=defineAsyncComponent(()=>import('./BracketView.vue'));
+const PublicMatchTimeline=defineAsyncComponent(()=>import('./PublicMatchTimeline.vue'));
 
 type FanEvent={id:string;kind:string;side:'home'|'away'|'unknown';period:string|null;minute:number|null;cardLabel:string|null;cardColor:string|null;name:string;relatedName:string|null};
 type FanMatch=PublicFixtureMatchSummary;
@@ -18,11 +20,10 @@ type FanMatchDetail={id:string;venue_name:string|null;result:{events:FanEvent[]}
 type FanTeam={id:string;entry_id:string;name:string;color:string;has_shield:boolean;category_id:string};
 type FanBracket={phase_id:string;category_id:string;repechage?:boolean;slots:Array<{stage:number;slot:number;home:string;away:string;twoLegs?:boolean;homeScore?:number|null;awayScore?:number|null;scoreLabel?:string|null;winnerSide?:'home'|'away'|null;resolution?:'aggregate'|'match_points_penalties'|'match_points_third';matchId?:string|null;matchIds?:{first:string|null;second:string|null;third:string|null};legs?:Array<{label:string;home:number;away:number;matchId?:string|null}>;shootout?:{home:number;away:number}|null}>};
 type FanStats={available:boolean;phaseMode?:string|null;tables?:Array<{groupNo:number|null;rows:Array<{position:number;unresolved:boolean;teamName:string;played:number;wins:number;draws:number;losses:number;points:number;goalsFor:number;goalsAgainst:number;goalDifference:number}>}>;scorers?:Array<{name:string;teamName:string;goals:number}>;defense?:Array<{teamName:string;played:number;goalsAgainst:number}>;rosters?:Array<{entryId:string;players:Array<{name:string;goals:number;yellowCards:number;redCards:number}>}>};
-type FanFlyer={id:string;kind:string;sourceId:string;tournamentId:string;title:string;format:string};
 type CatalogItem={id:string;name:string;organization_id:string;organization_name:string};
 type FanTournament=PublicPortalTournament;
 type AnnouncedFixture={revision:number;rounds:Array<{ordinal:number;matches:Array<{homeEntryId:string;awayEntryId:string}>}>;qualificationCount:number;quarterPairing:'in_person_draw';semifinalPairing:'pending'|'in_person_draw'|'bracket';finalPairing:'winners';teams:Array<{entry_id:string;team_id:string;name:string;color:string;has_shield:boolean}>};
-const props=defineProps<{catalog:CatalogItem[];organization:{id:string;name:string;logo_id?:string|null}|null;selectedTournamentId:string;tournaments:FanTournament[];fixture:FanDay[];announcedFixtures:Record<string,AnnouncedFixture>;brackets:FanBracket[];teams:FanTeam[];resultsRevision:number;loading:boolean;error:string}>();
+const props=defineProps<{catalog:CatalogItem[];organization:{id:string;name:string;logo_id?:string|null}|null;selectedTournamentId:string;tournaments:FanTournament[];fixture:FanDay[];announcedFixtures:Record<string,AnnouncedFixture>;teams:FanTeam[];resultsRevision:number;loading:boolean;error:string}>();
 const emit=defineEmits<{navigate:[path:string]}>();
 const tabToView:Record<string,string>={matches:'partidos',announced:'fixture',standings:'clasificacion',scorers:'goleadores',defense:'valla',teams:'equipos'};
 const viewToTab=Object.fromEntries(Object.entries(tabToView).map(([key,value])=>[value,key]));
@@ -86,9 +87,7 @@ watch([() => props.organization?.id, () => selectedMatch.value?.id, () => props.
     }
   });
 const stats = ref<FanStats|null>(null), statsLoading = ref(false), statsError = ref(false);
-const flyers = ref<FanFlyer[]>([]);
 const usesStats = computed(() => ['standings','scorers','defense'].includes(tab.value) || !!selectedTeam.value);
-const usesFlyers = computed(() => !!selectedMatch.value || (!selectedTeam.value && !selectedAnnouncedMatch.value && ['matches','standings','scorers','defense'].includes(tab.value)));
 const statsRetry = ref(0);
 let shownStats = '';
 watch(() => [props.organization?.id, currentCategoryId.value, props.resultsRevision, usesStats.value, props.loading, category.value?.presentation_only, statsRetry.value] as const,
@@ -112,20 +111,10 @@ watch(() => [props.organization?.id, currentCategoryId.value, props.resultsRevis
       if (current) statsLoading.value = false;
     }
   }, { immediate: true });
-watch(() => [props.organization?.id, currentTournament.value?.id, props.resultsRevision, usesFlyers.value, props.loading, currentTournament.value?.presentation_only] as const,
-  async ([org, tournament, revision, needed, loading, preview], previous, onCleanup) => {
-    if (previous && (org!==previous[0] || tournament!==previous[1])) flyers.value=[];
-    if (!org || !tournament || !needed || loading || preview) return;
-    let current = true;
-    onCleanup(() => { current = false; });
-    try {
-      const data = await readPublic<FanFlyer[]>(`/organizations/${org}/flyers?torneo=${tournament}`, String(revision));
-      if (current) flyers.value = data;
-    } catch { /* Los flyers son opcionales. */ }
-  }, { immediate: true, flush: 'post' });
 const days=computed(()=>props.fixture.map(day=>({...day,matches:day.matches.filter(match=>match.category_id===currentCategoryId.value)})).filter(day=>day.matches.length));
 const publishedAnnouncedMatches=computed(()=>{
   const result:Record<string,FanMatch>={};
+  if(!days.value.length)return result;
   for(const round of announced.value?.rounds||[])for(const pair of round.matches){
     const home=announced.value?.teams.find(team=>team.entry_id===pair.homeEntryId)?.team_id;
     const away=announced.value?.teams.find(team=>team.entry_id===pair.awayEntryId)?.team_id;
@@ -143,18 +132,63 @@ const announcedStatuses=computed(()=>Object.fromEntries(Object.entries(published
 })));
 const pendingAnnouncedRounds=computed(()=>announced.value?.rounds.map(round=>({...round,matches:round.matches.filter(pair=>!publishedAnnouncedMatches.value[`${pair.homeEntryId}:${pair.awayEntryId}`])})).filter(round=>round.matches.length)||[]);
 function openAnnouncedMatch(ordinal:number,pair:{homeEntryId:string;awayEntryId:string}){const published=publishedAnnouncedMatches.value[`${pair.homeEntryId}:${pair.awayEntryId}`];if(published)openMatch(published);else{selectedAnnouncedMatch.value={ordinal,...pair};const index=announced.value?.rounds.find(item=>item.ordinal===ordinal)?.matches.findIndex(item=>item.homeEntryId===pair.homeEntryId&&item.awayEntryId===pair.awayEntryId)??-1;if(!restoringNavigation&&index>=0)pushPublicNavigation(tabToView[tab.value]||'partidos',{kind:'cruce',id:`${ordinal}-${index+1}`});}}
-const bracket=computed(()=>props.brackets.find(item=>item.category_id===currentCategoryId.value));
-const leagueBracket=computed(()=>category.value?.rules?.initialPhase?.mode==='league'&&!!bracket.value);
+const bracketRows=ref<FanBracket[]>([]);
+const bracketLoading=ref(false),bracketFailed=ref(false),bracketRetry=ref(0);
+const bracket=computed(()=>bracketRows.value.find(item=>item.category_id===currentCategoryId.value));
+const canOpenBracket=computed(()=>!!category.value?.has_public_bracket||!!bracket.value||category.value?.rules?.initialPhase?.mode==='knockout');
+const leagueBracket=computed(()=>category.value?.rules?.initialPhase?.mode==='league'&&canOpenBracket.value);
+const needsBracket=computed(()=>!selectorOpen.value&&!selectedMatch.value&&!selectedAnnouncedMatch.value&&!selectedTeam.value&&(
+  (tab.value==='announced'&&announcedView.value==='finals')||
+  (tab.value==='matches'&&matchesView.value==='bracket')||
+  (tab.value==='standings'&&standingsView.value==='bracket')
+));
+watch(() => [props.organization?.id,currentTournament.value?.id,props.resultsRevision,needsBracket.value,bracketRetry.value] as const,
+  async ([org,tournament,revision,needed,attempt],previous,onCleanup)=>{
+    if(org!==previous?.[0]||tournament!==previous?.[1])bracketRows.value=[];
+    bracketLoading.value=!!(org&&tournament&&needed);
+    bracketFailed.value=false;
+    if(!org||!tournament||!needed)return;
+    let current=true;
+    onCleanup(()=>{current=false;});
+    try {
+      const rows=await readPublic<FanBracket[]>(`/organizations/${org}/brackets?torneo=${tournament}`,`${revision}:${attempt}`);
+      if(current)bracketRows.value=rows;
+    } catch {
+      if(current)bracketFailed.value=true;
+    } finally {
+      if(current)bracketLoading.value=false;
+    }
+  },{immediate:true});
 const bracketRounds=computed<PlannedRound[]>(()=>[...new Set((bracket.value?.slots||[]).map(slot=>slot.stage))].map(stage=>{const ties=(bracket.value?.slots||[]).filter(slot=>slot.stage===stage).sort((a,b)=>a.slot-b.slot);const size=ties.length*2;return {size,name:stage===1&&bracket.value?.repechage?'Repechaje':knockoutRoundName(size),pairing:'positions' as const,legs:ties.some(tie=>tie.twoLegs)?2 as const:1 as const,ties};}));
 const roundByMatchId=computed(()=>{const result=new Map<string,string>(),slots=bracket.value?.slots||[];for(const stage of new Set(slots.map(slot=>slot.stage))){const name=stage===1&&bracket.value?.repechage?'Repechaje':knockoutRoundName(slots.filter(slot=>slot.stage===stage).length*2);for(const slot of slots.filter(slot=>slot.stage===stage))for(const id of Object.values(slot.matchIds||{}))if(id)result.set(id,name);}return result;});
 const categoryTeams=computed(()=>props.teams.filter(team=>team.category_id===currentCategoryId.value));
 const defense=computed(()=>(stats.value?.defense||[]).filter(row=>row.played>0).sort((a,b)=>a.goalsAgainst-b.goalsAgainst||a.teamName.localeCompare(b.teamName,'es')));
-const activeStatFlyer=computed(()=>tab.value==='standings'&&leagueBracket.value&&standingsView.value==='bracket'?flyer('bracket',bracket.value?.phase_id||''):['standings','scorers','defense'].includes(tab.value)?flyer(tab.value,currentCategoryId.value):undefined);
+const sectionFlyerSources=computed(():Record<string,string[]>|null=>{
+  if(needsBracket.value)return {bracket:bracket.value?[bracket.value.phase_id]:[]};
+  if(tab.value==='matches')return {matchday:days.value.map(day=>day.id)};
+  if(['standings','scorers','defense'].includes(tab.value))return {[tab.value]:[currentCategoryId.value]};
+  return null;
+});
 const roster=computed(()=>stats.value?.rosters?.find(item=>item.entryId===selectedTeam.value?.entry_id)?.players||[]);
 watch(()=>props.selectedTournamentId,id=>{restoringNavigation=true;matchesView.value='days';standingsView.value='league';categoryId.value='';announcedRound.value=1;announcedView.value='rounds';selectedMatch.value=null;selectedAnnouncedMatch.value=null;selectedTeam.value=null;selectorOpen.value=!id;tournamentSearch.value='';restorePublicLocation();});
 watch([currentTournament,announcedMode],([item,hasPlan])=>{if(!tabs.value.some(entry=>entry.key===tab.value))tab.value=hasPlan?'matches':item?.presentation_only?'teams':'matches';},{immediate:true});
 watch(category,()=>{selectedMatch.value=null;selectedAnnouncedMatch.value=null;selectedTeam.value=null;standingsView.value='league';announcedRound.value=1;announcedView.value='rounds';if(!tabs.value.some(item=>item.key===tab.value))tab.value=currentTournament.value?.presentation_only?(announcedMode.value?'matches':'teams'):'matches';});
-watch(()=>props.fixture,days=>{if(!selectedMatch.value)return;const latest=days.flatMap(day=>day.matches).find(item=>item.id===selectedMatch.value?.id);if(latest)selectedMatch.value=latest;else if(!props.loading){selectedMatch.value=null;pushPublicNavigation(tabToView[tab.value]||'partidos',null,true);}});
+watch(()=>props.fixture,days=>{
+  if(selectedAnnouncedMatch.value){
+    const {homeEntryId,awayEntryId}=selectedAnnouncedMatch.value;
+    const published=publishedAnnouncedMatches.value[`${homeEntryId}:${awayEntryId}`];
+    if(published){
+      selectedAnnouncedMatch.value=null;
+      selectedMatch.value=published;
+      pushPublicNavigation(tabToView[tab.value]||'partidos',{kind:'partido',id:published.id},true);
+    }
+    return;
+  }
+  if(!selectedMatch.value)return;
+  const latest=days.flatMap(day=>day.matches).find(item=>item.id===selectedMatch.value?.id);
+  if(latest)selectedMatch.value=latest;
+  else if(!props.loading){selectedMatch.value=null;pushPublicNavigation(tabToView[tab.value]||'partidos',null,true);}
+});
 let listScrollY=0;
 watch([selectedMatch,selectedAnnouncedMatch,selectedTeam],([match,announcedMatch,team],[previousMatch,previousAnnouncedMatch,previousTeam])=>{if((match||announcedMatch||team)&&!(previousMatch||previousAnnouncedMatch||previousTeam)){listScrollY=window.scrollY;void nextTick(()=>window.scrollTo(0,0));}else if(!match&&!announcedMatch&&!team&&(previousMatch||previousAnnouncedMatch||previousTeam)){void nextTick(()=>window.scrollTo(0,listScrollY));}});
 function chooseTournament(item:CatalogItem){selectorOpen.value=false;tournamentSearch.value='';if(item.id!==props.selectedTournamentId)emit('navigate',`publico/${item.organization_id}/${item.id}`);}
@@ -189,8 +223,6 @@ watch(tab,value=>{if(!restoringNavigation&&!props.loading){pushPublicNavigation(
 watch(() => [currentTournament.value?.id, tab.value, props.loading, props.error] as const, ([id, value, loading, error]) => {
   if (id && !loading && !error && tabs.value.some(item => item.key === value)) recordFanView({id, section: tabToView[value]});
 }, { immediate: true, flush: 'post' });
-function flyer(kind:string,sourceId:string){return flyers.value.find(item=>item.tournamentId===currentTournament.value?.id&&item.kind===kind&&item.sourceId===sourceId);}
-function flyerUrl(item:FanFlyer){return `/api/v1/public/organizations/${props.organization?.id}/flyers/${item.id}/file`;}
 </script>
 
 <template>
@@ -206,8 +238,9 @@ function flyerUrl(item:FanFlyer){return `/api/v1/public/organizations/${props.or
         <section class="fan-scoreboard" aria-label="Partido anunciado"><p class="fan-match-state">PENDIENTE DE FECHA</p><div class="fan-score-grid"><div class="fan-score-team"><TeamCrest size="lg" :name="announcedHome?.name||'Equipo'" :team-id="announcedHome?.team_id" :organization-id="organization?.id" :color="announcedHome?.color" :has-shield="announcedHome?.has_shield" /><strong>{{ announcedHome?.name }}</strong></div><div class="fan-score-number">vs</div><div class="fan-score-team"><TeamCrest size="lg" :name="announcedAway?.name||'Equipo'" :team-id="announcedAway?.team_id" :organization-id="organization?.id" :color="announcedAway?.color" :has-shield="announcedAway?.has_shield" /><strong>{{ announcedAway?.name }}</strong></div></div></section>
       </template>
       <template v-else-if="selectedMatch">
-        <div class="fan-detail-top"><button type="button" class="fan-close" aria-label="Cerrar partido" @click="closeDetail"><Icon name="close" /></button><span>{{ matchTitle(selectedMatch) }}</span><a v-if="flyer('result',selectedMatch.id)||flyer('match',selectedMatch.id)" class="fan-flyer-link" :href="flyerUrl(flyer('result',selectedMatch.id)||flyer('match',selectedMatch.id)!)" target="_blank" rel="noopener"><Icon name="download" /> Flyer</a></div>
+        <div class="fan-detail-top"><button type="button" class="fan-close" aria-label="Cerrar partido" @click="closeDetail"><Icon name="close" /></button><span>{{ matchTitle(selectedMatch) }}</span></div>
         <section class="fan-scoreboard" aria-label="Resultado del partido"><p class="fan-match-state">{{ selectedMatch.result?.status==='official'?'FINAL':selectedMatch.result?.status==='provisional'?'PROVISIONAL':selectedMatch.match_date?`${shortDate(selectedMatch.match_date)}${selectedMatch.match_time?` · ${selectedMatch.match_time}`:''}`:'FECHA PENDIENTE' }}</p><div class="fan-score-grid"><div class="fan-score-team"><TeamCrest size="lg" :name="selectedMatch.home_name" :team-id="selectedMatch.home_team_id" :organization-id="organization?.id" :color="team(selectedMatch.home_team_id)?.color" :has-shield="team(selectedMatch.home_team_id)?.has_shield" /><strong :title="selectedMatch.home_name">{{ selectedMatch.home_name }}</strong></div><div class="fan-score-number">{{ selectedMatch.result?`${selectedMatch.result.score.home} : ${selectedMatch.result.score.away}`:'—' }}</div><div class="fan-score-team"><TeamCrest size="lg" :name="selectedMatch.away_name" :team-id="selectedMatch.away_team_id" :organization-id="organization?.id" :color="team(selectedMatch.away_team_id)?.color" :has-shield="team(selectedMatch.away_team_id)?.has_shield" /><strong :title="selectedMatch.away_name">{{ selectedMatch.away_name }}</strong></div></div><p class="fan-score-meta">{{ selectedMatch.match_date?shortDate(selectedMatch.match_date):'Fecha pendiente' }}<template v-if="selectedMatch.match_time"> · {{ selectedMatch.match_time }}</template><template v-if="matchDetail?.venue_name"> · {{ matchDetail.venue_name }}</template></p><p v-if="selectedMatch.result&&(selectedMatch.result.shootout.home||selectedMatch.result.shootout.away)" class="fan-score-meta">Penales {{ selectedMatch.result.shootout.home }} : {{ selectedMatch.result.shootout.away }}</p></section>
+        <PublicFlyers v-if="organization" :key="selectedMatch.id" :organization-id="organization.id" :tournament-id="currentTournament.id" :revision="resultsRevision" :sources="{result:[selectedMatch.id],match:[selectedMatch.id]}" />
         <div class="fan-content"><h2 class="fan-section-label">Eventos</h2><p v-if="matchLoading && !matchDetail" class="fan-status" role="status">Cargando eventos…</p><p v-else-if="matchError" class="fan-status" role="alert">No se pudo cargar la ficha. <button type="button" class="text-action" @click="matchRetry++">Reintentar</button></p><PublicMatchTimeline v-else :events="matchDetail?.result?.events || []" :home-name="selectedMatch.home_name" :away-name="selectedMatch.away_name" /></div>
       </template>
       <template v-else-if="selectedTeam">
@@ -215,6 +248,9 @@ function flyerUrl(item:FanFlyer){return `/api/v1/public/organizations/${props.or
       </template>
       <template v-else>
         <div class="fan-tabs-wrap"><SportTabs v-model="tab" :tabs="tabs.map(item=>({...item,href:publicSectionHref(tabToView[item.key])}))" id="fan-sections" /></div>
+        <PublicFlyers v-if="organization&&sectionFlyerSources&&!currentTournament.presentation_only" :key="`${currentCategoryId}:${tab}:${needsBracket}`" :organization-id="organization.id" :tournament-id="currentTournament.id" :revision="resultsRevision" :sources="sectionFlyerSources" />
+        <p v-if="needsBracket&&bracketLoading&&!bracket" class="fan-status" role="status">Cargando cuadro…</p>
+        <p v-if="needsBracket&&bracketFailed" class="fan-status" role="alert">No se pudo cargar el cuadro. <button type="button" class="text-action" @click="bracketRetry++">Reintentar</button></p>
         <p v-if="statsLoading" class="fan-status" role="status">Cargando estadísticas…</p>
         <div v-else-if="statsError" class="fan-status" role="alert">No se pudieron cargar las estadísticas. <button class="text-action" type="button" @click="statsRetry++">Reintentar</button></div>
         <section v-if="tab==='announced'&&announced" id="fan-sections-announced-panel" role="tabpanel" aria-labelledby="fan-sections-announced-tab" class="fan-content">
@@ -223,16 +259,19 @@ function flyerUrl(item:FanFlyer){return `/api/v1/public/organizations/${props.or
           <div class="fan-plan-rounds" role="group" aria-label="Jornadas del fixture"><button v-for="round in announced.rounds" :key="round.ordinal" type="button" :aria-pressed="announcedRound===round.ordinal" @click="announcedRound=round.ordinal">J{{ round.ordinal }}</button></div>
           <AnnouncedFixtureMatches :rounds="announced.rounds.filter(item=>item.ordinal===announcedRound)" :teams="announced.teams" :organization-id="organization?.id" :status-by-pair="announcedStatuses" @open-match="openAnnouncedMatch" />
           </template>
-          <template v-else><p class="fan-plan-note">Cuartos: sorteo presencial · Semifinales: {{ announced.semifinalPairing==='in_person_draw'?'sorteo presencial':'cruces por confirmar' }}</p><BracketView :rounds="announcedFinals" planned /></template>
+          <template v-else>
+            <BracketView v-if="bracket" :rounds="bracketRounds" :teams="categoryTeams" :organization-id="organization?.id" @open-match="openBracketMatch" />
+            <template v-else-if="!bracketLoading&&!bracketFailed"><p class="fan-plan-note">Cuartos: sorteo presencial · Semifinales: {{ announced.semifinalPairing==='in_person_draw'?'sorteo presencial':'cruces por confirmar' }}</p><BracketView :rounds="announcedFinals" planned /></template>
+          </template>
         </section>
         <section v-if="tab==='matches'" id="fan-sections-matches-panel" role="tabpanel" aria-labelledby="fan-sections-matches-tab" class="fan-content">
           <template v-if="announcedMode&&announced"><p class="fan-plan-note">Partidos anunciados · horarios por confirmar.</p><AnnouncedFixtureMatches :rounds="announced.rounds" :teams="announced.teams" :organization-id="organization?.id" :status-by-pair="announcedStatuses" @open-match="openAnnouncedMatch" /></template>
           <template v-else>
-          <div v-if="bracket" class="fan-subtabs" role="group" aria-label="Vista de partidos"><button type="button" :aria-pressed="matchesView==='days'" @click="matchesView='days'">Fechas</button><button type="button" :aria-pressed="matchesView==='bracket'" @click="matchesView='bracket'">Cuadro</button></div>
+          <div v-if="canOpenBracket" class="fan-subtabs" role="group" aria-label="Vista de partidos"><button type="button" :aria-pressed="matchesView==='days'" @click="matchesView='days'">Fechas</button><button type="button" :aria-pressed="matchesView==='bracket'" @click="matchesView='bracket'">Cuadro</button></div>
           <template v-if="matchesView==='days'">
             <p v-if="!days.length" class="fan-empty">Aún no hay partidos publicados.</p>
             <section v-for="day in days" :key="day.id" class="fan-day">
-              <div class="fan-day-head"><h2>{{ dayTitle(day) }}</h2><a v-if="flyer('matchday',day.id)" class="fan-flyer-link" :href="flyerUrl(flyer('matchday',day.id)!)" target="_blank" rel="noopener"><Icon name="download" /> Flyer</a></div>
+              <div class="fan-day-head"><h2>{{ dayTitle(day) }}</h2></div>
               <button v-for="match in day.matches" :key="match.id" type="button" class="fan-match-row" :class="{'is-final':match.result?.status==='official'}" :aria-label="`${match.home_name} contra ${match.away_name}, ${match.result?`${match.result.score.home} a ${match.result.score.away}`:match.match_time}. Ver partido`" @click="openMatch(match)">
                 <span class="fan-match-date">{{ match.result?.status==='official'?'Final':match.match_time||'Pendiente' }}<small v-if="match.tie_leg">{{ match.tie_leg }}</small></span>
                 <span class="fan-match-team"><TeamCrest size="sm" :name="match.home_name" :team-id="match.home_team_id" :organization-id="organization?.id" :color="team(match.home_team_id)?.color" :has-shield="team(match.home_team_id)?.has_shield" /><strong :title="match.home_name">{{ match.home_name }}</strong></span>
@@ -242,10 +281,13 @@ function flyerUrl(item:FanFlyer){return `/api/v1/public/organizations/${props.or
             </section>
             <template v-if="announced&&pendingAnnouncedRounds.length"><p class="fan-plan-note fan-plan-after">Partidos pendientes de publicación</p><AnnouncedFixtureMatches :rounds="pendingAnnouncedRounds" :teams="announced.teams" :organization-id="organization?.id" @open-match="openAnnouncedMatch" /></template>
           </template>
-          <template v-else><div v-if="flyer('bracket',bracket?.phase_id||'')" class="fan-context-action"><a class="fan-flyer-link" :href="flyerUrl(flyer('bracket',bracket?.phase_id||'')!)" target="_blank" rel="noopener"><Icon name="download" /> Flyer</a></div><BracketView :rounds="bracketRounds" :teams="categoryTeams" :organization-id="organization?.id" @open-match="openBracketMatch" /></template>
+          <template v-else>
+            <BracketView v-if="bracket" :rounds="bracketRounds" :teams="categoryTeams" :organization-id="organization?.id" @open-match="openBracketMatch" />
+            <p v-else-if="!bracketLoading&&!bracketFailed" class="fan-empty">Aún no hay cruces publicados.</p>
+          </template>
           </template>
         </section>
-        <div v-if="activeStatFlyer" class="fan-context-action fan-context-outside"><a class="fan-flyer-link" :href="flyerUrl(activeStatFlyer)" target="_blank" rel="noopener"><Icon name="download" /> Flyer</a></div>
+
         <section v-if="tab==='standings'" id="fan-sections-standings-panel" role="tabpanel" aria-labelledby="fan-sections-standings-tab" class="fan-content">
           <div v-if="announcedMode&&announced" class="fan-table"><div class="fan-table-head"><span>Equipo</span><span>PJ</span><span>DG</span><span>Pts</span></div><div v-for="teamItem in announcedStandings" :key="teamItem.entry_id" class="fan-table-row"><span class="fan-rank">—</span><TeamCrest size="sm" :name="teamItem.name" :team-id="teamItem.team_id" :organization-id="organization?.id" :color="teamItem.color" :has-shield="teamItem.has_shield" /><strong :title="teamItem.name">{{ teamItem.name }}</strong><span>0</span><span>0</span><b>0</b></div></div>
           <template v-else>
@@ -254,7 +296,8 @@ function flyerUrl(item:FanFlyer){return `/api/v1/public/organizations/${props.or
             <p v-if="!statsLoading && !statsError && !stats?.available" class="fan-empty">Aún sin clasificación publicada.</p>
             <div v-for="table in stats?.tables||[]" :key="String(table.groupNo)" class="fan-table"><h2 v-if="table.groupNo!==null">Grupo {{ table.groupNo }}</h2><div class="fan-table-head"><span>Equipo</span><span>PJ</span><span>DG</span><span>Pts</span></div><div v-for="row in table.rows" :key="row.teamName" class="fan-table-row"><span class="fan-rank">{{ row.unresolved?'—':row.position }}</span><TeamCrest size="sm" :name="row.teamName" :team-id="byName(row.teamName)?.id" :organization-id="organization?.id" :color="byName(row.teamName)?.color" :has-shield="byName(row.teamName)?.has_shield" /><strong :title="row.teamName">{{ row.teamName }}</strong><span>{{ row.played }}</span><span>{{ row.goalDifference }}</span><b>{{ row.points }}</b></div></div>
           </template>
-          <BracketView v-else :rounds="bracketRounds" :teams="categoryTeams" :organization-id="organization?.id" @open-match="openBracketMatch" />
+          <BracketView v-else-if="bracket" :rounds="bracketRounds" :teams="categoryTeams" :organization-id="organization?.id" @open-match="openBracketMatch" />
+          <p v-else-if="!bracketLoading&&!bracketFailed" class="fan-empty">Aún no hay cruces publicados.</p>
           </template>
         </section>
         <section v-if="tab==='scorers'" id="fan-sections-scorers-panel" role="tabpanel" aria-labelledby="fan-sections-scorers-tab" class="fan-content"><p v-if="!statsLoading && !statsError && !stats?.scorers?.length" class="fan-empty">Aún no hay goleadores publicados.</p><div v-for="(player,index) in stats?.scorers||[]" :key="`${player.name}-${index}`" class="fan-scorer-row"><span class="fan-rank">{{ index+1 }}</span><TeamCrest size="sm" :name="player.teamName" :team-id="byName(player.teamName)?.id" :organization-id="organization?.id" :color="byName(player.teamName)?.color" :has-shield="byName(player.teamName)?.has_shield" /><span><strong :title="player.name">{{ player.name }}</strong><small :title="player.teamName">{{ player.teamName }}</small></span><b>{{ player.goals }}</b></div></section>
@@ -268,7 +311,7 @@ function flyerUrl(item:FanFlyer){return `/api/v1/public/organizations/${props.or
 <style scoped>
 .fan-plan-note{margin:1px 0 15px;color:#425f53;font-size:.83rem;line-height:1.5}.fan-plan-after{margin-top:22px}.fan-plan-rounds{display:flex;gap:5px;overflow-x:auto;scrollbar-width:none;padding-bottom:8px;border-bottom:1px solid #e2eae5}.fan-plan-rounds::-webkit-scrollbar{display:none}.fan-plan-rounds button{flex:none;min-width:43px;min-height:42px;border:0;border-bottom:3px solid transparent;background:#fff;color:#526b61;font:inherit;font-size:.8rem;font-weight:750}.fan-plan-rounds button[aria-pressed=true]{border-bottom-color:#0c9c64;color:#075a3b}.fan-plan-rounds button:focus-visible{outline:3px solid #0cac70;outline-offset:-3px}
 .fan-ui{min-height:100svh;background:#fff;color:#14242c}.fan-header{background:#102029;color:#fff}.fan-header-inner{max-width:880px;margin:auto;padding:19px 16px 22px}.fan-overline{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#a8c2ba;font-size:.7rem;font-weight:750;letter-spacing:.08em;text-transform:uppercase}.fan-selector-wrap{display:flex;align-items:center;gap:9px;margin-top:8px}.fan-selector-wrap>.icon:first-child{width:22px;height:22px;color:#a6eb8c}.fan-selector-wrap>.icon:last-child{width:18px;height:18px;color:#a8c2ba}.fan-selector-wrap select{flex:1;min-width:0;max-width:100%;appearance:none;border:0;background:transparent;color:#fff;font:inherit;font-size:1.25rem;line-height:1.3;font-weight:850;outline-offset:5px;text-overflow:ellipsis}.fan-selector-wrap select option{color:#14242c;background:#fff}.fan-status,.fan-empty-home{max-width:880px;margin:auto;padding:28px 16px;color:#58706b}.fan-status.error{color:#a82c31}.fan-empty-home .icon{width:54px;height:54px;color:#cbdad5}.fan-category{display:flex;gap:8px;max-width:880px;margin:auto;padding:9px 16px 0;overflow-x:auto}.fan-category button{min-height:38px;flex:none;border:1px solid #cddbd6;border-radius:999px;background:#fff;padding:6px 12px;font:inherit;font-size:.75rem;font-weight:700;color:#48645a}.fan-category button[aria-pressed=true]{border-color:#0c6c49;background:#dcf3e7;color:#075a3b}.fan-tabs-wrap{position:sticky;top:0;z-index:5;background:#fff;box-shadow:0 1px 0 #d7e1de}.fan-tabs-wrap :deep(.sport-tabs){max-width:880px;margin:0 auto;border:0;padding-inline:8px}.fan-tabs-wrap :deep(.sport-tabs button){min-height:54px;padding-inline:12px}.fan-content{max-width:880px;margin:auto;padding:16px 16px 44px;background:#fff;min-height:60vh}.fan-empty{padding:26px 2px;color:#6b7c78;font-size:.84rem}.fan-subtabs{display:flex;gap:4px;border-bottom:1px solid #dce5e1;margin:-2px 0 10px}.fan-subtabs button{min-height:43px;border:0;border-bottom:3px solid transparent;background:transparent;padding:8px 14px;color:#657772;font:inherit;font-size:.8rem;font-weight:750}.fan-subtabs button[aria-pressed=true]{color:#0c704b;border-bottom-color:#0cac70}.fan-day{margin-top:4px}.fan-day h2{padding:15px 2px 7px;font-size:.8rem;color:#364d48}.fan-day+.fan-day{margin-top:12px;border-top:6px solid #f5f7f8}.fan-match-row{width:100%;display:grid;grid-template-columns:42px minmax(0,1fr) 48px minmax(0,1fr) 16px;align-items:center;gap:7px;min-height:73px;padding:9px 1px;border:0;border-bottom:1px solid #e1e8e5;background:#fff;color:#14242c;text-align:center;font:inherit;cursor:pointer}.fan-match-row>.icon{width:15px;height:15px;color:#8ba098}.fan-match-date{color:#667974;font-size:.64rem;text-align:left}.fan-match-team{display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0}.fan-match-team strong{min-width:0;max-width:100%;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:.72rem;line-height:1.16}.fan-match-result{font-size:1.12rem;font-weight:850;white-space:nowrap;font-variant-numeric:tabular-nums}.fan-match-row:hover{background:#f7fbf9}.fan-match-row:focus-visible,.fan-team-row:focus-visible,.fan-close:focus-visible{outline:3px solid #0cac70;outline-offset:-3px}.fan-detail-top{max-width:880px;margin:auto;display:flex;align-items:center;gap:12px;min-height:51px;padding:4px 16px;color:#49605a;font-size:.77rem;font-weight:700}.fan-close{display:grid;place-items:center;width:40px;height:40px;border:0;border-radius:50%;background:#e9efec;color:#27443b;cursor:pointer}.fan-close .icon{width:18px;height:18px}.fan-scoreboard{max-width:880px;margin:auto;padding:21px 14px 23px;background:#102029;color:#fff;text-align:center}.fan-match-state{margin:0 0 18px;color:#afe694;font-size:.68rem;font-weight:850;letter-spacing:.12em}.fan-score-grid{display:grid;grid-template-columns:minmax(0,1fr) 76px minmax(0,1fr);align-items:start;gap:5px}.fan-score-team{display:grid;justify-items:center;gap:11px;min-width:0}.fan-score-team strong{max-width:100%;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;font-size:.86rem;line-height:1.2}.fan-score-number{padding-top:10px;font-size:1.9rem;font-weight:900;white-space:nowrap;font-variant-numeric:tabular-nums}.fan-score-meta{margin:18px 0 0;color:#b8cbc4;font-size:.73rem}.fan-score-meta+.fan-score-meta{margin-top:4px}.fan-section-label{margin:0;padding:4px 0 13px;font-size:.95rem}.fan-period{border-top:1px solid #dce5e1}.fan-period h3{margin:0;padding:11px 0 5px;color:#60736d;font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em}.fan-event{display:grid;grid-template-columns:minmax(0,1fr) 42px minmax(0,1fr);min-height:58px;align-items:center;border-bottom:1px solid #edf1ef}.fan-event-side{display:flex;align-items:center;gap:7px;min-width:0}.fan-event-side>span:last-child{min-width:0}.fan-event-side strong,.fan-event-side small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fan-event-side strong{font-size:.8rem}.fan-event-side small{font-size:.69rem;color:#63746e}.fan-event-minute{grid-column:2;text-align:center;font-size:.65rem;color:#788a84}.fan-event.is-home .fan-event-side{grid-column:1;grid-row:1}.fan-event.is-away .fan-event-side{grid-column:3;grid-row:1;flex-direction:row-reverse;text-align:right}.fan-event.is-unknown .fan-event-side{grid-column:1/4;grid-row:1}.fan-team-hero{display:flex;align-items:center;gap:17px;max-width:880px;margin:auto;padding:24px 16px;background:#102029;color:#fff}.fan-team-hero h1{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:1.25rem}.fan-roster-head,.fan-defense-head,.fan-table-head{display:flex;justify-content:space-between;align-items:center;color:#61736d;font-size:.68rem;font-weight:750}.fan-roster-head h2{font-size:.98rem;color:#14242c}.fan-player-row{display:grid;grid-template-columns:minmax(0,1fr) 36px 36px 36px;gap:8px;align-items:center;min-height:54px;border-bottom:1px solid #e0e8e4}.fan-player-row>strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.78rem}.fan-player-stat{display:flex;align-items:center;justify-content:center;gap:2px;color:#3e5d51;font-size:.74rem;font-variant-numeric:tabular-nums}.fan-player-stat .icon{width:13px;height:13px;color:#17975e}.fan-small-card{display:inline-block;width:9px;height:13px;border-radius:1px}.fan-small-card.yellow{background:#e6b328}.fan-small-card.red{background:#d63836}.fan-table{margin-bottom:23px}.fan-table h2{margin:4px 0 9px;color:#164c3d;font-size:.83rem}.fan-table-head{display:grid;grid-template-columns:minmax(0,1fr) 32px 34px 37px;padding:8px 0;border-bottom:1px solid #ccd9d4;text-align:right}.fan-table-head span:first-child{text-align:left}.fan-table-row{display:grid;grid-template-columns:23px 27px minmax(0,1fr) 32px 34px 37px;align-items:center;gap:5px;min-height:50px;border-bottom:1px solid #e1e8e5;text-align:right;font-size:.75rem;font-variant-numeric:tabular-nums}.fan-table-row strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;font-weight:700}.fan-table-row>b:last-child{color:#087a50;font-size:.88rem}.fan-rank{color:#657974;font-size:.72rem;text-align:center;font-weight:750}.fan-scorer-row{display:grid;grid-template-columns:23px 27px minmax(0,1fr) 27px;align-items:center;gap:9px;min-height:60px;border-bottom:1px solid #e1e8e5}.fan-scorer-row>span:nth-child(3){min-width:0}.fan-scorer-row strong,.fan-scorer-row small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fan-scorer-row strong{font-size:.81rem}.fan-scorer-row small{font-size:.7rem;color:#697c75}.fan-scorer-row>b{color:#0b8053;font-size:1rem;text-align:right}.fan-defense-head{display:grid;grid-template-columns:minmax(0,1fr) 31px 37px;text-align:right;padding:8px 0;border-bottom:1px solid #ccd9d4}.fan-defense-head span:first-child{text-align:left}.fan-defense-row{display:grid;grid-template-columns:23px 27px minmax(0,1fr) 31px 37px;align-items:center;gap:8px;min-height:54px;border-bottom:1px solid #e1e8e5;text-align:right;font-size:.77rem}.fan-defense-row strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}.fan-defense-row>b{color:#087a50;font-size:.88rem}.fan-team-row{display:flex;align-items:center;gap:12px;width:100%;min-height:61px;padding:8px 2px;border:0;border-bottom:1px solid #e1e8e5;background:#fff;color:#14242c;text-align:left;font:inherit}.fan-team-row strong{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.83rem}.fan-team-row>.icon{width:17px;height:17px;color:#82968e}
-.fan-selector-button{display:flex;align-items:center;gap:10px;width:100%;min-height:48px;margin-top:3px;padding:0;border:0;background:transparent;color:#fff;text-align:left;font:inherit}.fan-selector-button>.icon:first-child{width:23px;height:23px;color:#a6eb8c}.fan-selector-button>.icon:last-child{width:19px;height:19px;margin-left:auto;color:#a8c2ba;transition:transform .18s}.fan-selector-button>.icon.is-open{transform:rotate(180deg)}.fan-selector-button strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:1.18rem;font-weight:850}.fan-selector-button:focus-visible,.fan-tournament-list button:focus-visible{outline:3px solid #0cac70;outline-offset:-3px}.fan-tournament-list{max-width:880px;max-height:min(62svh,560px);margin:0 auto;padding:0 16px;overflow-y:auto;background:#fff;scrollbar-width:none}.fan-tournament-list::-webkit-scrollbar{display:none}.fan-tournament-list button{display:flex;align-items:center;gap:12px;width:100%;min-height:56px;padding:8px 2px;border:0;border-bottom:1px solid #e1e9e5;background:#fff;color:#14242c;text-align:left;font:inherit}.fan-tournament-list button[aria-current=page]{color:#076f4b}.fan-tournament-list button>span{flex:1;min-width:0}.fan-tournament-list button strong,.fan-tournament-list button small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fan-tournament-list button strong{font-size:.84rem}.fan-tournament-list button small{color:#657a70;font-size:.7rem}.fan-tournament-list button>.icon{width:16px;height:16px;color:#789086}.fan-tournament-list button[aria-current=page]>.icon{color:#0a9a63}.fan-tabs-wrap :deep(.sport-tabs){scrollbar-width:none}.fan-tabs-wrap :deep(.sport-tabs::-webkit-scrollbar){display:none}.fan-day-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.fan-detail-top>.fan-flyer-link{margin-left:auto}.fan-context-action{display:flex;justify-content:flex-end}.fan-context-outside{max-width:880px;margin:auto;padding:9px 16px;background:#fff}.fan-flyer-link{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:40px;padding:6px 8px;color:#076f4b;text-decoration:none;font-size:.76rem;font-weight:800;white-space:nowrap}.fan-flyer-link .icon{width:16px;height:16px}.fan-flyer-link:focus-visible{outline:3px solid #0cac70;outline-offset:2px}
+.fan-selector-button{display:flex;align-items:center;gap:10px;width:100%;min-height:48px;margin-top:3px;padding:0;border:0;background:transparent;color:#fff;text-align:left;font:inherit}.fan-selector-button>.icon:first-child{width:23px;height:23px;color:#a6eb8c}.fan-selector-button>.icon:last-child{width:19px;height:19px;margin-left:auto;color:#a8c2ba;transition:transform .18s}.fan-selector-button>.icon.is-open{transform:rotate(180deg)}.fan-selector-button strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:1.18rem;font-weight:850}.fan-selector-button:focus-visible,.fan-tournament-list button:focus-visible{outline:3px solid #0cac70;outline-offset:-3px}.fan-tournament-list{max-width:880px;max-height:min(62svh,560px);margin:0 auto;padding:0 16px;overflow-y:auto;background:#fff;scrollbar-width:none}.fan-tournament-list::-webkit-scrollbar{display:none}.fan-tournament-list button{display:flex;align-items:center;gap:12px;width:100%;min-height:56px;padding:8px 2px;border:0;border-bottom:1px solid #e1e9e5;background:#fff;color:#14242c;text-align:left;font:inherit}.fan-tournament-list button[aria-current=page]{color:#076f4b}.fan-tournament-list button>span{flex:1;min-width:0}.fan-tournament-list button strong,.fan-tournament-list button small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fan-tournament-list button strong{font-size:.84rem}.fan-tournament-list button small{color:#657a70;font-size:.7rem}.fan-tournament-list button>.icon{width:16px;height:16px;color:#789086}.fan-tournament-list button[aria-current=page]>.icon{color:#0a9a63}.fan-tabs-wrap :deep(.sport-tabs){scrollbar-width:none}.fan-tabs-wrap :deep(.sport-tabs::-webkit-scrollbar){display:none}.fan-day-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .fan-match-row{grid-template-columns:42px minmax(0,1fr) 56px minmax(0,1fr) 16px}.fan-match-date small,.fan-match-result small{display:block;margin-top:3px;font-size:.6rem;font-weight:700;line-height:1.1}.fan-match-result small{color:#0b8053}.fan-match-result b{display:block;font-size:1.08rem}.fan-match-date small{color:#0b8053}
 .fan-header-inner{padding:10px 16px 11px}.fan-selector-button{min-height:38px;margin-top:1px}.fan-selector-button strong{font-size:1.06rem}.fan-tournament-list{max-height:none;overflow:visible;padding:0 16px 12px}.fan-tournament-list button{min-height:50px}.fan-tournament-search{display:flex;align-items:center;gap:9px;min-height:44px;margin:10px 0 4px;padding:0 11px;border:1px solid #cddbd6;border-radius:9px}.fan-tournament-search .icon{width:17px;height:17px;color:#627a72}.fan-tournament-search input{width:100%;min-width:0;border:0;outline:0;background:transparent;color:#14242c;font:inherit;font-size:1rem}.fan-tournament-search:focus-within{outline:3px solid #0cac70;outline-offset:2px}
 .fan-emblem{width:30px;height:30px;flex:none;object-fit:contain;background:#fff;border-radius:5px}.fan-tournament-list .fan-emblem{width:32px;height:32px}

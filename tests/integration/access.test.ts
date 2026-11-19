@@ -1810,7 +1810,16 @@ test('T04: copa directa respeta participantes, sortea una vez y espera nuevo sor
   for (let index = 0; index < firstMatches.length; index++) assert.equal((await request(adminA, 'PATCH', `/organizations/${ids.a}/fixture/matches/${firstMatches[index].id}/schedule`, { matchdayId: day.json().id, venueId: venue.json().id, courtLabel: 'Principal', date: '2026-11-14', time: index ? '11:00' : '10:00', durationMinutes: 60, refereeName: null, expectedRevision: 0, reason: 'Cuadro planificado' })).statusCode, 200);
   const preview = await request(adminA, 'GET', `/organizations/${ids.a}/matchdays/${day.json().id}/preview`); assert.deepEqual(preview.json().missing, []);
   assert.equal((await request(adminA, 'POST', `/organizations/${ids.a}/matchdays/${day.json().id}/publish`, { expectedRevision: preview.json().revision, reason: 'Cuadro planificado visible' })).statusCode, 201);
-  const published = (await app.inject(`/api/v1/public/organizations/${ids.a}/brackets`)).json().find((item: { tournament_name: string }) => item.tournament_name === created.body.name);
+  const tournamentId=created.response.json().tournamentId;
+  const publicRoot=`/api/v1/public/organizations/${ids.a}`;
+  const scopedBracket=await app.inject(`${publicRoot}/brackets?torneo=${tournamentId}`);
+  assert.equal(scopedBracket.statusCode,200,scopedBracket.body);
+  assert.equal(scopedBracket.json().length,1);
+  assert.deepEqual((await app.inject(`${publicRoot.replace(ids.a,ids.b)}/brackets?torneo=${tournamentId}`)).json(),[]);
+  const compactTournaments=(await app.inject(`${publicRoot}/tournaments?portal=1&resumen=1`)).json().tournaments;
+  assert.equal(compactTournaments.find((item:{id:string})=>item.id===tournamentId).has_public_bracket,true);
+  const published = (await app.inject(`${publicRoot}/brackets`)).json().find((item: { tournament_name: string }) => item.tournament_name === created.body.name);
+  assert.deepEqual(scopedBracket.json(),[published]);
   assert.equal(published.slots.length, 7);
   assert.equal(published.slots.filter((slot: { stage: number }) => slot.stage === 1).length, 4);
   assert.ok(published.slots.filter((slot: { stage: number; matchId: string | null }) => slot.stage === 1 && slot.matchId).every((slot: { matchId: string; matchIds: { first: string } }) => firstMatches.some((match: { id: string }) => match.id === slot.matchId && match.id === slot.matchIds.first)));
@@ -2412,8 +2421,29 @@ test('T05: captura privada congela planillas, guarda eventos una vez y deshace s
   assert.equal((await request(teamA,'GET',`${root}/matches/${matchId}/acta/for-team/${entries[1]}`)).statusCode,403);
   assert.equal((await request(teamA,'POST',`${root}/matches/${matchId}/acta/sign`,{entryId:entries[0],submissionId:sentAgain.json().id})).statusCode,201);
   assert.equal((await request(teamB,'POST',`${root}/matches/${matchId}/acta/sign`,{entryId:entries[1],submissionId:sentAgain.json().id})).statusCode,201);
-  const approved=await request(adminA,'POST',`${root}/matches/${matchId}/acta/approve`,{reason:'Conformidades de ambos equipos',overrideSignoffs:false});
-  assert.equal(approved.statusCode,201,approved.body);assert.equal(approved.json().record.status,'official');
+  const resultSse=await buildApp(config,pool);
+  const signal=AbortSignal.timeout(12000);
+  const approved=await (async()=>{
+    try{
+      const address=await resultSse.listen({host:'127.0.0.1',port:0});
+      const feed=await fetch(`${address}/api/v1/public/organizations/${ids.a}/results/stream`,{signal});
+      assert.equal(feed.status,200);
+      const reader=feed.body!.getReader();
+      const decoder=new TextDecoder();
+      assert.match(decoder.decode((await reader.read()).value),/event: ready/);
+      const approval=await request(adminA,'POST',`${root}/matches/${matchId}/acta/approve`,{reason:'Conformidades de ambos equipos',overrideSignoffs:false});
+      assert.equal(approval.statusCode,201,approval.body);
+      let payload='';
+      while(!payload.includes(`"matchId":"${matchId}","tournamentId":"${tournamentId}"`)){
+        const chunk=await reader.read();
+        if(chunk.done)break;
+        payload+=decoder.decode(chunk.value,{stream:true});
+      }
+      assert.ok(payload.includes(`event: result\ndata: {"matchId":"${matchId}","tournamentId":"${tournamentId}"}`),payload);
+      return approval;
+    }finally{await resultSse.close();}
+  })();
+  assert.equal(approved.json().record.status,'official');
   const firstApproval=approved.json().id;
   const adminDays=await request(adminA,'GET',`${root}/editions/${editionId}/matchdays?vista=lista`);
   assert.equal(adminDays.statusCode,200,adminDays.body);

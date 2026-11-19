@@ -24,7 +24,8 @@ const LoadError = defineComponent(() => () => h('div', { class: 'pad stack', rol
 const lazyScreen = (loader: () => Promise<{ default: import('vue').Component }>) => defineAsyncComponent({ loader, loadingComponent: LoadingScreen, errorComponent: LoadError, delay: 150 });
 const RulesEditor = lazyScreen(() => import('./RulesEditor.vue'));
 const BracketView = lazyScreen(() => import('./BracketView.vue'));
-const FanPortal = lazyScreen(() => import('./FanPortal.vue'));
+const loadFanPortal = () => import('./FanPortal.vue');
+const FanPortal = lazyScreen(loadFanPortal);
 const TournamentWorkspace = lazyScreen(() => import('./TournamentWorkspace.vue'));
 const PositionBlueprint = lazyScreen(() => import('./PositionBlueprint.vue'));
 const PositionMatches = lazyScreen(() => import('./PositionMatches.vue'));
@@ -46,7 +47,6 @@ interface PublicOrganizationItem {id:string;name:string;public_slug:string;has_l
 interface PublicOrganization {id:string;name:string;accent:string;logo_id:string|null;public_slug:string}
 interface MatchAssignment {id:string;match_id:string;duty:'capture'|'review';membership_id:string;name:string;member_status:string;category_id:string;home_name:string;away_name:string;day_ordinal:number|null;day_status:'draft'|'published'|null;acta_status:'capturing'|'submitted'|'official'|null}
 interface OperatorSummary {id:string;name:string;username:string;status:string}
-interface PublicBracket { phase_id:string; category_id:string; category_name: string; edition_name: string; tournament_id:string; tournament_name: string; repechage?: boolean; slots: Array<{ stage: number; slot: number; home: string; away: string; twoLegs?: boolean;homeScore?:number|null;awayScore?:number|null }> }
 interface PublicStats { available: boolean; reason?: string; phaseMode?: string | null; officialMatches?: number; tables?: Array<{ groupNo: number | null; rows: Array<{ position: number; unresolved: boolean; teamName: string; played: number; wins: number; draws: number; losses: number; points: number; goalsFor: number; goalsAgainst: number; goalDifference: number }> }>; scorers?: Array<{ name: string; teamName: string; goals: number; penalties: number }>; rosters?:Array<{entryId:string;players:Array<{name:string;goals:number;yellowCards:number;redCards:number}>}>;unlistedGoals?: number }
 interface FlyerItem {id:string;kind:string;sourceId:string;pageNo:number;version:number;template:string;format:string;size:string;status:string;error:string|null;publicVisible:boolean;createdAt:string;stale:boolean}
 interface DisciplineCase { id:string;entry_id:string;registration_id:string|null;source_kind:string;source_valid:boolean;status:string;summary:string;evidence_note:string|null;team_name:string;player_name:string|null;decision_id:string|null;decision_status:string|null;suspension_unit:string|null;suspension_matches:number|null;starts_on:string|null;ends_on:string|null;fine_amount_guaranies:number|null;decision_reason:string|null }
@@ -154,7 +154,7 @@ type AnnouncedFixture={revision:number;rounds:Array<{ordinal:number;matches:Arra
 const publicAnnouncedFixtures=ref<Record<string,AnnouncedFixture>>({});
 const publicResultsRevision=ref(0);
 const publicTournament=computed(()=>publicTournaments.value.find(item=>item.id===parts.value[2])||null);
-const matchdays = ref<MatchdaySummary[]>([]), publicFixture = ref<PublicFixtureDay[]>([]), publicBrackets = ref<PublicBracket[]>([]);
+const matchdays = ref<MatchdaySummary[]>([]), publicFixture = ref<PublicFixtureDay[]>([]);
 function publicStatsTabsFor(item:TournamentSummary){return [
   ...(item.rules.initialPhase?.mode==='knockout'?[]:[{key:'classification',label:'Clasificación',icon:'chart'}]),
   {key:'scorers',label:'Goleadores',icon:'ball'},
@@ -395,7 +395,7 @@ function openTeamAction(action: 'admin'|'commission'|'staff'|'category') { teamA
 function selectedNav(path: string) { return parts.value[0] === path || (path === 'torneos' && ['nuevo-torneo', 'torneo', 'nueva-categoria', 'categoria', 'fixture', 'programar', 'partido', 'flyers', 'flyer-settings', 'nuevo-equipo', 'equipo', 'buena-fe', 'nuevo-jugador', 'jugador'].includes(parts.value[0])) || (path === 'equipos' && ['nuevo-equipo', 'equipo', 'buena-fe', 'nuevo-jugador', 'jugador', 'disciplina'].includes(parts.value[0])) || (path === 'administradores' && ['administrador', 'acceso-administrador', 'invitar', 'recuperar', 'nueva-organizacion'].includes(parts.value[0])) || (path === 'organizaciones' && ['organizacion', 'estado-organizacion'].includes(parts.value[0])); }
 function navPath(path: string) { return path === 'organizacion' && user.value?.organizationId ? `organizacion/${user.value.organizationId}` : path === 'organizacion' ? 'organizaciones' : path; }
 function notify(message: string) { success.value = message; clearTimeout(toastTimer); toastTimer = setTimeout(() => { success.value = ''; }, 4500); }
-function clearPrivate() { organizerReads.invalidate(); workspaceTeams.value=[]; workspaceMatchdays.value=[]; workspaceScores.value={}; workspaceOfficialMatchIds.value=[]; lastTournamentId.value = ''; queuedCapture.value=[]; queueError.value=''; reviewTasks.value=[]; reviewHasMore.value=false; disciplineCases.value=[]; disciplineNotices.value=[]; fineCatalog.value=[]; privateStats.value=null; standingAdjustments.value=[]; disciplineServiceHistory.value=[]; selectedDisciplineCaseId.value=''; Object.keys(sessionStorage).filter((key) => key.startsWith('torneos-rule-draft:')).forEach((key) => sessionStorage.removeItem(key)); capture.value = null; pendingCapture.value = null; pendingCaptureUndo.value = null; fixture.value = { phase: null, rounds: [], groups: [], bracket: [] }; fixtureTie.value=null; referees.value=[]; newRefereeName.value=''; refereeArchiveReason.value=''; matchdays.value = []; publicFixture.value = []; publicBrackets.value = []; scheduleMatchId.value = ''; schedulePreview.value = null; matchdayPreview.value = null; draftMatches.value = []; lineupVersions.value = []; lineupSearch.value = ''; importRows.value = []; importToken.value = ''; importBatches.value = []; organizationEpoch++; members.value = []; organizations.value = []; organization.value = null; tournaments.value = []; tournamentResources.value = { venues: [], sponsors: [] }; teams.value = []; allOriginTeams.value = []; players.value = []; goodFaithVersions.value = []; playerEvidence.value = { documents: [], movements: [], restrictions: [] }; eligibility.value = null; categories.value = []; activity.value = []; generatedLink.value = null; createResult.value = null; teamLink.value = null; Object.keys(accessDrafts).forEach((key) => delete accessDrafts[key]); Object.keys(brandDrafts).forEach((key) => delete brandDrafts[key]); Object.keys(ruleDrafts).forEach((key) => delete ruleDrafts[key]); Object.keys(teamConfirmReasons).forEach((key) => delete teamConfirmReasons[key]); Object.keys(teamPublishReasons).forEach((key) => delete teamPublishReasons[key]); Object.keys(resourceReasons).forEach((key) => delete resourceReasons[key]); Object.keys(adminRevokeReasons).forEach((key) => delete adminRevokeReasons[key]); search.value = ''; organizationSearch.value = ''; playerSearch.value = ''; goodFaithSubmitReason.value = ''; goodFaithReviewReason.value = ''; statusFilter.value = 'Todos'; resetPlayerDraft(); Object.assign(venueDraft, { name: '', city: '' }); Object.assign(sponsorDraft, { name: '', city: '' }); Object.assign(createDraft, { name: '', administratorName: '', username: '' }); Object.assign(tournamentDraft, { name: '', editionName: '', categoryName: '', timezone: 'America/Asuncion', preset: 'F5', teamLimit: null, rules: suggestedRules(), paymentRates:{yellowGuaranies:0,redGuaranies:0,customCardRates:{}} }); quickCardOpen.value=false; Object.assign(quickCard,{name:'',color:'#2278C7',suspensionMatches:0,amountGuaranies:0}); Object.assign(categoryDraft, { editionName: '', categoryName: '', preset: 'F5', teamLimit: null, rules: suggestedRules() }); Object.assign(teamDraft, { name: '', color: '#165D46', categoryId: '' }); Object.assign(teamAdminDraft, { entryId: '', name: '', username: '' }); Object.assign(commissionDraft, { entryId: '', name: '', role: '', validFrom: '', validUntil: '' }); Object.assign(staffDraft, { entryId: '', name: '', role: '' }); wizardStep.value = 1; categoryStep.value = 1; tournamentRequestId.value = crypto.randomUUID(); categoryRequestId.value = crypto.randomUUID(); teamRequestId.value = crypto.randomUUID(); }
+function clearPrivate() { organizerReads.invalidate(); workspaceTeams.value=[]; workspaceMatchdays.value=[]; workspaceScores.value={}; workspaceOfficialMatchIds.value=[]; lastTournamentId.value = ''; queuedCapture.value=[]; queueError.value=''; reviewTasks.value=[]; reviewHasMore.value=false; disciplineCases.value=[]; disciplineNotices.value=[]; fineCatalog.value=[]; privateStats.value=null; standingAdjustments.value=[]; disciplineServiceHistory.value=[]; selectedDisciplineCaseId.value=''; Object.keys(sessionStorage).filter((key) => key.startsWith('torneos-rule-draft:')).forEach((key) => sessionStorage.removeItem(key)); capture.value = null; pendingCapture.value = null; pendingCaptureUndo.value = null; fixture.value = { phase: null, rounds: [], groups: [], bracket: [] }; fixtureTie.value=null; referees.value=[]; newRefereeName.value=''; refereeArchiveReason.value=''; matchdays.value = []; publicFixture.value = []; scheduleMatchId.value = ''; schedulePreview.value = null; matchdayPreview.value = null; draftMatches.value = []; lineupVersions.value = []; lineupSearch.value = ''; importRows.value = []; importToken.value = ''; importBatches.value = []; organizationEpoch++; members.value = []; organizations.value = []; organization.value = null; tournaments.value = []; tournamentResources.value = { venues: [], sponsors: [] }; teams.value = []; allOriginTeams.value = []; players.value = []; goodFaithVersions.value = []; playerEvidence.value = { documents: [], movements: [], restrictions: [] }; eligibility.value = null; categories.value = []; activity.value = []; generatedLink.value = null; createResult.value = null; teamLink.value = null; Object.keys(accessDrafts).forEach((key) => delete accessDrafts[key]); Object.keys(brandDrafts).forEach((key) => delete brandDrafts[key]); Object.keys(ruleDrafts).forEach((key) => delete ruleDrafts[key]); Object.keys(teamConfirmReasons).forEach((key) => delete teamConfirmReasons[key]); Object.keys(teamPublishReasons).forEach((key) => delete teamPublishReasons[key]); Object.keys(resourceReasons).forEach((key) => delete resourceReasons[key]); Object.keys(adminRevokeReasons).forEach((key) => delete adminRevokeReasons[key]); search.value = ''; organizationSearch.value = ''; playerSearch.value = ''; goodFaithSubmitReason.value = ''; goodFaithReviewReason.value = ''; statusFilter.value = 'Todos'; resetPlayerDraft(); Object.assign(venueDraft, { name: '', city: '' }); Object.assign(sponsorDraft, { name: '', city: '' }); Object.assign(createDraft, { name: '', administratorName: '', username: '' }); Object.assign(tournamentDraft, { name: '', editionName: '', categoryName: '', timezone: 'America/Asuncion', preset: 'F5', teamLimit: null, rules: suggestedRules(), paymentRates:{yellowGuaranies:0,redGuaranies:0,customCardRates:{}} }); quickCardOpen.value=false; Object.assign(quickCard,{name:'',color:'#2278C7',suspensionMatches:0,amountGuaranies:0}); Object.assign(categoryDraft, { editionName: '', categoryName: '', preset: 'F5', teamLimit: null, rules: suggestedRules() }); Object.assign(teamDraft, { name: '', color: '#165D46', categoryId: '' }); Object.assign(teamAdminDraft, { entryId: '', name: '', username: '' }); Object.assign(commissionDraft, { entryId: '', name: '', role: '', validFrom: '', validUntil: '' }); Object.assign(staffDraft, { entryId: '', name: '', role: '' }); wizardStep.value = 1; categoryStep.value = 1; tournamentRequestId.value = crypto.randomUUID(); categoryRequestId.value = crypto.randomUUID(); teamRequestId.value = crypto.randomUUID(); }
 async function api<T = any>(path: string, method = 'GET', body?: unknown): Promise<T> {
   const anonymous = path.startsWith('/public/');
   const csrfToken = user.value?.csrfToken;
@@ -1402,7 +1402,7 @@ async function loadView(force = false) {
       return;
     }
     if (parts.value[0] === 'publico') {
-      publicOrganization.value = null; publicTournaments.value = []; publicTeams.value = []; publicFixture.value = []; publicBrackets.value = []; publicDraws.value=[];publicAnnouncedFixtures.value={};
+      publicOrganization.value = null; publicTournaments.value = []; publicTeams.value = []; publicFixture.value = []; publicDraws.value=[];publicAnnouncedFixtures.value={};
       if(!viewParts[1]){publicOrganizations.value=[];const organizations=await publicCatalogRead<PublicOrganizationItem[]>('catalog','/public/organizations');if(epoch!==routeEpoch)return;publicOrganizations.value=organizations;setPublicPageMeta('A la cancha · Torneos','Encontrá organizaciones, torneos, partidos, resultados y estadísticas.',`${location.origin}/`);recordFanView();return;}
       const organizationId=viewParts[1];
       const tournamentId=viewParts[2];
@@ -1417,9 +1417,11 @@ async function loadView(force = false) {
         [id, api<AnnouncedFixture>(announcedPath(id)).catch(() => null)]));
       const drawPath = `/public/organizations/${organizationId}/draws`;
       const drawGroup = `draws/${organizationId}`;
+      const needsDraws = !canUseHints || mount?.publicDraws !== '0';
+      if (!needsDraws) void loadFanPortal().catch(() => {});
       const [result,draws] = await Promise.all([
         publicCatalogRead<{ organization: PublicOrganization; tournaments: PublicPortalTournament[]; teams: typeof publicTeams.value }>('catalog',`/public/organizations/${organizationId}/tournaments?portal=1&resumen=1`),
-        publicCatalogRead<PublicDraw[]>(drawGroup,drawPath),
+        needsDraws ? publicCatalogRead<PublicDraw[]>(drawGroup,drawPath) : Promise.resolve([]),
       ]);
       if(epoch!==routeEpoch)return;
       publicDraws.value=draws;
@@ -1448,8 +1450,6 @@ async function loadView(force = false) {
       if(location.hash.startsWith('#/publico/')){history.replaceState(null,'',canonical);cleanRouteCache.set(new URL(canonical).pathname,route.value);measurePublicNavigation();}
       if(!tournamentId)recordFanView();
       const currentPublicView=()=>epoch===routeEpoch&&parts.value[0]==='publico'&&parts.value[1]===organizationId&&parts.value[2]===tournamentId;
-      const refreshBrackets = () => { void api<PublicBracket[]>(`/public/organizations/${organizationId}/brackets`).then(brackets=>{if(currentPublicView())publicBrackets.value=tournamentId?brackets.filter(item=>item.tournament_id===tournamentId):brackets;}).catch(()=>{}); };
-      if (!positionPortal && !previewOnly) refreshBrackets();
       let updatingResults = false, refreshAgain = false;
       async function refreshResults() {
         if (!currentPublicView()) return;
@@ -1475,19 +1475,13 @@ async function loadView(force = false) {
       if(!previewOnly){
         let stream:EventSource|null=null;
         let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-        let bracketsDirty = false;
-        const queueRefresh = (fixtureChanged = false) => {
-          bracketsDirty ||= fixtureChanged;
+        const queueRefresh = () => {
           if (refreshTimer) return;
           refreshTimer = setTimeout(() => {
             refreshTimer = undefined;
             if (!currentPublicView()) return;
             publicResultsRevision.value++;
-            if (!positionPortal) {
-              void refreshResults();
-              if (bracketsDirty) refreshBrackets();
-            }
-            bracketsDirty = false;
+            if (!positionPortal) void refreshResults();
           }, 60);
         };
         const relevant = (event: MessageEvent) => {
@@ -1511,13 +1505,13 @@ async function loadView(force = false) {
           const source = new EventSource(`/api/v1/public/organizations/${organizationId}/results/stream`);
           stream = source;
           source.addEventListener('result',event=>{if(stream===source && relevant(event))queueRefresh();});
-          source.addEventListener('fixture',event=>{if(stream===source && relevant(event))queueRefresh(true);});
+          source.addEventListener('fixture',event=>{if(stream===source && relevant(event))queueRefresh();});
           source.addEventListener('draw',()=>{if(stream===source)refreshDraws();});
           source.addEventListener('error',()=>{if(stream===source)streamInterrupted=true;});
           source.addEventListener('ready',event=>{
             if (stream !== source) return;
             if (streamReady || streamInterrupted) {
-              queueRefresh(true);
+              queueRefresh();
               refreshDraws();
             } else {
               try {
@@ -1769,7 +1763,7 @@ onUnmounted(() => { closePublicResults?.();privateMatchStream?.close();window.re
       <template v-else-if="parts[0] === 'publico'">
         <div v-if="!publicOrganization && !error" class="fan-status" role="status">Cargando torneo…</div>
         <PublicPositionPortal v-if="publicDraws.length && (parts[2] ? publicDraws.some(item=>item.tournament_id===parts[2]) : !publicTournaments.length)" :organization="publicOrganization" :draws="publicDraws" :selected-tournament-id="parts[2]||''" :results-revision="publicResultsRevision" @navigate="go" />
-        <FanPortal v-else-if="publicOrganization || error" :catalog="publicCatalog" :organization="publicOrganization" :selected-tournament-id="parts[2]||''" :tournaments="publicTournaments" :fixture="publicFixture" :announced-fixtures="publicAnnouncedFixtures" :brackets="publicBrackets" :teams="publicTeams" :results-revision="publicResultsRevision" :loading="loading" :error="error" @navigate="go" />
+        <FanPortal v-else-if="publicOrganization || error" :catalog="publicCatalog" :organization="publicOrganization" :selected-tournament-id="parts[2]||''" :tournaments="publicTournaments" :fixture="publicFixture" :announced-fixtures="publicAnnouncedFixtures" :teams="publicTeams" :results-revision="publicResultsRevision" :loading="loading" :error="error" @navigate="go" />
       </template>
       <template v-else-if="parts[0] === 'portal' || parts[0] === 'panel'"><p v-if="error" role="alert">{{ error }} <a href="/">Organizaciones</a></p><p v-else role="status">Abriendo…</p></template>
       <template v-else>

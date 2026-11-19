@@ -114,7 +114,8 @@ export function registerPublicWebRoutes(app: FastifyInstance, pool: DatabasePool
     const publicData = tournament
       ? ` data-public-tournament-id="${tournament.tournament_id}"${tournament.official&&!tournament.position?' data-public-fixture="1"':''}${!tournament.position&&tournament.announced_categories?.length?` data-public-announced-categories="${escapeHtml(tournament.announced_categories.join(','))}"`:''}`
       : '';
-    if (publicPage) shell = shell.replace('<div id="app"></div>', `<div id="app" data-public-path="${escapeHtml(path)}"${organization?` data-public-organization-id="${organization.organization_id}"`:''}${publicData}></div><noscript><main><h1>${escapeHtml(section ? section.title : name)}</h1><p>${escapeHtml(description)}</p>${children.length?`<ul>${children.map(child=>`<li><a href="${escapeHtml(child.url)}">${escapeHtml(child.name)}</a></li>`).join('')}</ul>`:''}</main></noscript>`);
+    const drawHint = tournament && !organizationPages.some(page=>page.position) ? ' data-public-draws="0"' : '';
+    if (publicPage) shell = shell.replace('<div id="app"></div>', `<div id="app" data-public-path="${escapeHtml(path)}"${organization?` data-public-organization-id="${organization.organization_id}"`:''}${publicData}${drawHint}></div><noscript><main><h1>${escapeHtml(section ? section.title : name)}</h1><p>${escapeHtml(description)}</p>${children.length?`<ul>${children.map(child=>`<li><a href="${escapeHtml(child.url)}">${escapeHtml(child.name)}</a></li>`).join('')}</ul>`:''}</main></noscript>`);
     return reply.code(publicPage ? 200 : segments[0]==='acceso'||segments[0]==='panel' ? 200 : 404).type('text/html; charset=utf-8').send(shell);
   });
 }

@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {closePublicDetail,publicMeasurementUrl,publicNavigationUrl,readPublicNavigation} from '../apps/web/src/public-navigation.ts';
+import {closePublicDetail,pushPublicNavigation,publicMeasurementUrl,publicNavigationUrl,readPublicNavigation} from '../apps/web/src/public-navigation.ts';
 import {claimFanView} from '../apps/web/src/public-visits.ts';
 import {createViewReads} from '../apps/web/src/view-reads.ts';
 import {createPublicReads} from '../apps/web/src/public-reads.ts';
@@ -84,6 +84,20 @@ test('cerrar un detalle vuelve por historial o limpia un enlace directo',()=>{
     (globalThis.history as unknown as {state:unknown}).state=null;
     closePublicDetail('partidos');
     assert.equal(replaced,'/copa-sanber');
+  }finally{Object.assign(globalThis,{history:oldHistory,location:oldLocation});}
+});
+
+test('publicar un cruce abierto conserva si se entró desde la lista o por enlace directo',()=>{
+  const oldHistory=globalThis.history,oldLocation=globalThis.location;
+  try{
+    let fromList=false;
+    const navigation={state:null as {alacanchaPublicDetail:boolean}|null,replaceState:(state:{alacanchaPublicDetail:boolean})=>{fromList=state.alacanchaPublicDetail;}};
+    Object.assign(globalThis,{history:navigation,location:{pathname:'/copa-sanber',search:'?cruce=1-1'}});
+    pushPublicNavigation('partidos',{kind:'partido',id:'nuevo'},true);
+    assert.equal(fromList,false);
+    navigation.state={alacanchaPublicDetail:true};
+    pushPublicNavigation('partidos',{kind:'partido',id:'nuevo'},true);
+    assert.equal(fromList,true);
   }finally{Object.assign(globalThis,{history:oldHistory,location:oldLocation});}
 });
 

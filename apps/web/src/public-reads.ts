@@ -26,6 +26,7 @@ export interface PublicPortalTournament {
   has_emblem: boolean;
   presentation_only: boolean;
   has_announced_fixture: boolean;
+  has_public_bracket: boolean;
   category_id: string;
   category_name: string;
   rules: { initialPhase: { mode: string } | null } | null;
