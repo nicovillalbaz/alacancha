@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 
 test('PWA instala interfaz estática y nunca intercepta datos privados', async () => {
   const handlers=new Map<string,(event:any)=>void>(),saved:string[]=[];
-  const cache={addAll:async(paths:string[])=>{saved.push(...paths);},match:async(path:string)=>path==='/index.html'?'offline-shell':null,put:async(path:string)=>{saved.push(path);}};
+  const cache={add:async(path:string)=>{saved.push(path);},addAll:async(paths:string[])=>{saved.push(...paths);},match:async(path:string)=>path==='/index.html'?'offline-shell':null,put:async(path:string)=>{saved.push(path);}};
   let shellRequests = 0;
   const caches={open:async()=>cache,keys:async()=>[],delete:async()=>true,match:cache.match};
   const self={location:{origin:'https://torneos.test'},clients:{claim:async()=>{}},addEventListener:(name:string,handler:(event:any)=>void)=>handlers.set(name,handler)};
@@ -20,6 +20,15 @@ test('PWA instala interfaz estática y nunca intercepta datos privados', async (
   assert.equal(shellRequests+saved.filter(path=>path==='/index.html').length,2);
   assert.ok(saved.includes('/assets/app-1.js'));
   assert.ok(saved.includes('/assets/app-1.css'));
+  const visited=['/assets/PublicApp-aB12_cD3.js','/assets/PublicPositionPortal-D3b2CA1Z.css'];
+  const rejected=['/api/v1/auth/me','https://other.test/assets/Other-aB12_cD3.js','/assets/../panel.js','/assets/manifest.json'];
+  await new Promise<void>((resolveWait,reject)=>handlers.get('message')!({
+    data:{kind:'cache-visited-assets',assets:[...visited,...visited,...rejected]},
+    waitUntil:(promise:Promise<void>)=>{void promise.then(resolveWait,reject);},
+  }));
+  for(const asset of visited)assert.equal(saved.filter(path=>path===asset).length,1);
+  for(const asset of rejected)assert.equal(saved.includes(asset),false);
+
   let intercepted=false;
   handlers.get('fetch')!({request:{method:'GET',url:'https://torneos.test/api/v1/auth/me',mode:'cors',destination:''},respondWith:()=>{intercepted=true;}});
   assert.equal(intercepted,false);

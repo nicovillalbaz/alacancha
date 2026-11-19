@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {computed,defineAsyncComponent,nextTick,onMounted,onUnmounted,ref,watch} from 'vue';
-import {knockoutRoundName,type PlannedRound} from '@torneos/shared';
+import {knockoutRoundName,type PlannedRound} from '@torneos/shared/competition';
 import Icon from './Icon.vue';
 import SportTabs from './SportTabs.vue';
 import PublicFlyers from './PublicFlyers.vue';

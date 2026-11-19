@@ -21,3 +21,8 @@ export function cleanLegacyHash(hash: string) {
   if (['invitacion','recuperacion','publico'].includes(section)) return null;
   return `/panel/${path}`;
 }
+
+export function isPublicRoute(route: string) {
+  const area = route.split('/',1)[0];
+  return area === 'publico' || area === 'portal';
+}

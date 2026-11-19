@@ -1,4 +1,4 @@
-import { isPublicSection, publicSectionMetadata } from '@torneos/shared';
+import { isPublicSection, publicSectionMetadata } from '@torneos/shared/public-sections';
 
 export type PublicDetail = { kind: 'partido' | 'equipo' | 'cruce'; id: string } | null;
 

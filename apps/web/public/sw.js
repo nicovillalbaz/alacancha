@@ -1,5 +1,5 @@
 /* Solo se guardan archivos estáticos. Nunca respuestas de /api ni datos de sesión. */
-const CACHE = 'torneos-static-v1';
+const CACHE = 'torneos-static-v2';
 const SHELL = ['/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(async cache => {
@@ -16,6 +16,17 @@ self.addEventListener('activate', event => {
     caches.keys().then(keys => Promise.all(keys.filter(key => key.startsWith('torneos-static-') && key !== CACHE).map(key => caches.delete(key)))),
     self.clients.claim()
   ]));
+});
+self.addEventListener('message', event => {
+  if (event.data?.kind !== 'cache-visited-assets' || !Array.isArray(event.data.assets)) return;
+  const assets = [...new Set(event.data.assets.slice(0,80))]
+    .filter(path => typeof path === 'string' && /^\/assets\/[a-zA-Z0-9._-]+-[a-zA-Z0-9_-]{8,}\.(?:js|css)$/.test(path));
+  if (!assets.length) return;
+  event.waitUntil(caches.open(CACHE).then(cache =>
+    Promise.allSettled(assets.map(async path => {
+      if (!await cache.match(path)) await cache.add(path);
+    }))
+  ));
 });
 self.addEventListener('fetch', event => {
   const request = event.request;
