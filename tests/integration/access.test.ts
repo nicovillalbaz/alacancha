@@ -254,6 +254,13 @@ test('logo de organización: carga propia, acceso cruzado y lectura pública', a
   const {width, height, hasAlpha} = await sharp(thumbnail.rawPayload).metadata();
   assert.deepEqual({width, height, hasAlpha}, {width:128, height:64, hasAlpha:true});
   assert.ok(thumbnail.rawPayload.length < largeImage.length);
+  const privateThumbPath = `/organizations/${ids.a}/logo?size=128`;
+  const privateThumb = await request(adminA, 'GET', privateThumbPath);
+  assert.equal(privateThumb.statusCode, 200);
+  assert.equal(privateThumb.headers['cache-control'], 'private, no-store');
+  assert.deepEqual(privateThumb.rawPayload, thumbnail.rawPayload);
+  assert.equal((await request(adminB, 'GET', privateThumbPath)).statusCode, 403);
+  assert.equal((await app.inject(`/api/v1${privateThumbPath}`)).statusCode, 401);
   assert.deepEqual((await app.inject(publicPath)).rawPayload, largeImage);
   const staleHeaders = {'if-none-match': String(thumbnail.headers.etag)};
   const fresh = await app.inject({url: thumbnailPath, headers: staleHeaders});
@@ -1419,6 +1426,9 @@ test('T02: publicar el torneo muestra equipos y escudos; el organizador puede oc
   const shield = await app.inject({ method: 'POST', url: `/api/v1/organizations/${ids.a}/teams/${teamId}/shield`, headers: { ...headers(adminA), 'content-type': `multipart/form-data; boundary=${boundary}` }, payload });
   assert.equal(shield.statusCode, 201, shield.body);
   assert.equal((await request(adminB, 'GET', `/organizations/${ids.a}/teams/${teamId}/shield`)).statusCode, 403);
+  const privateThumbnail = `/organizations/${ids.a}/teams/${teamId}/shield?size=128`;
+  assert.equal((await request(adminA, 'GET', privateThumbnail)).headers['cache-control'], 'private, no-store');
+  assert.equal((await request(adminB, 'GET', privateThumbnail)).statusCode, 403);
   const publicShield = `/api/v1/public/organizations/${ids.a}/teams/${teamId}/shield`;
   assert.equal((await app.inject(publicShield)).statusCode, 404);
   const publicList = `/api/v1/public/organizations/${ids.a}/tournaments`;

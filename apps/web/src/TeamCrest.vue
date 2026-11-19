@@ -1,16 +1,17 @@
 <script setup lang="ts">
-import { computed, shallowRef } from 'vue';
+import { computed, inject, shallowRef, type Component } from 'vue';
 import PublicImage from './PublicImage.vue';
 
 const props=withDefaults(defineProps<{name:string;teamId?:string;organizationId?:string;color?:string;hasShield?:boolean;size?:'sm'|'md'|'lg'}>(),{size:'md'});
+const organizerImage = inject<Component | null>('organizer-crest-image', null);
 const shield = computed(() => props.hasShield && props.teamId && props.organizationId
-  ? `/api/v1/public/organizations/${props.organizationId}/teams/${props.teamId}/shield` : '');
+  ? `/api/v1/${organizerImage ? '' : 'public/'}organizations/${props.organizationId}/teams/${props.teamId}/shield` : '');
 const failed = shallowRef('');
 function initials(name:string){return name.trim().split(/\s+/).slice(0,2).map(part=>part[0]||'').join('').toUpperCase()||'•';}
 </script>
 <template>
   <span class="team-crest" :class="`team-crest-${size}`" :style="{'--team-color':color||'#365b70'}">
-    <PublicImage v-if="shield&&failed!==shield" :src="shield" :loading="size==='lg'?'eager':'lazy'" @unavailable="failed=$event" />
+    <component :is="organizerImage || PublicImage" v-if="shield&&failed!==shield" :src="shield" :loading="size==='lg'?'eager':'lazy'" @unavailable="failed=$event" />
     <span v-else aria-hidden="true">{{ initials(name) }}</span>
   </span>
 </template>
