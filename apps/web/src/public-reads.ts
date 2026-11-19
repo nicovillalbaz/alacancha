@@ -33,6 +33,14 @@ export interface PublicPortalTournament {
   rules: { initialPhase: { mode: string } | null } | null;
 }
 
+export type PublicPositionView = 'resumen'|'clasificacion'|'goleadores'|'valla'|'equipos';
+
+export function publicPositionView(section:string,matchOpen=false):PublicPositionView {
+  if(matchOpen&&section!=='clasificacion')return 'resumen';
+  if(section==='clasificacion'||section==='goleadores'||section==='valla'||section==='equipos')return section;
+  return 'resumen';
+}
+
 export function createPublicReads(limit = 12) {
   const cache = new Map<string, { request: Promise<unknown>; expires: number }>();
   return function read<T>(path: string, revision: string, ttl = 15_000): Promise<T> {

@@ -1,22 +1,25 @@
 <script setup lang="ts">
-import {computed,nextTick,onMounted,onUnmounted,ref,watch} from 'vue';
+import {computed,defineAsyncComponent,nextTick,onMounted,onUnmounted,ref,shallowRef,watch} from 'vue';
 import type {PositionCompetition,PositionResult} from '@torneos/shared';
 import SportTabs from './SportTabs.vue';
 import Icon from './Icon.vue';
-import PublicMatchTimeline from './PublicMatchTimeline.vue';
 import {closePublicDetail,pushPublicNavigation,readPublicNavigation,publicSectionHref} from './public-navigation.ts';
 import {recordFanView} from './public-visits.ts';
-import {createPublicReads} from './public-reads.ts';
+import {createPublicReads,publicPositionView,type PublicPositionView} from './public-reads.ts';
+
+const PublicMatchTimeline=defineAsyncComponent(()=>import('./PublicMatchTimeline.vue'));
 
 type Slot={slot_code:string;entry_id:string|null;team_id:string|null;team_name:string|null;color:string|null;has_shield:boolean};
 type Team={entry_id:string;team_id:string;team_name:string;color:string|null;has_shield:boolean};
 type Game={code:string;stage:'groups'|'quarterfinal'|'quadrangular';sporting_round:string;jornada_no:number|null;planned_date:string|null;home_ref:string;away_ref:string};
 export type PublicDraw={tournament_id:string;tournament_name:string;public_slug:string|null;has_emblem:boolean;category_id:string;category_name:string;revision:number;snapshot:{blueprint:{name:string;opening_first_date:string;opening_second_date:string};slots:Slot[];teams?:Team[];games:Game[]}};
+export type PublicDrawLink=Omit<PublicDraw,'snapshot'>;
 type Competition={available:boolean;competition?:PositionCompetition;results?:PositionResult[];matches?:Array<{code:string;match_id:string}>;players?:Array<{registrationId:string;entryId:string;goals:number;name:string}>;defense?:Array<{entryId:string;played:number;goalsAgainst:number}>;titleExtra?:{decision:'no_extra'|'extra';matchId:string|null;homeEntryId:string|null;awayEntryId:string|null;score:{home:number;away:number;homePenalties:number;awayPenalties:number}|null;winnerEntryId:string|null}|null};
-type MatchDetail={id:string;home_name:string;away_name:string;match_date:string;match_time:string;result:{score:{home:number;away:number};shootout:{home:number;away:number};events:Array<{id:string;kind:string;period:string|null;minute:number|null;name:string;cardLabel:string|null;cardColor:string|null;relatedName:string|null;side:string}>}|null};
+export type PublicPositionStart={categoryId:string;drawRevision:number;resultsRevision:number;section:{view:PublicPositionView;data:Competition}};
+type MatchDetail={id:string;home_name:string;away_name:string;match_date:string;match_time:string;result:{status:'official'|'provisional';score:{home:number;away:number};shootout:{home:number;away:number};events:Array<{id:string;kind:string;period:string|null;minute:number|null;name:string;cardLabel:string|null;cardColor:string|null;relatedName:string|null;side:string}>}|null};
 type FixtureDay={matches:MatchDetail[]};
 const readPublic = createPublicReads();
-const props=defineProps<{organization:{id:string;name:string;logo_id?:string|null}|null;draws:PublicDraw[];selectedTournamentId:string;resultsRevision:number}>();
+const props=defineProps<{organization:{id:string;name:string;logo_id?:string|null}|null;draws:PublicDraw[];menu:PublicDrawLink[];startup:PublicPositionStart|null;selectedTournamentId:string;resultsRevision:number}>();
 const emit=defineEmits<{navigate:[path:string]}>();
 const current=computed(()=>props.draws.find(item=>item.tournament_id===props.selectedTournamentId)||props.draws[0]);
 const tabToView:Record<string,string>={matches:'partidos',fixture:'fixture',classification:'clasificacion',scorers:'goleadores',defense:'valla',teams:'equipos'};
@@ -29,44 +32,49 @@ const viewToTab=Object.fromEntries(Object.entries(tabToView).map(([key,value])=>
 let restoringNavigation=false;
 const tab=ref(viewToTab[readPublicNavigation(location.search).view]||'matches'),fixtureTab=ref('dates'),classificationTab=ref('groups'),groupTab=ref<'A'|'B'>('A');
 const selectedRound=ref('F1'),selectedDay=ref(0),selectorOpen=ref(!props.selectedTournamentId);
-const competition=ref<Competition|null>(null),competitionLoading=ref(false),error=ref(''),selectedMatch=ref<MatchDetail|null>(null),selectedGame=ref<Game|null>(null),selectedTeam=ref<Team|null>(null),teamPlayers=ref<Array<{name:string}>>([]),teamLoading=ref(false);
-let epoch=0;
-let pendingMatchCode='';
-const competitionRevision = computed(() => `${props.organization?.id}:${current.value?.category_id}:${current.value?.revision}:${props.resultsRevision}`);
-const needsCompetition = computed(() => !!selectedGame.value || (!selectorOpen.value && tab.value !== 'teams'));
-const needsStatistics = computed(() => ['classification','scorers','defense'].includes(tab.value));
-let displayedRevision = '';
-let showsStatistics = false;
-async function loadCompetition() {
-  const category = current.value?.category_id, organization = props.organization?.id;
-  const revision = competitionRevision.value, request = ++epoch;
-  const full = needsStatistics.value;
-  if (displayedRevision !== revision || (full && !showsStatistics)) competition.value = null;
-  error.value = '';
-  if (!category || !organization || !needsCompetition.value) {
-    competitionLoading.value = false;
+const competitionLoading=ref(false),error=ref(''),competitionRetry=ref(0);
+const selectedMatch=ref<MatchDetail|null>(null),selectedGame=ref<Game|null>(null);
+const selectedTeam=ref<Team|null>(null),teamPlayers=ref<Array<{name:string}>>([]),teamLoading=ref(false);
+type LoadedSection={revision:number;data:Competition};
+const sections=shallowRef<Partial<Record<PublicPositionView,LoadedSection>>>({});
+const scope=computed(()=>`${props.organization?.id}:${current.value?.category_id}:${current.value?.revision}`);
+const view=computed(()=>selectorOpen.value||selectedTeam.value?null:publicPositionView(tabToView[tab.value],!!selectedGame.value));
+const activeSection=computed(()=>view.value?sections.value[view.value]:undefined);
+const competition=computed(()=>activeSection.value?.data||null);
+const scoreSection=computed(()=>view.value==='clasificacion'?sections.value.clasificacion:sections.value.resumen);
+const scoreData=computed(()=>scoreSection.value?.data);
+let displayedScope='';
+watch([scope,view,()=>props.resultsRevision,competitionRetry,()=>props.startup],async([key,resource,revision,attempt,startup],_previous,onCleanup)=>{
+  if(displayedScope!==key){
+    displayedScope=key;
+    sections.value={};
+  }
+  const category=current.value;
+  const org=props.organization?.id;
+  error.value='';
+  competitionLoading.value=false;
+  if(!org||!category||!resource||resource==='equipos')return;
+  if(sections.value[resource]?.revision===revision)return;
+  if(startup&&startup.categoryId===category.category_id&&startup.drawRevision===category.revision&&startup.resultsRevision===revision&&startup.section.view===resource){
+    sections.value={...sections.value,[resource]:{revision,data:startup.section.data}};
     return;
   }
-  if (competition.value) {
-    competitionLoading.value = false;
-    return;
-  }
-  competitionLoading.value = !competition.value;
+  competitionLoading.value=true;
+  let active=true;
+  onCleanup(()=>{active=false;});
+  const query=resource==='resumen'?'resumen=1':`vista=${resource}`;
   try {
-    const data = await readPublic<Competition>(`/organizations/${organization}/draws/${category}/competition${full?'':'?resumen=1'}`, revision);
-    if (request === epoch) {
-      competition.value = data;
-      displayedRevision = revision;
-      showsStatistics = full;
-    }
-  } catch {
-    if (request === epoch) error.value = 'No se pudieron cargar los resultados.';
-  } finally {
-    if (request === epoch) competitionLoading.value = false;
+    const data=await readPublic<Competition>(`/organizations/${org}/draws/${category.category_id}/competition?${query}`,`${key}:${revision}:${attempt}`);
+    if(active)sections.value={...sections.value,[resource]:{revision,data}};
+  }catch{
+    if(active)error.value='No se pudo cargar esta sección.';
+  }finally{
+    if(active)competitionLoading.value=false;
   }
-}
-watch([competitionRevision, needsCompetition, needsStatistics], loadCompetition, { immediate: true });
-watch(()=>current.value?.tournament_id,()=>{selectedRound.value='F1';selectedDay.value=days.value[0]??0;selectedMatch.value=null;selectedGame.value=null;selectedTeam.value=null;pendingMatchCode='';restorePublicLocation();});
+},{immediate:true});
+watch(()=>current.value?.tournament_id,()=>{
+  selectedRound.value='F1';selectedDay.value=days.value[0]??0;restorePublicLocation();
+});
 const slots=computed(()=>new Map((current.value?.snapshot.slots||[]).map(slot=>[slot.slot_code,slot])));
 const teams=computed<Team[]>(()=>current.value?.snapshot.teams||current.value?.snapshot.slots.filter(slot=>slot.entry_id&&slot.team_id&&slot.team_name).map(slot=>({entry_id:slot.entry_id!,team_id:slot.team_id!,team_name:slot.team_name!,color:slot.color,has_shield:slot.has_shield}))||[]);
 const byEntry=computed(()=>new Map(teams.value.map(team=>[team.entry_id,team])));
@@ -79,14 +87,14 @@ watch(days,available=>{if(!available.includes(selectedDay.value))selectedDay.val
 const dayGames=computed(()=>allGames.value.filter(game=>selectedDay.value===0?game.jornada_no===null:game.jornada_no===selectedDay.value));
 const nearbyDays=computed(()=>{if(selectedDay.value<3||!dayGames.value.length)return [];const following=days.value.filter(day=>day>selectedDay.value&&allGames.value.some(game=>game.jornada_no===day)).slice(0,selectedDay.value>=10?2:1);return following.length?following:days.value.filter(day=>day===selectedDay.value-1&&allGames.value.some(game=>game.jornada_no===day));});
 const matchSections=computed(()=>days.value.map(day=>({day,games:allGames.value.filter(game=>day===0?game.jornada_no===null:game.jornada_no===day)})).filter(section=>section.games.length));
-const results=computed(()=>new Map((competition.value?.results||[]).map(result=>[result.code,result])));
-const matches=computed(()=>new Map((competition.value?.matches||[]).map(match=>[match.code,match.match_id])));
+const results=computed(()=>new Map((scoreData.value?.results||[]).map(result=>[result.code,result])));
+const matches=computed(()=>new Map((scoreData.value?.matches||[]).map(match=>[match.code,match.match_id])));
 const scorers=computed(()=>[...(competition.value?.players||[])].filter(player=>player.goals>0).sort((a,b)=>b.goals-a.goals||a.name.localeCompare(b.name)));
 const defense=computed(()=>[...(competition.value?.defense||[])].filter(team=>team.played>0).sort((a,b)=>a.goalsAgainst-b.goalsAgainst||b.played-a.played));
 function crest(team:Team|Slot|undefined){return team?.has_shield&&team.team_id?`/api/v1/public/organizations/${props.organization?.id}/draws/teams/${team.team_id}/shield`:null;}
 function refName(code:string){const assigned=slots.value.get(code)?.team_name;if(assigned)return assigned;if(/^[1-4][AB]$/.test(code))return `${code[0]}.º Grupo ${code[1]}`;if(/^S[1-4]$/.test(code))return `${code[1]}.º entre ganadores`;return code;}
-function gameName(game:Game,side:'home'|'away'){const id=competition.value?.competition?.participants[game.code]?.[side==='home'?'homeEntryId':'awayEntryId'];return id?byEntry.value.get(id)?.team_name||'Por definir':refName(side==='home'?game.home_ref:game.away_ref);}
-function gameTeam(game:Game,side:'home'|'away'){const id=competition.value?.competition?.participants[game.code]?.[side==='home'?'homeEntryId':'awayEntryId'];return id?byEntry.value.get(id):slots.value.get(side==='home'?game.home_ref:game.away_ref);}
+function gameName(game:Game,side:'home'|'away'){const id=scoreData.value?.competition?.participants[game.code]?.[side==='home'?'homeEntryId':'awayEntryId'];return id?byEntry.value.get(id)?.team_name||'Por definir':refName(side==='home'?game.home_ref:game.away_ref);}
+function gameTeam(game:Game,side:'home'|'away'){const id=scoreData.value?.competition?.participants[game.code]?.[side==='home'?'homeEntryId':'awayEntryId'];return id?byEntry.value.get(id):slots.value.get(side==='home'?game.home_ref:game.away_ref);}
 function result(game:Game){const score=results.value.get(game.code);return score?`${score.homeGoals} : ${score.awayGoals}`:'–';}
 function date(value:string|null){if(!value)return 'Por definir';const [year,month,day]=value.slice(0,10).split('-');return `${day}/${month}/${year}`;}
 function gameDate(game:Game){return game.planned_date?date(game.planned_date):game.sporting_round==='F1'?`${date(current.value?.snapshot.blueprint.opening_first_date||null)} / ${date(current.value?.snapshot.blueprint.opening_second_date||null)}`:'Por definir';}
@@ -96,24 +104,38 @@ function dayTitle(value:number){return value===0?'J1/J2 por definir':`Jornada ${
 function dayDate(value:number){if(value===0)return `${date(current.value?.snapshot.blueprint.opening_first_date||null)} / ${date(current.value?.snapshot.blueprint.opening_second_date||null)}`;if(value===1)return date(current.value?.snapshot.blueprint.opening_first_date||null);if(value===2)return date(current.value?.snapshot.blueprint.opening_second_date||null);return date(allGames.value.find(game=>game.jornada_no===value)?.planned_date||null);}
 function rows(table:NonNullable<PositionCompetition['final']>){return table.groups.flatMap(group=>group.teamIds.map(id=>({position:group.position,id,unresolved:group.unresolved,stats:table.totals.find(item=>item.teamId===id)})));}
 function chooseTournament(id:string){selectorOpen.value=false;if(id!==current.value?.tournament_id)emit('navigate',`publico/${props.organization?.id}/${id}`);}
-async function openMatch(code: string) {
-  const game = allGames.value.find(item => item.code === code);
-  if (!game) return;
-  selectedGame.value = game;
-  selectedMatch.value = null;
-  if (!restoringNavigation) pushPublicNavigation(tabToView[tab.value] || 'partidos', { kind: 'partido', id: code });
-  const id = matches.value.get(code), organization = props.organization?.id, revision = competitionRevision.value;
-  if (!id || !organization) { pendingMatchCode = code; return; }
-  pendingMatchCode = '';
-  try {
-    const days = await readPublic<FixtureDay[]>(`/organizations/${organization}/fixture?partido=${id}`, revision);
-    if (selectedGame.value?.code === code && competitionRevision.value === revision)
-      selectedMatch.value = days.flatMap(day => day.matches).find(match => match.id === id) || null;
-  } catch { /* El cruce planificado sigue disponible. */ }
+const matchLoading=ref(false),matchFailed=ref(false),matchRetry=ref(0);
+function openMatch(code:string){
+  const game=allGames.value.find(item=>item.code===code);
+  if(!game)return;
+  if(selectedGame.value?.code!==code)selectedMatch.value=null;
+  selectedGame.value=game;
+  if(!restoringNavigation)pushPublicNavigation(tabToView[tab.value]||'partidos',{kind:'partido',id:code});
 }
-watch(matches,available=>{if(pendingMatchCode&&available.has(pendingMatchCode)&&selectedGame.value?.code===pendingMatchCode)void openMatch(pendingMatchCode);});
-watch(()=>props.resultsRevision,()=>{if(selectedGame.value){const code=selectedGame.value.code;selectedMatch.value=null;pendingMatchCode=code;if(matches.value.has(code))void openMatch(code);}});
-watch(()=>current.value?.revision,()=>{if(selectedGame.value){selectedMatch.value=null;selectedGame.value=null;pendingMatchCode='';pushPublicNavigation(tabToView[tab.value]||'partidos',null,true);}});
+watch([()=>selectedGame.value?.code,()=>scoreSection.value?.revision,()=>selectedGame.value&&matches.value.get(selectedGame.value.code),scope,matchRetry],
+  async([code,revision,id,key,attempt],_previous,onCleanup)=>{
+    matchLoading.value=false;
+    matchFailed.value=false;
+    if(!code||revision!==props.resultsRevision)return;
+    if(!id||!props.organization?.id){selectedMatch.value=null;return;}
+    matchLoading.value=true;
+    let active=true;
+    onCleanup(()=>{active=false;});
+    try{
+      const days=await readPublic<FixtureDay[]>(`/organizations/${props.organization.id}/fixture?partido=${id}`,`${key}:${revision}:${attempt}`);
+      if(active)selectedMatch.value=days.flatMap(day=>day.matches).find(match=>match.id===id)||null;
+    }catch{
+      if(active)matchFailed.value=true;
+    }finally{
+      if(active)matchLoading.value=false;
+    }
+  });
+watch(()=>current.value?.revision,()=>{
+  if(!selectedGame.value)return;
+  selectedMatch.value=null;
+  selectedGame.value=allGames.value.find(item=>item.code===selectedGame.value?.code)||null;
+  if(!selectedGame.value)pushPublicNavigation(tabToView[tab.value]||'partidos',null,true);
+});
 let rosterRequest = 0;
 async function openTeam(team:Team) {
   const request = ++rosterRequest;
@@ -126,18 +148,18 @@ async function openTeam(team:Team) {
   const currentTeam = () => request === rosterRequest && selectedTeam.value?.entry_id === team.entry_id &&
     props.organization?.id === organization && current.value?.category_id === category;
   try {
-    const players = await readPublic<Array<{name:string}>>(`/organizations/${organization}/draws/${category}/teams/${team.entry_id}/players`, competitionRevision.value);
+    const players = await readPublic<Array<{name:string}>>(`/organizations/${organization}/draws/${category}/teams/${team.entry_id}/players`, `${scope.value}:${props.resultsRevision}`);
     if (currentTeam()) teamPlayers.value = players;
   } catch { /* La ficha permanece accesible sin jugadores. */ }
   finally { if (currentTeam()) teamLoading.value = false; }
 }
-function closeMatch(){selectedMatch.value=null;selectedGame.value=null;pendingMatchCode='';closePublicDetail(tabToView[tab.value]||'partidos');}
+function closeMatch(){selectedMatch.value=null;selectedGame.value=null;closePublicDetail(tabToView[tab.value]||'partidos');}
 function closeTeam(){selectedTeam.value=null;closePublicDetail('equipos');}
 function restorePublicLocation(){
   const state=readPublicNavigation(location.search);
   restoringNavigation=true;
   tab.value=viewToTab[state.view]||'matches';
-  selectedMatch.value=null;selectedGame.value=null;selectedTeam.value=null;pendingMatchCode='';
+  selectedMatch.value=null;selectedGame.value=null;selectedTeam.value=null;
   if(state.detail?.kind==='partido')void openMatch(state.detail.id);
   else if(state.detail?.kind==='equipo'){const team=teams.value.find(item=>item.entry_id===state.detail?.id);if(team)void openTeam(team);}
   void nextTick(()=>{restoringNavigation=false;});
@@ -153,11 +175,11 @@ onUnmounted(()=>window.removeEventListener('popstate',restorePublicLocation));
 <template>
   <div class="position-public">
     <header v-if="!selectedMatch&&!selectedGame&&!selectedTeam" class="public-header"><div class="public-header-top"><button type="button" class="public-back" aria-label="Volver a organizaciones" @click="emit('navigate','publico')"><Icon name="back" /></button><img v-if="organization?.logo_id" :src="`/api/v1/public/organizations/${organization.id}/logo`" alt="" class="public-org-logo"><small>{{ organization?.name }}</small></div><button type="button" :aria-expanded="selectorOpen" @click="selectorOpen=!selectorOpen"><img v-if="current?.has_emblem && organization" :src="`/api/v1/public/organizations/${organization.id}/tournaments/${current.tournament_id}/emblem`" alt="" class="public-cup-logo"><Icon v-else name="trophy"/><strong>{{ current?.tournament_name||'Elegí un torneo' }}</strong><Icon name="chevron"/></button></header>
-    <div v-if="!selectedMatch&&!selectedGame&&!selectedTeam&&selectorOpen" class="public-selector"><button v-for="draw in draws" :key="draw.tournament_id" type="button" @click="chooseTournament(draw.tournament_id)">{{ draw.tournament_name }}<Icon name="arrow"/></button></div>
+    <div v-if="!selectedMatch&&!selectedGame&&!selectedTeam&&selectorOpen" class="public-selector"><button v-for="draw in menu" :key="draw.tournament_id" type="button" @click="chooseTournament(draw.tournament_id)">{{ draw.tournament_name }}<Icon name="arrow"/></button></div>
     <template v-else-if="current&&!selectedMatch&&!selectedGame&&!selectedTeam">
       <SportTabs v-model="tab" :tabs="publicTabs.map(item=>({...item,href:publicSectionHref(tabToView[item.key])}))" id="public-position" />
       <main class="public-body">
-        <div v-if="error" class="public-error" role="alert">{{ error }} <button type="button" @click="loadCompetition">Reintentar</button></div>
+        <div v-if="error" class="public-error" role="alert">{{ error }} <button type="button" @click="competitionRetry++">Reintentar</button></div>
         <div v-if="competitionLoading&&!competition" class="public-hint" role="status">Cargando esta sección…</div>
         <section v-else-if="tab==='matches'" id="public-position-matches-panel" role="tabpanel" aria-labelledby="public-position-matches-tab">
           <div v-for="section in matchSections" :key="section.day" class="public-match-section"><h2>{{ dayTitle(section.day) }} <small>{{ dayDate(section.day) }}</small></h2><button v-for="game in section.games" :key="game.code" type="button" class="public-game" :class="{'has-result':results.has(game.code)}" :aria-label="`Abrir ${gameName(game,'home')} contra ${gameName(game,'away')}`" @click="openMatch(game.code)"><small>{{ roundTitle(game.sporting_round) }}</small><div class="public-game-sides"><span><img loading="lazy" decoding="async" v-if="crest(gameTeam(game,'home'))" :src="crest(gameTeam(game,'home'))!" alt=""><b v-else>{{ game.home_ref[0] }}</b><strong>{{ gameName(game,'home') }}</strong></span><em>{{ result(game) }}</em><span class="away"><img loading="lazy" decoding="async" v-if="crest(gameTeam(game,'away'))" :src="crest(gameTeam(game,'away'))!" alt=""><b v-else>{{ game.away_ref[0] }}</b><strong>{{ gameName(game,'away') }}</strong></span></div></button></div>
@@ -179,8 +201,13 @@ onUnmounted(()=>window.removeEventListener('popstate',restorePublicLocation));
         <section v-else id="public-position-teams-panel" class="public-team-list" role="tabpanel" aria-labelledby="public-position-teams-tab"><button v-for="team in teams" :key="team.entry_id" type="button" class="public-team" @click="openTeam(team)"><img loading="lazy" decoding="async" v-if="crest(team)" :src="crest(team)!" alt=""><span v-else class="public-mark">{{ team.team_name.slice(0,2).toUpperCase() }}</span><strong>{{ team.team_name }}</strong><Icon name="arrow" /></button></section>
       </main>
     </template>
-    <section v-if="!(competitionLoading&&!competition)&&selectedMatch" class="public-detail"><button type="button" class="public-detail-close" @click="closeMatch">‹ Partidos</button><div class="public-score with-logos"><small>{{ selectedMatch.result?'FINAL':'PARTIDO' }}</small><div><strong><img v-if="selectedGame && crest(gameTeam(selectedGame,'home'))" :src="crest(gameTeam(selectedGame,'home'))!" alt=""><span>{{ selectedMatch.home_name }}</span></strong><b>{{ selectedMatch.result?.score.home ?? '–' }} : {{ selectedMatch.result?.score.away ?? '–' }}</b><strong><img v-if="selectedGame && crest(gameTeam(selectedGame,'away'))" :src="crest(gameTeam(selectedGame,'away'))!" alt=""><span>{{ selectedMatch.away_name }}</span></strong></div><p v-if="selectedMatch.result&&(selectedMatch.result.shootout.home||selectedMatch.result.shootout.away)">Penales {{ selectedMatch.result.shootout.home }} : {{ selectedMatch.result.shootout.away }}</p></div><div class="public-events"><h2>Eventos</h2><PublicMatchTimeline :events="selectedMatch.result?.events || []" :home-name="selectedMatch.home_name" :away-name="selectedMatch.away_name" /></div></section>
-    <section v-else-if="!(competitionLoading&&!competition)&&selectedGame" class="public-detail"><button type="button" class="public-detail-close" @click="closeMatch">‹ Partidos</button><div class="public-score"><small>{{ roundTitle(selectedGame.sporting_round) }} · {{ selectedGame.jornada_no?`J${selectedGame.jornada_no}`:'J1/J2 por definir' }}</small><div><strong><img loading="lazy" decoding="async" v-if="crest(gameTeam(selectedGame,'home'))" :src="crest(gameTeam(selectedGame,'home'))!" alt="">{{ gameName(selectedGame,'home') }}</strong><b>–</b><strong><img loading="lazy" decoding="async" v-if="crest(gameTeam(selectedGame,'away'))" :src="crest(gameTeam(selectedGame,'away'))!" alt="">{{ gameName(selectedGame,'away') }}</strong></div><p>{{ gameDate(selectedGame) }}</p></div><div class="public-events"><h2>Partido por programar</h2></div></section>
+    <section v-if="selectedMatch" class="public-detail"><button type="button" class="public-detail-close" @click="closeMatch">‹ Partidos</button><div class="public-score with-logos"><small>{{ selectedMatch.result?.status==='official'?'FINAL':selectedMatch.result?'PROVISIONAL':'PARTIDO' }}</small><div><strong><img v-if="selectedGame && crest(gameTeam(selectedGame,'home'))" :src="crest(gameTeam(selectedGame,'home'))!" alt=""><span>{{ selectedMatch.home_name }}</span></strong><b>{{ selectedMatch.result?.score.home ?? '–' }} : {{ selectedMatch.result?.score.away ?? '–' }}</b><strong><img v-if="selectedGame && crest(gameTeam(selectedGame,'away'))" :src="crest(gameTeam(selectedGame,'away'))!" alt=""><span>{{ selectedMatch.away_name }}</span></strong></div><p v-if="selectedMatch.result&&(selectedMatch.result.shootout.home||selectedMatch.result.shootout.away)">Penales {{ selectedMatch.result.shootout.home }} : {{ selectedMatch.result.shootout.away }}</p></div><div class="public-events"><h2>Eventos</h2><p v-if="matchFailed" class="public-error" role="alert">No se pudo actualizar la ficha. <button type="button" @click="matchRetry++">Reintentar</button></p><PublicMatchTimeline :events="selectedMatch.result?.events || []" :home-name="selectedMatch.home_name" :away-name="selectedMatch.away_name" /></div></section>
+    <section v-else-if="selectedGame" class="public-detail"><button type="button" class="public-detail-close" @click="closeMatch">‹ Partidos</button><div class="public-score"><small>{{ roundTitle(selectedGame.sporting_round) }} · {{ selectedGame.jornada_no?`J${selectedGame.jornada_no}`:'J1/J2 por definir' }}</small><div><strong><img loading="lazy" decoding="async" v-if="crest(gameTeam(selectedGame,'home'))" :src="crest(gameTeam(selectedGame,'home'))!" alt="">{{ gameName(selectedGame,'home') }}</strong><b>–</b><strong><img loading="lazy" decoding="async" v-if="crest(gameTeam(selectedGame,'away'))" :src="crest(gameTeam(selectedGame,'away'))!" alt="">{{ gameName(selectedGame,'away') }}</strong></div><p>{{ gameDate(selectedGame) }}</p></div><div class="public-events">
+      <p v-if="error" class="public-error" role="alert">{{ error }} <button type="button" @click="competitionRetry++">Reintentar</button></p>
+      <p v-else-if="matchFailed" class="public-error" role="alert">No se pudo cargar la ficha. <button type="button" @click="matchRetry++">Reintentar</button></p>
+      <p v-else-if="matchLoading||(competitionLoading&&!competition)" class="public-hint" role="status">Cargando ficha…</p>
+      <h2 v-else>Partido por programar</h2>
+    </div></section>
     <section v-else-if="!(competitionLoading&&!competition)&&selectedTeam" class="public-detail"><button type="button" class="public-detail-close" @click="closeTeam">‹ Equipos</button><div class="public-team-hero"><img v-if="crest(selectedTeam)" :src="crest(selectedTeam)!" alt=""><span v-else class="public-mark">{{ selectedTeam.team_name.slice(0,2).toUpperCase() }}</span><h1>{{ selectedTeam.team_name }}</h1></div><div class="public-events"><h2>Jugadores</h2><div v-if="teamLoading" class="public-hint">Cargando…</div><div v-else-if="!teamPlayers.length" class="public-hint">Aún no hay jugadores publicados.</div><div v-for="player in teamPlayers" :key="player.name" class="public-player"><Icon name="users" /><strong>{{ player.name }}</strong></div></div></section>
   </div>
 </template>

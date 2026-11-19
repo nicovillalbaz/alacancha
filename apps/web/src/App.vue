@@ -3,15 +3,15 @@ import { computed, defineAsyncComponent, defineComponent, h, nextTick, onMounted
 import { accessLabels, accessStates, roleLabels, rulePresets, ruleSchema, tiebreakerLabels, playerDraftSchema, matchPeriodCodes, knockoutRoundName, previewCompetitionBracket, type PlannedRound, type AccessState, type CurrentUser, type OrganizationSummary, type RuleConfig, type TournamentSummary, type TournamentResources, type TeamSummary, type TournamentEntry, type PlayerDraftSummary, type PlayerDraftInput, type GoodFaithVersion, type PlayerDocument, type PlayerMovement, type PlayerRestriction, type EligibilityResult, type DraftMatch, type LineupVersion, type PlayerImportBatch, type PlayerIdentitySearch, type PlayerIdentityChange, type FixtureOverview, type PositionBlueprintView, type PositionCompetitionView, type MatchdaySummary, type MatchCaptureView, type MatchJournalEvent } from '@torneos/shared';
 import Icon from './Icon.vue';
 import PublicDirectory from './PublicDirectory.vue';
-import type { PublicDraw } from './PublicPositionPortal.vue';
+import type { PublicDraw, PublicDrawLink, PublicPositionStart } from './PublicPositionPortal.vue';
 import SportTabs from './SportTabs.vue';
 import SportEventMark from './SportEventMark.vue';
 import PublicMatchRow from './PublicMatchRow.vue';
 import InstallButton from './InstallButton.vue';
 import {cleanLegacyHash,routeFromUrl} from './client-route.ts';
-import {measurePublicNavigation,setPublicSectionBase} from './public-navigation.ts';
+import {measurePublicNavigation,readPublicNavigation,setPublicSectionBase} from './public-navigation.ts';
 import {recordFanView} from './public-visits.ts';
-import type {PublicFixtureDay,PublicPortalTournament} from './public-reads.ts';
+import {publicPositionView,type PublicFixtureDay,type PublicPortalTournament} from './public-reads.ts';
 import {organizerReads,publicCatalogReads} from './view-reads.ts';
 import type {PublicVisitReport} from '@torneos/shared';
 import { queueMatchEvent,queuedMatchEvents,removeQueuedMatchEvent,type QueuedMatchEvent } from './offline-events.ts';
@@ -30,7 +30,8 @@ const TournamentWorkspace = lazyScreen(() => import('./TournamentWorkspace.vue')
 const PositionBlueprint = lazyScreen(() => import('./PositionBlueprint.vue'));
 const PositionMatches = lazyScreen(() => import('./PositionMatches.vue'));
 const PositionStatistics = lazyScreen(() => import('./PositionStatistics.vue'));
-const PublicPositionPortal = lazyScreen(() => import('./PublicPositionPortal.vue'));
+const loadPositionPortal = () => import('./PublicPositionPortal.vue');
+const PublicPositionPortal = lazyScreen(loadPositionPortal);
 const FlyerSettings = lazyScreen(() => import('./FlyerSettings.vue'));
 const FixtureDayEditor = lazyScreen(() => import('./FixtureDayEditor.vue'));
 const PaymentsWorkspace = lazyScreen(() => import('./PaymentsWorkspace.vue'));
@@ -152,6 +153,8 @@ const publicOrganizations=ref<PublicOrganizationItem[]>([]);
 const publicDraws=ref<PublicDraw[]>([]);
 type AnnouncedFixture={revision:number;rounds:Array<{ordinal:number;matches:Array<{homeEntryId:string;awayEntryId:string}>}>;qualificationCount:number;quarterPairing:'in_person_draw';semifinalPairing:'pending'|'in_person_draw'|'bracket';finalPairing:'winners';teams:Array<{entry_id:string;team_id:string;name:string;color:string;has_shield:boolean}>};
 const publicAnnouncedFixtures=ref<Record<string,AnnouncedFixture>>({});
+const publicDrawMenu=ref<PublicDrawLink[]>([]);
+const publicPositionStart=ref<PublicPositionStart|null>(null);
 const publicResultsRevision=ref(0);
 const publicTournament=computed(()=>publicTournaments.value.find(item=>item.id===parts.value[2])||null);
 const matchdays = ref<MatchdaySummary[]>([]), publicFixture = ref<PublicFixtureDay[]>([]);
@@ -1402,7 +1405,7 @@ async function loadView(force = false) {
       return;
     }
     if (parts.value[0] === 'publico') {
-      publicOrganization.value = null; publicTournaments.value = []; publicTeams.value = []; publicFixture.value = []; publicDraws.value=[];publicAnnouncedFixtures.value={};
+      publicOrganization.value = null; publicTournaments.value = []; publicTeams.value = []; publicFixture.value = []; publicDraws.value=[];publicDrawMenu.value=[];publicPositionStart.value=null;publicAnnouncedFixtures.value={};
       if(!viewParts[1]){publicOrganizations.value=[];const organizations=await publicCatalogRead<PublicOrganizationItem[]>('catalog','/public/organizations');if(epoch!==routeEpoch)return;publicOrganizations.value=organizations;setPublicPageMeta('A la cancha · Torneos','Encontrá organizaciones, torneos, partidos, resultados y estadísticas.',`${location.origin}/`);recordFanView();return;}
       const organizationId=viewParts[1];
       const tournamentId=viewParts[2];
@@ -1419,13 +1422,34 @@ async function loadView(force = false) {
       const drawGroup = `draws/${organizationId}`;
       const needsDraws = !canUseHints || mount?.publicDraws !== '0';
       if (!needsDraws) void loadFanPortal().catch(() => {});
-      const [result,draws] = await Promise.all([
-        publicCatalogRead<{ organization: PublicOrganization; tournaments: PublicPortalTournament[]; teams: typeof publicTeams.value }>('catalog',`/public/organizations/${organizationId}/tournaments?portal=1&resumen=1`),
-        needsDraws ? publicCatalogRead<PublicDraw[]>(drawGroup,drawPath) : Promise.resolve([]),
-      ]);
+      type PositionPage={organization:PublicOrganization;draw:PublicDraw;menu:PublicDrawLink[];section:PublicPositionStart['section']|null};
+      let positionPage:PositionPage|null=null;
+      if(canUseHints&&mount?.publicPosition==='1'){
+        void loadPositionPortal().catch(()=>{});
+        const navigation=readPublicNavigation(location.search);
+        const view=publicPositionView(navigation.view,navigation.detail?.kind==='partido');
+        try{
+          const data=await api<PositionPage>(`${drawPath}?torneo=${tournamentId}&vista=${view}`);
+          if(data.draw)positionPage=data;
+        }catch(cause){
+          if(!(cause instanceof RequestError)||cause.status!==404)throw cause;
+        }
+      }
+      if(epoch!==routeEpoch)return;
+      const [result,draws]:[{organization:PublicOrganization;tournaments:PublicPortalTournament[];teams:typeof publicTeams.value},PublicDraw[]]=positionPage
+        ? [{organization:positionPage.organization,tournaments:[],teams:[]},[positionPage.draw]]
+        : await Promise.all([
+          publicCatalogRead<{ organization: PublicOrganization; tournaments: PublicPortalTournament[]; teams: typeof publicTeams.value }>('catalog',`/public/organizations/${organizationId}/tournaments?portal=1&resumen=1`),
+          needsDraws ? publicCatalogRead<PublicDraw[]>(drawGroup,drawPath) : Promise.resolve([]),
+        ]);
       if(epoch!==routeEpoch)return;
       publicDraws.value=draws;
-      publicCatalog.value=[...new Map([...result.tournaments.map(item=>[item.id,{id:item.id,name:item.name,public_slug:item.public_slug||null,organization_id:organizationId,organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const),...draws.map(item=>[item.tournament_id,{id:item.tournament_id,name:item.tournament_name,public_slug:item.public_slug||null,organization_id:organizationId,organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const)].map(item=>[item[0],item[1]])).values()];
+      const drawMenu=positionPage?.menu||draws;
+      publicDrawMenu.value=drawMenu;
+      if(positionPage?.section)publicPositionStart.value={
+        categoryId:positionPage.draw.category_id,drawRevision:positionPage.draw.revision,resultsRevision:publicResultsRevision.value,section:positionPage.section,
+      };
+      publicCatalog.value=[...new Map([...result.tournaments.map(item=>[item.id,{id:item.id,name:item.name,public_slug:item.public_slug||null,organization_id:organizationId,organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const),...drawMenu.map(item=>[item.tournament_id,{id:item.tournament_id,name:item.tournament_name,public_slug:item.public_slug||null,organization_id:organizationId,organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const)].map(item=>[item[0],item[1]])).values()];
       if(tournamentId&&!result.tournaments.some(item=>item.id===tournamentId)&&!draws.some(item=>item.tournament_id===tournamentId))throw new RequestError('Este torneo todavía no está publicado.','NOT_FOUND',404);
       const positionPortal=draws.length>0&&(tournamentId?draws.some(item=>item.tournament_id===tournamentId):!result.tournaments.length);
       const visibleRows=result.tournaments.filter(item=>!tournamentId||item.id===tournamentId);
@@ -1470,6 +1494,7 @@ async function loadView(force = false) {
         if(!currentPublicView())return;
         if(latest.some(item=>(publicDraws.value.find(current=>current.category_id===item.category_id)?.revision||0)>item.revision))return;
         publicDraws.value=latest;
+        publicDrawMenu.value=latest;
       }).catch(()=>{});};
       let streamReady=false,streamInterrupted=false;
       if(!previewOnly){
@@ -1516,7 +1541,7 @@ async function loadView(force = false) {
             } else {
               try {
                 const revisions = JSON.parse(event.data).draws as {categoryId:string;revision:number}[] | undefined;
-                if (revisions && (revisions.length!==publicDraws.value.length || revisions.some(row => (publicDraws.value.find(item=>item.category_id===row.categoryId)?.revision||0)<row.revision))) refreshDraws();
+                if (revisions && (revisions.length!==publicDrawMenu.value.length || revisions.some(row => (publicDrawMenu.value.find(item=>item.category_id===row.categoryId)?.revision||0)<row.revision))) refreshDraws();
               } catch { /* Las publicaciones nuevas llegan por el evento draw. */ }
             }
             streamReady=true;streamInterrupted=false;
@@ -1762,7 +1787,7 @@ onUnmounted(() => { closePublicResults?.();privateMatchStream?.close();window.re
       </template>
       <template v-else-if="parts[0] === 'publico'">
         <div v-if="!publicOrganization && !error" class="fan-status" role="status">Cargando torneo…</div>
-        <PublicPositionPortal v-if="publicDraws.length && (parts[2] ? publicDraws.some(item=>item.tournament_id===parts[2]) : !publicTournaments.length)" :organization="publicOrganization" :draws="publicDraws" :selected-tournament-id="parts[2]||''" :results-revision="publicResultsRevision" @navigate="go" />
+        <PublicPositionPortal v-if="publicDraws.length && (parts[2] ? publicDraws.some(item=>item.tournament_id===parts[2]) : !publicTournaments.length)" :organization="publicOrganization" :draws="publicDraws" :menu="publicDrawMenu" :startup="publicPositionStart" :selected-tournament-id="parts[2]||''" :results-revision="publicResultsRevision" @navigate="go" />
         <FanPortal v-else-if="publicOrganization || error" :catalog="publicCatalog" :organization="publicOrganization" :selected-tournament-id="parts[2]||''" :tournaments="publicTournaments" :fixture="publicFixture" :announced-fixtures="publicAnnouncedFixtures" :teams="publicTeams" :results-revision="publicResultsRevision" :loading="loading" :error="error" @navigate="go" />
       </template>
       <template v-else-if="parts[0] === 'portal' || parts[0] === 'panel'"><p v-if="error" role="alert">{{ error }} <a href="/">Organizaciones</a></p><p v-else role="status">Abriendo…</p></template>

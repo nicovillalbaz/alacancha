@@ -1145,7 +1145,7 @@ test('T04/T08: el sorteo completo se publica por versión y queda visible sin se
 test('T04/T05: una jornada de Copa con fecha prevista se publica y abre el acta sin hora ni sede',async()=>{
   const tournament=await newTournament(ids.a,{...fiveRules,points:{win:2,draw:1,loss:0},initialPhase:null,competitionPlan:null});
   assert.equal(tournament.response.statusCode,201,tournament.response.body);
-  const {categoryId,editionId}=tournament.response.json(),root=`/organizations/${ids.a}`;
+  const {tournamentId,categoryId,editionId}=tournament.response.json(),root=`/organizations/${ids.a}`;
   const base=`${root}/categories/${categoryId}/fixture/blueprint`;
   assert.equal((await request(adminA,'POST',base,fcfsPositionPlan)).statusCode,201);
   for(let index=0;index<10;index++){
@@ -1179,6 +1179,22 @@ test('T04/T05: una jornada de Copa con fecha prevista se publica y abre el acta 
   assert.deepEqual(scoreData.competition,{participants:publicCompetition.competition.participants});
   assert.ok(scoreData.matches.some((item:{match_id:string})=>item.match_id===match.id));
   assert.equal('players' in scoreData,false);assert.equal('defense' in scoreData,false);
+  const publicDraws=`/api/v1/public/organizations/${ids.a}/draws`;
+  const opening=await app.inject(`${publicDraws}?torneo=${tournamentId}&vista=resumen`);
+  assert.equal(opening.statusCode,200,opening.body);
+  assert.equal(opening.json().draw.tournament_id,tournamentId);
+  assert.equal(opening.json().organization.id,ids.a);
+  assert.deepEqual(opening.json().section,{view:'resumen',data:scoreData});
+  assert.ok(opening.json().menu.every((item:any)=>!('snapshot' in item)));
+  const teamsOpening=await app.inject(`${publicDraws}?torneo=${tournamentId}&vista=equipos`);
+  assert.equal(teamsOpening.statusCode,200,teamsOpening.body);
+  assert.equal(teamsOpening.json().section,null);
+  assert.equal((await app.inject(`${publicDraws.replace(ids.a,ids.b)}?torneo=${tournamentId}&vista=resumen`)).statusCode,404);
+  const standings=await app.inject(`${publicDraws}/${categoryId}/competition?vista=clasificacion`);
+  assert.equal(standings.statusCode,200,standings.body);
+  assert.deepEqual(standings.json().competition,publicCompetition.competition);
+  assert.equal('players' in standings.json(),false);
+  assert.equal('defense' in standings.json(),false);
   assert.equal((await app.inject(`/api/v1/public/organizations/${ids.b}/draws/${categoryId}/competition?resumen=1`)).statusCode,404);
   assert.equal((await request(adminB,'POST',`${root}/matches/${match.id}/record/start`,{})).statusCode,403);
   const started=await request(adminA,'POST',`${root}/matches/${match.id}/record/start`,{});assert.equal(started.statusCode,201,started.body);
@@ -1224,6 +1240,13 @@ test('T04/T05: una jornada de Copa con fecha prevista se publica y abre el acta 
   assert.ok(publicResult?.events.some((event:any)=>event.name==='Jugador'&&event.kind==='yellow'));
   const publicStatistics=(await app.inject(`/api/v1/public/organizations/${ids.a}/categories/${categoryId}/statistics`)).json();
   assert.ok(publicStatistics.scorers.some((player:any)=>player.name==='Lucía Benítez'&&player.goals===1));
+  const scorers=await app.inject(`${publicDraws}/${categoryId}/competition?vista=goleadores`);
+  assert.equal(scorers.statusCode,200,scorers.body);
+  assert.deepEqual(Object.keys(scorers.json()).sort(),['available','players']);
+  assert.equal(scorers.json().players.some((row:any)=>row.name==='Lucía Benítez'&&row.goals===1),true);
+  const defense=await app.inject(`${publicDraws}/${categoryId}/competition?vista=valla`);
+  assert.equal(defense.statusCode,200,defense.body);
+  assert.deepEqual(Object.keys(defense.json()).sort(),['available','defense']);
   assert.equal(publicStatistics.scorers.some((player:any)=>player.name==='Rosa Duarte'),false);
   assert.ok(publicStatistics.tables.some((table:any)=>table.rows.some((row:any)=>row.played===1)));
   assert.equal((await pool.query('SELECT status FROM player_registrations WHERE organization_id=$1 AND id=$2',[ids.a,registrationId])).rows[0].status,'approved');

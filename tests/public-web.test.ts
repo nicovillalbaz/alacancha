@@ -27,6 +27,7 @@ test('SEO entrega solo torneos públicos, HTML de cada URL y acceso no indexable
     visible.position=true;
     const withDraw=await app.inject('/federacion-prueba/'+tournamentId);
     assert.doesNotMatch(withDraw.body,/data-public-draws="0"/);
+    assert.match(withDraw.body,/data-public-position="1"/);
     visible.position=false;
     visible.official=false;
     const partial=await app.inject('/federacion-prueba/'+tournamentId);assert.equal(partial.statusCode,200);assert.match(partial.body,/og:image/);

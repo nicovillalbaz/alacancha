@@ -908,33 +908,65 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     ]);
     return { organization, tournaments: tournaments.rows, teams: teams.rows, ...(sponsors ? { sponsors: sponsors.rows } : {}) };
   });
-  app.get('/api/v1/public/organizations/:id/draws', async (request) => {
-    const organizationId = uuid((request.params as { id: string }).id);
-    const { rows } = await pool.query(`SELECT DISTINCT ON (t.id) t.id tournament_id,t.name tournament_name,t.public_slug,(t.emblem_id IS NOT NULL) has_emblem,c.id category_id,c.name category_name,pp.revision,pp.snapshot,pp.published_at
-      FROM fixture_position_publications pp JOIN fixture_position_blueprints bp ON bp.organization_id=pp.organization_id AND bp.id=pp.blueprint_id
-      JOIN categories c ON c.organization_id=bp.organization_id AND c.id=bp.category_id JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id
-      JOIN tournaments t ON t.organization_id=ed.organization_id AND t.id=ed.tournament_id JOIN organizations o ON o.id=t.organization_id
-      WHERE pp.organization_id=$1 AND o.status='active' ORDER BY t.id,pp.revision DESC,pp.published_at DESC`, [organizationId]);
-    return rows;
-  });
-  app.get('/api/v1/public/organizations/:id/draws/:categoryId/competition',async request=>{
-    const {id,categoryId}=request.params as {id:string;categoryId:string};
-    const organizationId=uuid(id),category=uuid(categoryId);
-    const summary = (request.query as { resumen?: string }).resumen === '1';
-    const {rowCount}=await pool.query(`SELECT 1 FROM fixture_position_blueprints b JOIN fixture_position_publications p ON p.organization_id=b.organization_id AND p.blueprint_id=b.id
-      JOIN organizations o ON o.id=b.organization_id AND o.status='active' WHERE b.organization_id=$1 AND b.category_id=$2 LIMIT 1`,[organizationId,category]);
-    if(!rowCount)fail(404,'DRAW_NOT_PUBLIC','No se encontró una Copa pública.');
-    const state=await positionCompetitionState(pool,organizationId,category,true,true,!summary);
+  type PublicPositionView = 'resumen'|'clasificacion'|'goleadores'|'valla'|'equipos'|'completa';
+  const positionViews = z.enum(['resumen','clasificacion','goleadores','valla','equipos']);
+  async function publicPositionCompetition(organizationId:string, category:string, view:PublicPositionView) {
+    const withPlayers=view==='completa'||view==='goleadores';
+    const state=await positionCompetitionState(pool,organizationId,category,true,true,withPlayers);
     if(!state?.rulesPublished||!state.preparedMatches)return {available:false};
+    if(view==='valla')return {available:true,defense:state.defense};
+    const players=async()=>{
+      const names=await playerStatNames(pool,organizationId,state.playerTotals.map(player=>player.registrationId));
+      return state.playerTotals.filter(player=>names.get(player.registrationId)?.publicName).map(player=>({...player,name:names.get(player.registrationId)!.name}));
+    };
+    if(view==='goleadores')return {available:true,players:await players()};
     const matches=state.matches.filter(match=>match.day_status==='published');
-    if (summary) return {
+    if(view==='resumen')return {
       available:true,
       competition:{participants:state.competition.participants},
       results:state.results.map(({code,homeGoals,awayGoals,homePenalties,awayPenalties})=>({code,homeGoals,awayGoals,homePenalties,awayPenalties})),
       matches:matches.map(({code,match_id})=>({code,match_id})),
     };
-    const names=await playerStatNames(pool,organizationId,state.playerTotals.map(player=>player.registrationId));
-    return {available:true,competition:state.competition,results:state.results,matches,players:state.playerTotals.filter(player=>names.get(player.registrationId)?.publicName).map(player=>({...player,name:names.get(player.registrationId)!.name})),defense:state.defense,titleTie:state.titleTie,titleExtra:state.titleExtra&&state.titleExtra.dayStatus==='published'?state.titleExtra:state.titleExtra?.decision==='no_extra'?state.titleExtra:null};
+    const standings={
+      available:true,competition:state.competition,results:state.results,matches,titleTie:state.titleTie,
+      titleExtra:state.titleExtra&&state.titleExtra.dayStatus==='published'?state.titleExtra:state.titleExtra?.decision==='no_extra'?state.titleExtra:null,
+    };
+    if(view==='clasificacion')return standings;
+    return {...standings,players:await players(),defense:state.defense};
+  }
+  app.get('/api/v1/public/organizations/:id/draws', async (request) => {
+    const organizationId = uuid((request.params as { id: string }).id);
+    const options=request.query as {torneo?:string;vista?:string};
+    const tournament=options.torneo===undefined?null:uuid(options.torneo);
+    const view=options.vista===undefined?'resumen':positionViews.parse(options.vista);
+    const { rows } = await pool.query(`SELECT DISTINCT ON (t.id) t.id tournament_id,t.name tournament_name,t.public_slug,(t.emblem_id IS NOT NULL) has_emblem,c.id category_id,c.name category_name,pp.revision,
+      CASE WHEN $2::uuid IS NULL OR t.id=$2 THEN pp.snapshot ELSE NULL END snapshot,pp.published_at,
+      o.name organization_name,o.accent organization_accent,o.logo_id organization_logo_id,o.public_slug organization_slug
+      FROM fixture_position_publications pp JOIN fixture_position_blueprints bp ON bp.organization_id=pp.organization_id AND bp.id=pp.blueprint_id
+      JOIN categories c ON c.organization_id=bp.organization_id AND c.id=bp.category_id JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id
+      JOIN tournaments t ON t.organization_id=ed.organization_id AND t.id=ed.tournament_id JOIN organizations o ON o.id=t.organization_id
+      WHERE pp.organization_id=$1 AND o.status='active' ORDER BY t.id,pp.revision DESC,pp.published_at DESC,pp.id DESC`, [organizationId,tournament]);
+    const drawRows=rows.map(({organization_name,organization_accent,organization_logo_id,organization_slug,...draw})=>draw);
+    if(!tournament)return drawRows;
+    const selected=rows.find(row=>row.tournament_id===tournament);
+    if(!selected)fail(404,'DRAW_NOT_PUBLIC','No se encontró una Copa pública.');
+    return {
+      organization:{id:organizationId,name:selected.organization_name,accent:selected.organization_accent,logo_id:selected.organization_logo_id,public_slug:selected.organization_slug},
+      draw:drawRows.find(row=>row.tournament_id===tournament),
+      menu:drawRows.map(({snapshot,...link})=>link),
+      section:view==='equipos'?null:{view,data:await publicPositionCompetition(organizationId,selected.category_id,view)},
+    };
+  });
+  app.get('/api/v1/public/organizations/:id/draws/:categoryId/competition',async request=>{
+    const {id,categoryId}=request.params as {id:string;categoryId:string};
+    const organizationId=uuid(id),category=uuid(categoryId);
+    const query=request.query as {resumen?:string;vista?:string};
+    const view=query.resumen==='1'?'resumen':query.vista===undefined?'completa':positionViews.parse(query.vista);
+    const {rowCount}=await pool.query(`SELECT 1 FROM fixture_position_blueprints b JOIN fixture_position_publications p ON p.organization_id=b.organization_id AND p.blueprint_id=b.id
+      JOIN organizations o ON o.id=b.organization_id AND o.status='active' WHERE b.organization_id=$1 AND b.category_id=$2 LIMIT 1`,[organizationId,category]);
+    if(!rowCount)fail(404,'DRAW_NOT_PUBLIC','No se encontró una Copa pública.');
+    if(view==='equipos')return {available:false};
+    return publicPositionCompetition(organizationId,category,view);
   });
   app.get('/api/v1/public/organizations/:id/draws/:categoryId/teams/:entryId/players',async request=>{
     const {id,categoryId,entryId}=request.params as {id:string;categoryId:string;entryId:string};
