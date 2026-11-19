@@ -44,7 +44,7 @@ interface AccessDraft { status: AccessState; reason: string; version: number }
 interface LinkResult { url: string; expiresInHours: number }
 interface TokenInfo { name: string; username: string; organization_name: string | null; purpose: 'invite' | 'recovery'; has_password: boolean; currentUser: CurrentUser | null }
 interface PublicCatalogItem {id:string;name:string;public_slug:string|null;organization_id:string;organization_name:string;organization_slug:string}
-interface PublicOrganizationItem {id:string;name:string;public_slug:string;has_logo:boolean;tournament_count:number;single_tournament_id:string|null;single_tournament_slug:string|null}
+interface PublicOrganizationItem {id:string;name:string;public_slug:string;has_logo:boolean;tournament_count:number;single_tournament_id:string|null;single_tournament_slug:string|null;single_tournament_position?:boolean}
 interface PublicOrganization {id:string;name:string;accent:string;logo_id:string|null;public_slug:string}
 interface MatchAssignment {id:string;match_id:string;duty:'capture'|'review';membership_id:string;name:string;member_status:string;category_id:string;home_name:string;away_name:string;day_ordinal:number|null;day_status:'draft'|'published'|null;acta_status:'capturing'|'submitted'|'official'|null}
 interface OperatorSummary {id:string;name:string;username:string;status:string}
@@ -1405,6 +1405,8 @@ async function loadView(force = false) {
       return;
     }
     if (parts.value[0] === 'publico') {
+      const samePositionOrganization=publicOrganization.value?.id===viewParts[1];
+      const knownDraw=samePositionOrganization&&publicDrawMenu.value.some(item=>item.tournament_id===viewParts[2]);
       publicOrganization.value = null; publicTournaments.value = []; publicTeams.value = []; publicFixture.value = []; publicDraws.value=[];publicDrawMenu.value=[];publicPositionStart.value=null;publicAnnouncedFixtures.value={};
       if(!viewParts[1]){publicOrganizations.value=[];const organizations=await publicCatalogRead<PublicOrganizationItem[]>('catalog','/public/organizations');if(epoch!==routeEpoch)return;publicOrganizations.value=organizations;setPublicPageMeta('A la cancha · Torneos','Encontrá organizaciones, torneos, partidos, resultados y estadísticas.',`${location.origin}/`);recordFanView();return;}
       const organizationId=viewParts[1];
@@ -1424,7 +1426,8 @@ async function loadView(force = false) {
       if (!needsDraws) void loadFanPortal().catch(() => {});
       type PositionPage={organization:PublicOrganization;draw:PublicDraw;menu:PublicDrawLink[];section:PublicPositionStart['section']|null};
       let positionPage:PositionPage|null=null;
-      if(canUseHints&&mount?.publicPosition==='1'){
+      const directoryDraw=publicOrganizations.value.some(item=>item.id===organizationId&&item.single_tournament_id===tournamentId&&item.single_tournament_position);
+      if(tournamentId&&(knownDraw||directoryDraw||(canUseHints&&mount?.publicPosition==='1'))){
         void loadPositionPortal().catch(()=>{});
         const navigation=readPublicNavigation(location.search);
         const view=publicPositionView(navigation.view,navigation.detail?.kind==='partido');

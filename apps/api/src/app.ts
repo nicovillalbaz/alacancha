@@ -846,18 +846,19 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       });
     });
   }
+  const publicPositionTournament = `EXISTS (SELECT 1 FROM editions pe JOIN categories pc ON pc.organization_id=pe.organization_id AND pc.edition_id=pe.id
+    JOIN fixture_position_blueprints pb ON pb.organization_id=pc.organization_id AND pb.category_id=pc.id
+    JOIN fixture_position_publications pp ON pp.organization_id=pb.organization_id AND pp.blueprint_id=pb.id
+    WHERE pe.organization_id=t.organization_id AND pe.tournament_id=t.id)`;
   const publicTournamentCondition = `(t.status='published' AND EXISTS (SELECT 1 FROM editions ed JOIN categories c ON c.organization_id=ed.organization_id AND c.edition_id=ed.id
     JOIN rule_versions r ON r.organization_id=c.organization_id AND r.category_id=c.id AND r.status='published'
     WHERE ed.organization_id=t.organization_id AND ed.tournament_id=t.id AND ed.status='published' AND c.status='published'))
-    OR EXISTS (SELECT 1 FROM editions pe JOIN categories pc ON pc.organization_id=pe.organization_id AND pc.edition_id=pe.id
-    JOIN fixture_position_blueprints pb ON pb.organization_id=pc.organization_id AND pb.category_id=pc.id
-    JOIN fixture_position_publications pp ON pp.organization_id=pb.organization_id AND pp.blueprint_id=pb.id
-    WHERE pe.organization_id=t.organization_id AND pe.tournament_id=t.id)
-    OR t.public_preview_at IS NOT NULL`;
+    OR ${publicPositionTournament} OR t.public_preview_at IS NOT NULL`;
   app.get('/api/v1/public/organizations', async () => {
     const { rows } = await pool.query(`SELECT o.id,o.name,o.public_slug,(o.logo_id IS NOT NULL) has_logo,count(*)::int tournament_count,
       CASE WHEN count(*)=1 THEN (array_agg(t.id))[1] ELSE NULL END single_tournament_id,
-      CASE WHEN count(*)=1 THEN max(t.public_slug) ELSE NULL END single_tournament_slug
+      CASE WHEN count(*)=1 THEN max(t.public_slug) ELSE NULL END single_tournament_slug,
+      CASE WHEN count(*)=1 THEN bool_or(${publicPositionTournament}) ELSE false END single_tournament_position
       FROM organizations o JOIN tournaments t ON t.organization_id=o.id
       WHERE o.status='active' AND (${publicTournamentCondition})
       GROUP BY o.id ORDER BY o.name,o.id LIMIT 500`);
