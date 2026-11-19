@@ -34,6 +34,7 @@ El servidor confía en `X-Forwarded-For` únicamente cuando la conexión inmedia
 
 ```caddyfile
 dominio-elegido.example {
+    encode zstd gzip
     reverse_proxy 127.0.0.1:4312
 }
 ```

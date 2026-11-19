@@ -9,6 +9,7 @@ import SportEventMark from './SportEventMark.vue';
 import PublicMatchRow from './PublicMatchRow.vue';
 import InstallButton from './InstallButton.vue';
 import {cleanLegacyHash,routeFromUrl} from './client-route.ts';
+import {measurePublicNavigation} from './public-navigation.ts';
 import { queueMatchEvent,queuedMatchEvents,removeQueuedMatchEvent,type QueuedMatchEvent } from './offline-events.ts';
 
 const LoadingScreen = defineComponent(() => () => h('p', { class: 'small muted pad', role: 'status' }, 'Cargando…'));
@@ -61,7 +62,7 @@ function setPublicPageMeta(title:string,description:string,canonical:string,imag
   document.head.querySelector('meta[property="og:image"]')?.remove();
   if(image)meta('og:image',image,true);
   meta('twitter:card',image?'summary_large_image':'summary');
-  (window as Window & { gtag?: (...args: unknown[]) => void }).gtag?.('event','page_view',{page_location:canonical,page_title:title});
+  measurePublicNavigation();
 }
 const initialRoute=routeFromLocation();
 const route = ref(initialRoute);
@@ -1348,7 +1349,7 @@ async function loadView(force = false) {
       const hasEmblem=publicTournament.value?.has_emblem&&(publicTournament.value.status==='published'||publicTournament.value.presentation_only)||draws.some(item=>item.tournament_id===tournamentId&&item.has_emblem);
       const image=hasEmblem?`${location.origin}/api/v1/public/organizations/${result.organization.id}/tournaments/${tournamentId}/emblem`:result.organization.logo_id?`${location.origin}/api/v1/public/organizations/${result.organization.id}/logo`:'';
       setPublicPageMeta(title,description,canonical,image);
-      if(location.hash.startsWith('#/publico/')){history.replaceState(null,'',canonical);cleanRouteCache.set(new URL(canonical).pathname,route.value);}
+      if(location.hash.startsWith('#/publico/')){history.replaceState(null,'',canonical);cleanRouteCache.set(new URL(canonical).pathname,route.value);measurePublicNavigation();}
       const stream=previewOnly?null:new EventSource(`/api/v1/public/organizations/${organizationId}/results/stream`);publicResultsStream=stream;
       const currentPublicView=()=>epoch===routeEpoch&&parts.value[0]==='publico'&&parts.value[1]===organizationId&&parts.value[2]===tournamentId;
       const refreshResults=()=>{void api<PublicFixtureDay[]>(`/public/organizations/${organizationId}/fixture`).then(days=>{if(currentPublicView())publicFixture.value=tournamentId?days.filter(day=>day.tournament_id===tournamentId):days;}).catch(()=>{});void Promise.allSettled(publicTournaments.value.map(item=>api<PublicStats>(`/public/organizations/${organizationId}/categories/${item.category_id}/statistics`))).then(results=>{if(currentPublicView())publicStatistics.value=Object.fromEntries(publicTournaments.value.flatMap((item,index)=>results[index].status==='fulfilled'?[[item.category_id,results[index].value]]:[]));});};
@@ -1541,7 +1542,9 @@ function dateLabel(value: string) { return new Intl.DateTimeFormat('es-PY', { da
 const routeChanged = () => {
   const cleanTarget=cleanLegacyHash(location.hash);
   if(cleanTarget)history.replaceState(null,'',cleanTarget);
-  route.value = location.hash.startsWith('#/')?routeFromLocation():cleanRouteCache.get(location.pathname)||routeFromLocation();
+  const nextRoute = location.hash.startsWith('#/')?routeFromLocation():cleanRouteCache.get(location.pathname)||routeFromLocation();
+  if(nextRoute===route.value && nextRoute.startsWith('publico'))measurePublicNavigation();
+  route.value = nextRoute;
 };
 const internalLinkClicked = (event:MouseEvent) => {
   if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey||!(event.target instanceof Element))return;

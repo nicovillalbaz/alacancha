@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {closePublicDetail,publicNavigationUrl,readPublicNavigation} from '../apps/web/src/public-navigation.ts';
+import {closePublicDetail,publicMeasurementUrl,publicNavigationUrl,readPublicNavigation} from '../apps/web/src/public-navigation.ts';
 
 test('la URL pública conserva la copa y abre una sección directamente',()=>{
   const url=publicNavigationUrl('/fcfs-copacaacupe','','clasificacion');
@@ -32,4 +32,14 @@ test('cerrar un detalle vuelve por historial o limpia un enlace directo',()=>{
     closePublicDetail('partidos');
     assert.equal(replaced,'/copa-sanber');
   }finally{Object.assign(globalThis,{history:oldHistory,location:oldLocation});}
+});
+
+test('la medición distingue secciones y tipos de ficha sin copiar identificadores ni rutas privadas',()=>{
+  const origin='https://torneos.example';
+  const canonical=`${origin}/copa-demo`;
+  assert.equal(publicMeasurementUrl(canonical,new URL(`${canonical}?vista=equipos&equipo=123&dato=privado`)),`${canonical}?vista=equipos&detalle=equipo`);
+  assert.equal(publicMeasurementUrl(canonical,new URL(`${canonical}?vista=sin-validar&cruce=2-3`)),`${canonical}?vista=partidos&detalle=cruce`);
+  assert.equal(publicMeasurementUrl(canonical,new URL(`${canonical}#/recuperacion/ejemplo`)),null);
+  assert.equal(publicMeasurementUrl(canonical,new URL(`${origin}/panel/actividad`)),null);
+  assert.equal(publicMeasurementUrl(canonical,new URL(`${origin}/otra-copa?vista=equipos`)),null);
 });
