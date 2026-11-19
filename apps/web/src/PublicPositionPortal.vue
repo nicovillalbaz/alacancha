@@ -106,7 +106,23 @@ async function openMatch(code: string) {
 watch(matches,available=>{if(pendingMatchCode&&available.has(pendingMatchCode)&&selectedGame.value?.code===pendingMatchCode)void openMatch(pendingMatchCode);});
 watch(()=>props.resultsRevision,()=>{if(selectedGame.value){const code=selectedGame.value.code;selectedMatch.value=null;pendingMatchCode=code;if(matches.value.has(code))void openMatch(code);}});
 watch(()=>current.value?.revision,()=>{if(selectedGame.value){selectedMatch.value=null;selectedGame.value=null;pendingMatchCode='';pushPublicNavigation(tabToView[tab.value]||'partidos',null,true);}});
-async function openTeam(team:Team){selectedTeam.value=team;teamPlayers.value=[];teamLoading.value=true;if(!restoringNavigation)pushPublicNavigation('equipos',{kind:'equipo',id:team.entry_id});const organization=props.organization?.id,category=current.value?.category_id;if(!organization||!category){teamLoading.value=false;return;}try{const response=await fetch(`/api/v1/public/organizations/${organization}/draws/${category}/teams/${team.entry_id}/players`);if(response.ok){const players=await response.json() as Array<{name:string}>;if(selectedTeam.value?.entry_id===team.entry_id&&props.organization?.id===organization&&current.value?.category_id===category)teamPlayers.value=players;}}catch{/* La ficha permanece accesible sin jugadores. */}finally{if(selectedTeam.value?.entry_id===team.entry_id)teamLoading.value=false;}}
+let rosterRequest = 0;
+async function openTeam(team:Team) {
+  const request = ++rosterRequest;
+  const organization = props.organization?.id, category = current.value?.category_id;
+  selectedTeam.value = team;
+  teamPlayers.value = [];
+  teamLoading.value = !!organization && !!category;
+  if (!restoringNavigation) pushPublicNavigation('equipos',{kind:'equipo',id:team.entry_id});
+  if (!organization || !category) return;
+  const currentTeam = () => request === rosterRequest && selectedTeam.value?.entry_id === team.entry_id &&
+    props.organization?.id === organization && current.value?.category_id === category;
+  try {
+    const players = await readPublic<Array<{name:string}>>(`/organizations/${organization}/draws/${category}/teams/${team.entry_id}/players`, competitionRevision.value);
+    if (currentTeam()) teamPlayers.value = players;
+  } catch { /* La ficha permanece accesible sin jugadores. */ }
+  finally { if (currentTeam()) teamLoading.value = false; }
+}
 function closeMatch(){selectedMatch.value=null;selectedGame.value=null;pendingMatchCode='';closePublicDetail(tabToView[tab.value]||'partidos');}
 function closeTeam(){selectedTeam.value=null;closePublicDetail('equipos');}
 function restorePublicLocation(){

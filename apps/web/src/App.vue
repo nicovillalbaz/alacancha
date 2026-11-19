@@ -1337,19 +1337,28 @@ async function loadView(force = false) {
       publicOrganization.value = null; publicTournaments.value = []; publicTeams.value = []; publicFixture.value = []; publicBrackets.value = []; publicDraws.value=[];publicAnnouncedFixtures.value={};
       if(!viewParts[1]){publicOrganizations.value=[];const organizations=await api<PublicOrganizationItem[]>('/public/organizations');if(epoch!==routeEpoch)return;publicOrganizations.value=organizations;setPublicPageMeta('A la cancha · Torneos','Encontrá organizaciones, torneos, partidos, resultados y estadísticas.',`${location.origin}/`);recordFanView();return;}
       const organizationId=viewParts[1];
+      const tournamentId=viewParts[2];
+      const fixturePath = `/public/organizations/${organizationId}/fixture${tournamentId ? `?torneo=${tournamentId}` : ''}`;
+      const announcedPath = (category: string) => `/public/organizations/${organizationId}/categories/${category}/fixture/announced`;
+      const mount = document.getElementById('app')?.dataset;
+      const canUseHints = !!tournamentId && mount?.publicPath === location.pathname &&
+        mount.publicOrganizationId === organizationId && mount.publicTournamentId === tournamentId;
+      const fixtureRequest = canUseHints && mount?.publicFixture === '1'
+        ? api<PublicFixtureDay[]>(fixturePath).catch(() => null) : null;
+      const announcedRequests = new Map((canUseHints ? mount?.publicAnnouncedCategories?.split(',') || [] : []).map(id =>
+        [id, api<AnnouncedFixture>(announcedPath(id)).catch(() => null)]));
       const [result,draws] = await Promise.all([api<{ organization: PublicOrganization; tournaments: PublicTournamentSummary[]; teams: typeof publicTeams.value }>(`/public/organizations/${organizationId}/tournaments?portal=1`),api<PublicDraw[]>(`/public/organizations/${organizationId}/draws`)]);
       if(epoch!==routeEpoch)return;
       publicDraws.value=draws;
       publicCatalog.value=[...new Map([...result.tournaments.map(item=>[item.id,{id:item.id,name:item.name,public_slug:item.public_slug||null,organization_id:organizationId,organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const),...draws.map(item=>[item.tournament_id,{id:item.tournament_id,name:item.tournament_name,public_slug:item.public_slug||null,organization_id:organizationId,organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const)].map(item=>[item[0],item[1]])).values()];
-      const tournamentId=viewParts[2];
       if(tournamentId&&!result.tournaments.some(item=>item.id===tournamentId)&&!draws.some(item=>item.tournament_id===tournamentId))throw new RequestError('Este torneo todavía no está publicado.','NOT_FOUND',404);
       const positionPortal=draws.length>0&&(tournamentId?draws.some(item=>item.tournament_id===tournamentId):!result.tournaments.length);
-      const previewOnly=result.tournaments.length>0&&result.tournaments.filter(item=>!tournamentId||item.id===tournamentId).every(item=>item.presentation_only);
-      const announcedCandidates=result.tournaments.filter(item=>item.has_announced_fixture&&(!tournamentId||item.id===tournamentId));
-      const fixturePath = `/public/organizations/${organizationId}/fixture${tournamentId ? `?torneo=${tournamentId}` : ''}`;
+      const visibleRows=result.tournaments.filter(item=>!tournamentId||item.id===tournamentId);
+      const previewOnly=!positionPortal&&visibleRows.length>0&&visibleRows.every(item=>item.presentation_only);
+      const announcedCandidates=positionPortal?[]:visibleRows.filter(item=>item.has_announced_fixture);
       const [published,announced]=await Promise.all([
-        positionPortal||previewOnly?Promise.resolve([]):api<PublicFixtureDay[]>(fixturePath),
-        Promise.allSettled(announcedCandidates.map(item=>api<AnnouncedFixture>(`/public/organizations/${organizationId}/categories/${item.category_id}/fixture/announced`))),
+        positionPortal||previewOnly?Promise.resolve([]):(async()=>(await fixtureRequest)??api<PublicFixtureDay[]>(fixturePath))(),
+        Promise.allSettled(announcedCandidates.map(async item=>(await announcedRequests.get(item.category_id))??api<AnnouncedFixture>(announcedPath(item.category_id)))),
       ]);
       if(epoch!==routeEpoch)return;
       publicOrganization.value = result.organization; publicTournaments.value = tournamentId?result.tournaments.filter(item=>item.id===tournamentId):result.tournaments; publicTeams.value = result.teams.filter(team=>publicTournaments.value.some(item=>item.category_id===team.category_id));

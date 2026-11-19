@@ -4,7 +4,7 @@ import { publicSectionLabels, publicSectionMetadata, type PublicSection } from '
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-type Page = { organization_id: string; organization_name: string; public_slug: string; has_logo: boolean; tournament_id: string; tournament_name: string; tournament_slug: string | null; has_emblem: boolean; official: boolean; preview: boolean; position?: boolean; announced?: boolean; standings?: boolean };
+type Page = { organization_id: string; organization_name: string; public_slug: string; has_logo: boolean; tournament_id: string; tournament_name: string; tournament_slug: string | null; has_emblem: boolean; official: boolean; preview: boolean; position?: boolean; announced_categories?: string[]; standings?: boolean };
 export const publicPagesSql = `SELECT DISTINCT o.id organization_id,o.name organization_name,o.public_slug,(o.logo_id IS NOT NULL) has_logo,t.id tournament_id,t.name tournament_name,t.public_slug tournament_slug,(t.emblem_id IS NOT NULL) has_emblem,true official,false preview
   ,false position,coalesce(r.rules->'initialPhase'->>'mode','league')<>'knockout' standings
   FROM organizations o JOIN tournaments t ON t.organization_id=o.id AND t.status='published'
@@ -29,7 +29,7 @@ const escapeXml = escapeHtml;
 const typeFor = (path: string) => path.endsWith('.js') ? 'text/javascript; charset=utf-8' : path.endsWith('.css') ? 'text/css; charset=utf-8' : path.endsWith('.png') ? 'image/png' : path.endsWith('.svg') ? 'image/svg+xml' : path.endsWith('.webmanifest') ? 'application/manifest+json' : 'application/octet-stream';
 const cupPath = (page: Page) => page.tournament_slug ? `/${page.tournament_slug}` : `/${page.public_slug}/${page.tournament_id}`;
 function sectionsFor(page: Page): PublicSection[] {
-  if (page.position || page.announced || (!page.official && !page.preview)) return ['partidos','fixture','clasificacion','goleadores','valla','equipos'];
+  if (page.position || page.announced_categories?.length || (!page.official && !page.preview)) return ['partidos','fixture','clasificacion','goleadores','valla','equipos'];
   if (!page.official) return ['equipos'];
   return ['partidos', ...(page.standings !== false ? ['clasificacion' as const] : []), 'goleadores', 'valla', 'equipos'];
 }
@@ -39,17 +39,18 @@ export function registerPublicWebRoutes(app: FastifyInstance, pool: DatabasePool
   const gaEnabled = /^G-[A-Z0-9]+$/.test(measurementId);
   const pages = async () => {
     const unique = new Map<string,Page>();
-    const sql = `SELECT page.*, EXISTS(SELECT 1 FROM editions ed JOIN categories c ON c.organization_id=ed.organization_id AND c.edition_id=ed.id
+    const sql = `SELECT page.*, ARRAY(SELECT DISTINCT c.id::text FROM editions ed JOIN categories c ON c.organization_id=ed.organization_id AND c.edition_id=ed.id
       JOIN undated_fixture_plans plan ON plan.organization_id=c.organization_id AND plan.category_id=c.id
       JOIN undated_fixture_publications published ON published.organization_id=plan.organization_id AND published.plan_id=plan.id
       WHERE ed.organization_id=page.organization_id AND ed.tournament_id=page.tournament_id
       AND (page.preview OR (ed.status='published' AND c.status='published' AND EXISTS(
         SELECT 1 FROM rule_versions rv WHERE rv.organization_id=c.organization_id AND rv.category_id=c.id AND rv.status='published'
-      )))) announced FROM (${publicPagesSql}) page`;
+      )))) announced_categories FROM (${publicPagesSql}) page`;
     for (const page of (await pool.query(sql)).rows as Page[]) {
       const key = `${page.organization_id}/${page.tournament_id}`, previous = unique.get(key);
       unique.set(key, previous ? {...previous, official: previous.official || page.official, preview: previous.preview && page.preview,
-        position:previous.position || page.position, announced:previous.announced || page.announced, standings:previous.standings || page.standings} : page);
+        position:previous.position || page.position, standings:previous.standings || page.standings,
+        announced_categories:[...new Set([...(previous.announced_categories||[]),...(page.announced_categories||[])])]} : page);
     }
     return [...unique.values()];
   };
@@ -110,7 +111,10 @@ export function registerPublicWebRoutes(app: FastifyInstance, pool: DatabasePool
     const meta = `<title>${escapeHtml(title)}</title><meta name="description" content="${escapeHtml(description)}">${publicPage?`<link rel="canonical" href="${escapeHtml(canonical)}"><meta property="og:type" content="website"><meta property="og:title" content="${escapeHtml(title)}"><meta property="og:description" content="${escapeHtml(description)}"><meta property="og:url" content="${escapeHtml(canonical)}">${image?`<meta property="og:image" content="${escapeHtml(image)}">`:''}<meta name="twitter:card" content="${image?'summary_large_image':'summary'}">`:'<meta name="robots" content="noindex,nofollow">'}`;
     const analytics = publicPage && gaEnabled ? `<meta name="ga-measurement-id" content="${measurementId}"><script async src="https://www.googletagmanager.com/gtag/js?id=${measurementId}"></script><script src="/analytics.js"></script>` : '';
     shell = shell.replace(/<title>[^<]*<\/title>/, '').replace(/<meta name="description"[^>]*>/, '').replace('</head>', `${meta}${analytics}</head>`);
-    if (publicPage) shell = shell.replace('<div id="app"></div>', `<div id="app" data-public-path="${escapeHtml(path)}"${organization?` data-public-organization-id="${organization.organization_id}"`:''}${tournament?` data-public-tournament-id="${tournament.tournament_id}"`:''}></div><noscript><main><h1>${escapeHtml(section ? section.title : name)}</h1><p>${escapeHtml(description)}</p>${children.length?`<ul>${children.map(child=>`<li><a href="${escapeHtml(child.url)}">${escapeHtml(child.name)}</a></li>`).join('')}</ul>`:''}</main></noscript>`);
+    const publicData = tournament
+      ? ` data-public-tournament-id="${tournament.tournament_id}"${tournament.official&&!tournament.position?' data-public-fixture="1"':''}${!tournament.position&&tournament.announced_categories?.length?` data-public-announced-categories="${escapeHtml(tournament.announced_categories.join(','))}"`:''}`
+      : '';
+    if (publicPage) shell = shell.replace('<div id="app"></div>', `<div id="app" data-public-path="${escapeHtml(path)}"${organization?` data-public-organization-id="${organization.organization_id}"`:''}${publicData}></div><noscript><main><h1>${escapeHtml(section ? section.title : name)}</h1><p>${escapeHtml(description)}</p>${children.length?`<ul>${children.map(child=>`<li><a href="${escapeHtml(child.url)}">${escapeHtml(child.name)}</a></li>`).join('')}</ul>`:''}</main></noscript>`);
     return reply.code(publicPage ? 200 : segments[0]==='acceso'||segments[0]==='panel' ? 200 : 404).type('text/html; charset=utf-8').send(shell);
   });
 }
