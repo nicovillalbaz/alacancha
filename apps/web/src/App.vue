@@ -9,7 +9,9 @@ import SportEventMark from './SportEventMark.vue';
 import PublicMatchRow from './PublicMatchRow.vue';
 import InstallButton from './InstallButton.vue';
 import {cleanLegacyHash,routeFromUrl} from './client-route.ts';
-import {measurePublicNavigation} from './public-navigation.ts';
+import {measurePublicNavigation,setPublicSectionBase} from './public-navigation.ts';
+import {recordFanView} from './public-visits.ts';
+import type {PublicVisitReport} from '@torneos/shared';
 import { queueMatchEvent,queuedMatchEvents,removeQueuedMatchEvent,type QueuedMatchEvent } from './offline-events.ts';
 
 const LoadingScreen = defineComponent(() => () => h('p', { class: 'small muted pad', role: 'status' }, 'Cargando…'));
@@ -29,6 +31,7 @@ const PublicPositionPortal = lazyScreen(() => import('./PublicPositionPortal.vue
 const FlyerSettings = lazyScreen(() => import('./FlyerSettings.vue'));
 const FixtureDayEditor = lazyScreen(() => import('./FixtureDayEditor.vue'));
 const PaymentsWorkspace = lazyScreen(() => import('./PaymentsWorkspace.vue'));
+const VisitActivity = lazyScreen(() => import('./VisitActivity.vue'));
 
 interface Administrator { id: string; user_id: string; name: string; username: string; organization_id: string; organization_name: string; organization_status: AccessState; status: AccessState; role: keyof typeof roleLabels; version: number }
 interface Audit { id: string; action: string; reason: string; actor: string; organization_name: string | null; created_at: string; before_data: { status?: AccessState } | null; after_data: { status?: AccessState } | null }
@@ -54,7 +57,7 @@ class RequestError extends Error { constructor(message: string, public code = ''
 function routeFromLocation(){
   return routeFromUrl(location.pathname,location.hash,document.getElementById('app')?.dataset);
 }
-function setPublicPageMeta(title:string,description:string,canonical:string,image=''){
+function setPublicPageMeta(title:string,description:string,canonical:string,image='',cup=''){
   document.title=title;
   const meta=(key:string,value:string,property=false)=>{const attribute=property?'property':'name';let element=document.head.querySelector<HTMLMetaElement>(`meta[${attribute}="${key}"]`);if(!element){element=document.createElement('meta');element.setAttribute(attribute,key);document.head.append(element);}element.content=value;};
   meta('description',description);meta('og:type','website',true);meta('og:title',title,true);meta('og:description',description,true);meta('og:url',canonical,true);
@@ -62,6 +65,7 @@ function setPublicPageMeta(title:string,description:string,canonical:string,imag
   document.head.querySelector('meta[property="og:image"]')?.remove();
   if(image)meta('og:image',image,true);
   meta('twitter:card',image?'summary_large_image':'summary');
+  setPublicSectionBase(title,description,canonical,cup);
   measurePublicNavigation();
 }
 const initialRoute=routeFromLocation();
@@ -228,7 +232,17 @@ const categories = ref<Array<{ id: string; category_name: string; edition_name: 
 const publicOrganization = ref<PublicOrganization | null>(null);
 const publicTeams = ref<Array<{ id: string; entry_id:string; name: string; color: string; has_shield: boolean; category_id: string }>>([]);
 const activity = ref<Audit[]>([]);
-const technicalErrors=ref<TechnicalError[]>([]),activityTab=ref<'changes'|'errors'>('changes');
+const technicalErrors=ref<TechnicalError[]>([]),activityTab=ref<'changes'|'errors'|'visits'>('changes');
+const visitReport=ref<PublicVisitReport|null>(null),visitReportLoading=ref(false),visitReportError=ref('');
+async function openVisitActivity(){
+  activityTab.value='visits';
+  if(visitReportLoading.value)return;
+  visitReportLoading.value=true;
+  visitReportError.value='';
+  try{visitReport.value=await api<PublicVisitReport>('/admin/visits');}
+  catch{visitReportError.value='No se pudieron cargar las visitas. Tocá Actualizar para reintentar.';}
+  finally{visitReportLoading.value=false;}
+}
 const loading = ref(initialRoute.startsWith('publico')), loadingVisual = ref(false), busy = ref(false), error = ref(''), success = ref(''), online = ref(navigator.onLine);
 let loadingTimer:ReturnType<typeof setTimeout>|null=null;
 const errorCode = ref('');
@@ -1318,7 +1332,7 @@ async function loadView(force = false) {
     if (parts.value[0] === 'publico') {
       publicResultsStream?.close();publicResultsStream=null;
       publicOrganization.value = null; publicTournaments.value = []; publicTeams.value = []; publicSponsors.value = []; publicFixture.value = []; publicBrackets.value = []; publicStatistics.value = {}; publicFlyers.value=[]; publicDraws.value=[];publicAnnouncedFixtures.value={};
-      if(!viewParts[1]){publicOrganizations.value=[];const organizations=await api<PublicOrganizationItem[]>('/public/organizations');if(epoch!==routeEpoch)return;publicOrganizations.value=organizations;setPublicPageMeta('A la cancha · Torneos','Encontrá organizaciones, torneos, partidos, resultados y estadísticas.',`${location.origin}/`);return;}
+      if(!viewParts[1]){publicOrganizations.value=[];const organizations=await api<PublicOrganizationItem[]>('/public/organizations');if(epoch!==routeEpoch)return;publicOrganizations.value=organizations;setPublicPageMeta('A la cancha · Torneos','Encontrá organizaciones, torneos, partidos, resultados y estadísticas.',`${location.origin}/`);recordFanView();return;}
       const organizationId=viewParts[1];
       const [result,draws] = await Promise.all([api<{ organization: PublicOrganization; tournaments: PublicTournamentSummary[]; teams: typeof publicTeams.value; sponsors: typeof publicSponsors.value }>(`/public/organizations/${organizationId}/tournaments`),api<PublicDraw[]>(`/public/organizations/${organizationId}/draws`)]);
       if(epoch!==routeEpoch)return;
@@ -1348,8 +1362,9 @@ async function loadView(force = false) {
       const canonical=`${location.origin}${alias?`/${alias}`:`/${result.organization.public_slug}${tournamentId?`/${tournamentId}`:''}`}`;
       const hasEmblem=publicTournament.value?.has_emblem&&(publicTournament.value.status==='published'||publicTournament.value.presentation_only)||draws.some(item=>item.tournament_id===tournamentId&&item.has_emblem);
       const image=hasEmblem?`${location.origin}/api/v1/public/organizations/${result.organization.id}/tournaments/${tournamentId}/emblem`:result.organization.logo_id?`${location.origin}/api/v1/public/organizations/${result.organization.id}/logo`:'';
-      setPublicPageMeta(title,description,canonical,image);
+      setPublicPageMeta(title,description,canonical,image,tournamentId ? publicName || '' : '');
       if(location.hash.startsWith('#/publico/')){history.replaceState(null,'',canonical);cleanRouteCache.set(new URL(canonical).pathname,route.value);measurePublicNavigation();}
+      if(!tournamentId)recordFanView();
       const stream=previewOnly?null:new EventSource(`/api/v1/public/organizations/${organizationId}/results/stream`);publicResultsStream=stream;
       const currentPublicView=()=>epoch===routeEpoch&&parts.value[0]==='publico'&&parts.value[1]===organizationId&&parts.value[2]===tournamentId;
       const refreshResults=()=>{void api<PublicFixtureDay[]>(`/public/organizations/${organizationId}/fixture`).then(days=>{if(currentPublicView())publicFixture.value=tournamentId?days.filter(day=>day.tournament_id===tournamentId):days;}).catch(()=>{});void Promise.allSettled(publicTournaments.value.map(item=>api<PublicStats>(`/public/organizations/${organizationId}/categories/${item.category_id}/statistics`))).then(results=>{if(currentPublicView())publicStatistics.value=Object.fromEntries(publicTournaments.value.flatMap((item,index)=>results[index].status==='fulfilled'?[[item.category_id,results[index].value]]:[]));});};
@@ -1383,7 +1398,10 @@ async function loadView(force = false) {
     if (!user.value) user.value = await api<CurrentUser>('/auth/me');
     if (user.value.platformAdmin) {
       if (!members.value.length || force) await loadAdmin();
-      if (parts.value[0] === 'actividad') [activity.value,technicalErrors.value] = await Promise.all([api<Audit[]>('/admin/audit'),api<TechnicalError[]>('/admin/error-logs')]);
+      if (parts.value[0] === 'actividad') {
+        if (activityTab.value === 'visits') void openVisitActivity();
+        [activity.value,technicalErrors.value] = await Promise.all([api<Audit[]>('/admin/audit'),api<TechnicalError[]>('/admin/error-logs')]);
+      }
       if (['acceso-administrador', 'estado-organizacion'].includes(parts.value[0]) && accessTarget.value && !accessDrafts[accessKey.value]) accessDrafts[accessKey.value] = { status: accessTarget.value.status, version: accessTarget.value.version, reason: '' };
       if (['invitar', 'recuperar'].includes(parts.value[0]) && linkTarget.value !== route.value) { generatedLink.value = null; linkTarget.value = route.value; linkReason.value = ''; }
       if (parts.value[0] === 'organizacion' && selectedOrg.value) {
@@ -2068,7 +2086,8 @@ onUnmounted(() => { publicResultsStream?.close();privateMatchStream?.close();win
       </template>
 
       <template v-else-if="user.platformAdmin && parts[0] === 'actividad'">
-        <div class="heading"><h1 tabindex="-1">Actividad</h1><button class="btn" :disabled="loading" @click="loadView(true)">Actualizar</button></div><div class="choices" role="group" aria-label="Tipo de actividad"><button type="button" class="choice" :aria-pressed="activityTab==='changes'" @click="activityTab='changes'">Cambios</button><button type="button" class="choice" :aria-pressed="activityTab==='errors'" @click="activityTab='errors'">Errores</button></div><section v-if="activityTab==='changes'" class="panel"><article v-for="item in activity" :key="item.id" class="audit-item"><div class="between wrap"><h3>{{ actionNames[item.action] || item.action }}</h3><time :datetime="item.created_at">{{ dateLabel(item.created_at) }}</time></div><p>{{ item.actor }}<template v-if="item.organization_name"> · {{ item.organization_name }}</template></p><p v-if="item.before_data?.status && item.after_data?.status">{{ accessLabels[item.before_data.status] }} → {{ accessLabels[item.after_data.status] }}</p><p>{{ item.reason }}</p></article><div v-if="!activity.length && !loading" class="empty">Sin cambios registrados.</div></section><section v-else class="panel"><article v-for="item in technicalErrors" :key="item.id" class="audit-item"><div class="between wrap"><strong>{{ item.error_code }}</strong><time :datetime="item.occurred_at">{{ dateLabel(item.occurred_at) }}</time></div><p>{{ item.source }} · {{ item.method || '' }} {{ item.operation }}<template v-if="item.status_code"> · {{ item.status_code }}</template></p><small v-if="item.message">{{ item.message }}</small><small v-if="item.request_id">ID {{ item.request_id }}</small></article><div v-if="!technicalErrors.length && !loading" class="empty">Sin errores registrados.</div></section>
+        <div class="heading"><h1 tabindex="-1">Actividad</h1><button class="btn" :disabled="activityTab==='visits' ? visitReportLoading : loading" @click="activityTab==='visits' ? openVisitActivity() : loadView(true)">Actualizar</button></div><div class="choices" role="group" aria-label="Tipo de actividad"><button type="button" class="choice" :aria-pressed="activityTab==='changes'" @click="activityTab='changes'">Cambios</button><button type="button" class="choice" :aria-pressed="activityTab==='errors'" @click="activityTab='errors'">Errores</button><button type="button" class="choice" :aria-pressed="activityTab==='visits'" @click="openVisitActivity">Visitas</button></div><section v-if="activityTab==='changes'" class="panel"><article v-for="item in activity" :key="item.id" class="audit-item"><div class="between wrap"><h3>{{ actionNames[item.action] || item.action }}</h3><time :datetime="item.created_at">{{ dateLabel(item.created_at) }}</time></div><p>{{ item.actor }}<template v-if="item.organization_name"> · {{ item.organization_name }}</template></p><p v-if="item.before_data?.status && item.after_data?.status">{{ accessLabels[item.before_data.status] }} → {{ accessLabels[item.after_data.status] }}</p><p>{{ item.reason }}</p></article><div v-if="!activity.length && !loading" class="empty">Sin cambios registrados.</div></section><section v-else-if="activityTab==='errors'" class="panel"><article v-for="item in technicalErrors" :key="item.id" class="audit-item"><div class="between wrap"><strong>{{ item.error_code }}</strong><time :datetime="item.occurred_at">{{ dateLabel(item.occurred_at) }}</time></div><p>{{ item.source }} · {{ item.method || '' }} {{ item.operation }}<template v-if="item.status_code"> · {{ item.status_code }}</template></p><small v-if="item.message">{{ item.message }}</small><small v-if="item.request_id">ID {{ item.request_id }}</small></article><div v-if="!technicalErrors.length && !loading" class="empty">Sin errores registrados.</div></section>
+        <VisitActivity v-else :report="visitReport" :loading="visitReportLoading" :error="visitReportError" />
       </template>
 
       <template v-else-if="parts[0] === 'cuenta'">

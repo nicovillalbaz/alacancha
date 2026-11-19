@@ -5,6 +5,7 @@ import SportTabs from './SportTabs.vue';
 import Icon from './Icon.vue';
 import PublicMatchTimeline from './PublicMatchTimeline.vue';
 import {closePublicDetail,pushPublicNavigation,readPublicNavigation} from './public-navigation.ts';
+import {recordFanView} from './public-visits.ts';
 
 type Slot={slot_code:string;entry_id:string|null;team_id:string|null;team_name:string|null;color:string|null;has_shield:boolean};
 type Team={entry_id:string;team_id:string;team_name:string;color:string|null;has_shield:boolean};
@@ -87,6 +88,9 @@ function restorePublicLocation(){
   void nextTick(()=>{restoringNavigation=false;});
 }
 watch(tab,value=>{if(!restoringNavigation){pushPublicNavigation(tabToView[value]||'partidos');void nextTick(()=>window.scrollTo(0,0));}},{flush:'sync'});
+watch(() => [props.selectedTournamentId, current.value?.tournament_id, tab.value, competitionLoading.value] as const, ([selectedId, id, value, loading]) => {
+  if (id && selectedId === id && !loading) recordFanView({id, section: tabToView[value]});
+}, { immediate: true, flush: 'post' });
 onMounted(()=>{restorePublicLocation();window.addEventListener('popstate',restorePublicLocation);});
 onUnmounted(()=>window.removeEventListener('popstate',restorePublicLocation));
 </script>

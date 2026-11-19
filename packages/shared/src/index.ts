@@ -1,4 +1,5 @@
 import { z } from 'zod';
+export { isPublicSection, publicSectionLabels, publicSectionMetadata, type PublicSection, type PublicVisitReport } from './public-sections.ts';
 export { rankStandings, type RankedMatch, type StandingTotals, type StandingGroup } from './standings.ts';
 export { derivePositionCompetition, type PositionCompetition, type PositionCompetitionView, type PositionGame, type PositionManualOrders, type PositionResult } from './position-competition.ts';
 export { roundRobin, drawGroups, knockoutBracket, type GeneratedRound, type FixturePair, type BracketSlotPlan } from './fixture.ts';

@@ -1,3 +1,5 @@
+import { isPublicSection, publicSectionMetadata } from '@torneos/shared';
+
 export type PublicDetail = { kind: 'partido' | 'equipo' | 'cruce'; id: string } | null;
 
 export function readPublicNavigation(search: string) {
@@ -17,8 +19,6 @@ export function publicNavigationUrl(pathname: string, search: string, view: stri
   return `${pathname}${suffix ? `?${suffix}` : ''}`;
 }
 
-const publicViews = new Set(['partidos', 'fixture', 'clasificacion', 'goleadores', 'valla', 'equipos']);
-
 export function publicMeasurementUrl(canonical: string, current: URL) {
   const page = new URL(canonical);
   if (page.origin !== current.origin || current.hash.startsWith('#/') ||
@@ -29,21 +29,46 @@ export function publicMeasurementUrl(canonical: string, current: URL) {
   page.search = '';
   page.hash = '';
   if (page.pathname !== '/') {
-    page.searchParams.set('vista', publicViews.has(view) ? view : 'partidos');
+    page.searchParams.set('vista', isPublicSection(view) ? view : 'partidos');
     if (detail) page.searchParams.set('detalle', detail.kind);
   }
   return page.href;
 }
 
 let lastMeasuredPage = '';
+let baseMetadata: { title: string; description: string; canonical: string; cup: string } | undefined;
+
+export function setPublicSectionBase(title: string, description: string, canonical: string, cup: string) {
+  baseMetadata = { title, description, canonical, cup };
+}
+
+function updatePublicSection(current: URL) {
+  if (!baseMetadata || !publicMeasurementUrl(baseMetadata.canonical, current)) return;
+  const section = current.searchParams.get('vista') || '';
+  const meta = publicSectionMetadata(baseMetadata.canonical, baseMetadata.cup, section) || baseMetadata;
+  document.title = meta.title;
+  for (const [selector, content] of [
+    ['meta[name="description"]', meta.description],
+    ['meta[property="og:title"]', meta.title],
+    ['meta[property="og:description"]', meta.description],
+    ['meta[property="og:url"]', meta.canonical],
+  ]) {
+    const tag = document.head.querySelector<HTMLMetaElement>(selector);
+    if (tag) tag.content = content;
+  }
+  const canonical = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+  if (canonical) canonical.href = meta.canonical;
+}
 
 export function measurePublicNavigation() {
   if (typeof window === 'undefined') return;
+  const current = new URL(location.href);
+  updatePublicSection(current);
   const track = (window as Window & { gtag?: (...args: unknown[]) => void }).gtag;
   if (!track) return;
   const canonical = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.href;
   if (!canonical) return;
-  const page = publicMeasurementUrl(canonical, new URL(location.href));
+  const page = publicMeasurementUrl(canonical, current);
   if (!page || page === lastMeasuredPage) return;
   lastMeasuredPage = page;
   track('event', 'page_view', {page_location: page, page_title: document.title});

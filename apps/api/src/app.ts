@@ -25,6 +25,7 @@ import { registerFixtureRefereeRoutes } from './fixture-referees-routes.ts';
 import { tieWinner, type ApprovedScore } from './fixture-progress.ts';
 import { positionCompetitionState, syncPositionMatches } from './position-competition.ts';
 import { registerPublicWebRoutes } from './public-web.ts';
+import { publicVisitReport, recordPublicVisit } from './public-visits.ts';
 
 interface Auth { session_id: string; user_id: string; organization_id: string | null; display_name: string; username: string; platform_admin: boolean; rawToken: string }
 declare module 'fastify' { interface FastifyRequest { auth: Auth | null } }
@@ -49,6 +50,14 @@ function ageAt(birth: string, date: string) {
 }
 const uuid = (value: unknown) => z.uuid().parse(value);
 const reasonSchema = z.object({ reason: z.string().trim().min(3).max(300) }).strict();
+const publicVisitSchema = z.object({
+  visit: z.boolean(),
+  tournament: z.object({
+    id: z.uuid(),
+    first: z.boolean(),
+    section: z.enum(['partidos', 'fixture', 'clasificacion', 'goleadores', 'valla', 'equipos']),
+  }).strict().optional(),
+}).strict().refine(input => input.visit || !!input.tournament);
 const requireAuth = (request: FastifyRequest): Auth => request.auth || fail(401, 'SESSION_REQUIRED', 'Volvé a ingresar para continuar.');
 const requireOwner = (request: FastifyRequest): Auth => {
   const auth = requireAuth(request);
@@ -113,6 +122,19 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     requireOwner(request);
     const {rows}=await pool.query('SELECT id,occurred_at,source,organization_id,request_id,operation,method,status_code,error_code,error_type,message,resource_id FROM technical_error_logs ORDER BY occurred_at DESC,id DESC LIMIT 100');
     return rows;
+  });
+  app.get('/api/v1/admin/visits', async request => {
+    requireOwner(request);
+    return publicVisitReport(pool);
+  });
+  app.post('/api/v1/public/visits', {
+    bodyLimit: 512, config: { rateLimit: { max: 120, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    if (request.headers.origin !== config.origin) return reply.code(403).send();
+    const input = publicVisitSchema.safeParse(request.body);
+    if (!input.success) return reply.code(400).send();
+    await recordPublicVisit(pool, input.data.visit, input.data.tournament);
+    return reply.code(204).send();
   });
 
   async function currentUser(auth: Auth): Promise<CurrentUser> {

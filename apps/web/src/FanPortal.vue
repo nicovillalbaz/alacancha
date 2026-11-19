@@ -8,6 +8,7 @@ import TeamCrest from './TeamCrest.vue';
 import BracketView from './BracketView.vue';
 import AnnouncedFixtureMatches from './AnnouncedFixtureMatches.vue';
 import {closePublicDetail,pushPublicNavigation,readPublicNavigation} from './public-navigation.ts';
+import {recordFanView} from './public-visits.ts';
 
 type FanEvent={id:string;kind:string;side:'home'|'away'|'unknown';period:string|null;minute:number|null;cardLabel:string|null;cardColor:string|null;name:string;relatedName:string|null};
 type FanMatch={id:string;category_id:string;category_name:string;home_name:string;away_name:string;home_team_id:string;away_team_id:string;venue_name:string;court_label:string;match_date:string;match_time:string;tie_leg?:string|null;result:{status:'provisional'|'official';score:{home:number;away:number};shootout:{home:number;away:number};events:FanEvent[]}|null};
@@ -126,6 +127,9 @@ function restorePublicLocation(){
   });
 }
 watch(tab,value=>{if(!restoringNavigation&&!props.loading){pushPublicNavigation(tabToView[value]||'partidos');void nextTick(()=>window.scrollTo(0,0));}},{flush:'sync'});
+watch(() => [currentTournament.value?.id, tab.value, props.loading, props.error] as const, ([id, value, loading, error]) => {
+  if (id && !loading && !error && tabs.value.some(item => item.key === value)) recordFanView({id, section: tabToView[value]});
+}, { immediate: true, flush: 'post' });
 function flyer(kind:string,sourceId:string){return props.flyers.find(item=>item.kind===kind&&item.sourceId===sourceId);}
 function flyerUrl(item:FanFlyer){return `/api/v1/public/organizations/${props.organization?.id}/flyers/${item.id}/file`;}
 </script>

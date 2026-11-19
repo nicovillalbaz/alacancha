@@ -1,6 +1,22 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {closePublicDetail,publicMeasurementUrl,publicNavigationUrl,readPublicNavigation} from '../apps/web/src/public-navigation.ts';
+import {claimFanView} from '../apps/web/src/public-visits.ts';
+
+test('una sesión cuenta una visita, una apertura por copa y una apertura por sección', () => {
+  function newSession() {
+    const storage = new Map<string, string>();
+    return { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) };
+  }
+  const storage = newSession();
+  const view = { id: 'copa-a', section: 'partidos' };
+  assert.equal(claimFanView(storage)?.visit, true);
+  assert.deepEqual(claimFanView(storage, view), { visit: false, tournament: { ...view, first: true } });
+  assert.equal(claimFanView(storage, view), null);
+  assert.equal(claimFanView(storage, { ...view, section: 'equipos' })?.tournament?.first, false);
+  assert.equal(claimFanView(storage, { ...view, id: 'copa-b' })?.tournament?.first, true);
+  assert.equal(claimFanView(newSession(), view)?.visit, true);
+});
 
 test('la URL pública conserva la copa y abre una sección directamente',()=>{
   const url=publicNavigationUrl('/fcfs-copacaacupe','','clasificacion');

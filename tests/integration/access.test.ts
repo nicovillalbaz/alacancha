@@ -62,6 +62,36 @@ test('salud y disponibilidad; una ruta privada exige sesión', async () => {
   assert.equal((await app.inject('/ready')).statusCode, 200);
   assert.equal((await app.inject('/api/v1/auth/me')).statusCode, 401);
 });
+test('visitas públicas agregadas por día, copa y sección; solo el dueño puede ver el informe', async () => {
+  const visible = randomUUID(), privateCup = randomUUID();
+  await pool.query(`INSERT INTO tournaments(id,organization_id,name,timezone,created_by,public_preview_at)
+    VALUES ($1,$3,'Copa visible','America/Asuncion',$5,now()),($2,$4,'Copa privada','America/Asuncion',$5,NULL)`,
+    [visible, privateCup, ids.a, ids.b, ids.owner]);
+  const endpoint = '/api/v1/public/visits';
+  const record = (payload: object, origin = config.origin) => app.inject({
+    method:'POST', url:endpoint, headers:{origin}, payload,
+  });
+  const initial = (await request(owner,'GET','/admin/visits')).json();
+  const visit = await record({visit:true,tournament:{id:visible,section:'equipos',first:true}});
+  assert.equal(visit.statusCode,204,visit.body);
+  assert.equal(visit.cookies.length,0);
+  assert.equal((await record({visit:false,tournament:{id:visible,section:'clasificacion',first:false}})).statusCode,204);
+  assert.equal((await record({visit:false,tournament:{id:privateCup,section:'equipos',first:true}})).statusCode,204);
+  assert.equal((await record({visit:true,ip:'192.0.2.1'})).statusCode,400);
+  assert.equal((await record({visit:true},'https://externo.example')).statusCode,403);
+  assert.equal((await request(adminA,'GET','/admin/visits')).statusCode,403);
+  assert.equal((await request(adminB,'GET','/admin/visits')).statusCode,403);
+  assert.equal((await app.inject('/api/v1/admin/visits')).statusCode,401);
+  const {statusCode,body} = await request(owner,'GET','/admin/visits');
+  assert.equal(statusCode,200,body);
+  const report=JSON.parse(body);
+  assert.equal(report.total,initial.total+1);
+  assert.equal(report.recent,initial.recent+1);
+  assert.equal(report.sections.find((item: {section:string})=>item.section==='clasificacion').views,
+    (initial.sections.find((item: {section:string})=>item.section==='clasificacion')?.views||0)+1);
+  const {rows}=await pool.query('SELECT tournament_id,section,views::int FROM public_tournament_view_days WHERE tournament_id=ANY($1::uuid[]) ORDER BY section',[ [visible,privateCup] ]);
+  assert.deepEqual(rows,['clasificacion','copa','equipos'].map(section=>({tournament_id:visible,section,views:1})));
+});
 test('Argon2id y sesiones opacas almacenadas solo como hash', async () => {
   const { rows: [user] } = await pool.query('SELECT password_hash FROM users WHERE id=$1', [ids.adminA]);
   assert.match(user.password_hash, /^\$argon2id\$/);
