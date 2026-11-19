@@ -1,4 +1,5 @@
 import { isFixtureOverview,isPublicRoute,routeFromUrl } from './client-route.ts';
+import { startFixtureReads, type FixtureStart } from './fixture-start.ts';
 import '../../../packages/ui/src/styles.css';
 
 const root = document.getElementById('app')!;
@@ -10,6 +11,7 @@ const loadArea = {
 let currentArea: 'public'|'panel'|undefined;
 let areaEpoch=0;
 let unmount: (() => void)|undefined;
+let startingFixture: FixtureStart | undefined;
 
 const worker = import.meta.env.PROD && 'serviceWorker' in navigator
   ? new Promise<ServiceWorkerRegistration|null>(resolve => {
@@ -38,6 +40,10 @@ function cacheVisitedAssets() {
 function showCurrentArea() {
   const route = routeFromUrl(location.pathname,location.hash,root.dataset);
   const area = isPublicRoute(route) ? 'public' : 'panel';
+  if (startingFixture && startingFixture.route !== route) {
+    startingFixture.cancel();
+    startingFixture = undefined;
+  }
   if (area === currentArea) return;
   currentArea = area;
   const epoch=++areaEpoch;
@@ -50,16 +56,18 @@ function showCurrentArea() {
   wait.textContent = 'Cargando…';
   root.replaceChildren(wait);
 
-  // A direct fixture can validate its session while the organizer entry downloads.
-  const session = isFixtureOverview(route)
-    ? fetch('/api/v1/auth/me', { credentials:'same-origin', signal:AbortSignal.timeout(12_000) }).catch(() => undefined)
-    : undefined;
+  // The browser can read the direct fixture while the organizer entry downloads.
+  startingFixture = isFixtureOverview(route) ? startFixtureReads(route) : undefined;
   void loadArea[area]().then(({mount}) => {
     if (epoch !== areaEpoch) return;
-    unmount = mount(root, session);
+    const fixture = startingFixture;
+    startingFixture = undefined;
+    unmount = mount(root, fixture);
     cacheVisitedAssets();
   }).catch(() => {
     if (epoch !== areaEpoch) return;
+    startingFixture?.cancel();
+    startingFixture = undefined;
     wait.setAttribute('role','alert');
     wait.textContent = 'No se pudo abrir esta vista. ';
     const retry = document.createElement('button');

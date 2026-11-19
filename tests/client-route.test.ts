@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {cleanLegacyHash,isFixtureOverview,isPublicRoute,routeFromUrl} from '../apps/web/src/client-route.ts';
+import {startFixtureReads} from '../apps/web/src/fixture-start.ts';
 
 test('las pantallas del panel abren directamente sin fragmento',()=>{
   assert.equal(routeFromUrl('/panel/torneo/copa-id/estadisticas',''), 'torneo/copa-id/estadisticas');
@@ -37,4 +38,40 @@ test('solo la entrada directa a Fixture adelanta la sesión del panel',()=>{
   assert.equal(isFixtureOverview(`${fixture}/new`),false);
   assert.equal(isFixtureOverview('acceso'),false);
   assert.equal(isFixtureOverview('portal/copa-sanber'),false);
+});
+
+test('el arranque del Fixture comparte el calendario anunciado con la vista', {timeout:2000}, async t => {
+  const org = '/organizations/organizacion';
+  const announcement = '/public' + org + '/categories/primera/fixture/announced';
+  let announce!: () => void;
+  const requestedAnnouncement = new Promise<void>(resolve => { announce = resolve; });
+  const fetch = t.mock.method(globalThis,'fetch',async (input: string, options: RequestInit) => {
+    const path = input.slice('/api/v1'.length);
+    if (path === '/auth/me') return Response.json({
+      organizationId:'organizacion',platformAdmin:false,
+      memberships:[{organization_id:'organizacion',organization_status:'active',role:'tournament_admin',status:'active'}],
+    });
+    if (path === `${org}/tournaments`) return Response.json([
+      {id:'otra-copa',edition_id:'otra',category_id:'otra',has_position_blueprint:true},
+      {id:'copa',edition_id:'2026',category_id:'primera',has_position_blueprint:false,has_announced_fixture:true},
+    ]);
+    if (path === announcement) {
+      assert.equal(options.credentials,'omit');
+      announce();
+    }
+    return Response.json({path});
+  });
+  const start = startFixtureReads('torneo/copa/fixture');
+  try {
+    await requestedAnnouncement;
+    assert.equal((await (await start.take(announcement))?.json()).path,announcement);
+    assert.equal(start.take(announcement),undefined);
+    assert.deepEqual(fetch.mock.calls.map(call => call.arguments[0]),[
+      '/api/v1/auth/me',`/api/v1${org}/tournaments`,`/api/v1${org}`,
+      `/api/v1${org}/teams?torneo=copa`,`/api/v1${org}/editions/2026/matchdays?vista=lista`,
+      `/api/v1${org}/categories/primera/fixture`,`/api/v1${announcement}`,
+    ]);
+  } finally {
+    start.cancel();
+  }
 });

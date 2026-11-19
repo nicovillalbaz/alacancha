@@ -9,6 +9,7 @@ import InstallButton from './InstallButton.vue';
 import {cleanLegacyHash,isFixtureOverview,routeFromUrl} from './client-route.ts';
 import {organizerReads} from './view-reads.ts';
 import {readAnnouncedFixture} from './organizer-announced-fixture.ts';
+import type { FixtureStart } from './fixture-start.ts';
 import {createOrganizerImages, organizerImagesKey} from './organizer-images.ts';
 import {lazyScreen} from './lazy-screen.ts';
 import type {PublicVisitReport} from '@torneos/shared';
@@ -27,8 +28,8 @@ const FixtureDayEditor = lazyScreen(() => import('./FixtureDayEditor.vue'));
 const PaymentsWorkspace = lazyScreen(() => import('./PaymentsWorkspace.vue'));
 const VisitActivity = lazyScreen(() => import('./VisitActivity.vue'));
 
-const props = defineProps<{ initialSession?: Promise<Response | undefined> }>();
-let initialSession = props.initialSession;
+const props = defineProps<{ fixtureStart?: FixtureStart }>();
+let fixtureStart = props.fixtureStart;
 
 interface Administrator { id: string; user_id: string; name: string; username: string; organization_id: string; organization_name: string; organization_status: AccessState; status: AccessState; role: keyof typeof roleLabels; version: number }
 interface Audit { id: string; action: string; reason: string; actor: string; organization_name: string | null; created_at: string; before_data: { status?: AccessState } | null; after_data: { status?: AccessState } | null }
@@ -49,6 +50,14 @@ function routeFromLocation(){
 }
 const initialRoute=routeFromLocation();
 const route = ref(initialRoute);
+function takeFixtureRead(path: string) {
+  return fixtureStart?.route === route.value ? fixtureStart.take(path) : undefined;
+}
+function cancelFixtureReads() {
+  fixtureStart?.cancel();
+  fixtureStart = undefined;
+}
+watch(route,cancelFixtureReads,{flush:'sync'});
 const user = ref<CurrentUser | null>(null);
 const organizerImages = createOrganizerImages();
 provide(organizerImagesKey, organizerImages);
@@ -361,7 +370,7 @@ function openTeamAction(action: 'admin'|'commission'|'staff'|'category') { teamA
 function selectedNav(path: string) { return parts.value[0] === path || (path === 'torneos' && ['nuevo-torneo', 'torneo', 'nueva-categoria', 'categoria', 'fixture', 'programar', 'partido', 'flyers', 'flyer-settings', 'nuevo-equipo', 'equipo', 'buena-fe', 'nuevo-jugador', 'jugador'].includes(parts.value[0])) || (path === 'equipos' && ['nuevo-equipo', 'equipo', 'buena-fe', 'nuevo-jugador', 'jugador', 'disciplina'].includes(parts.value[0])) || (path === 'administradores' && ['administrador', 'acceso-administrador', 'invitar', 'recuperar', 'nueva-organizacion'].includes(parts.value[0])) || (path === 'organizaciones' && ['organizacion', 'estado-organizacion'].includes(parts.value[0])); }
 function navPath(path: string) { return path === 'organizacion' && user.value?.organizationId ? `organizacion/${user.value.organizationId}` : path === 'organizacion' ? 'organizaciones' : path; }
 function notify(message: string) { success.value = message; clearTimeout(toastTimer); toastTimer = setTimeout(() => { success.value = ''; }, 4500); }
-function clearPrivate() { organizerImages.clear(); organizerReads.invalidate(); workspaceTeams.value=[]; workspaceMatchdays.value=[]; workspaceScores.value={}; workspaceOfficialMatchIds.value=[]; lastTournamentId.value = ''; queuedCapture.value=[]; queueError.value=''; reviewTasks.value=[]; reviewHasMore.value=false; disciplineCases.value=[]; disciplineNotices.value=[]; fineCatalog.value=[]; privateStats.value=null; standingAdjustments.value=[]; disciplineServiceHistory.value=[]; selectedDisciplineCaseId.value=''; Object.keys(sessionStorage).filter((key) => key.startsWith('torneos-rule-draft:')).forEach((key) => sessionStorage.removeItem(key)); capture.value = null; pendingCapture.value = null; pendingCaptureUndo.value = null; fixture.value = { phase: null, rounds: [], groups: [], bracket: [] }; fixtureTie.value=null; referees.value=[]; newRefereeName.value=''; refereeArchiveReason.value=''; matchdays.value = []; scheduleMatchId.value = ''; schedulePreview.value = null; matchdayPreview.value = null; draftMatches.value = []; lineupVersions.value = []; lineupSearch.value = ''; importRows.value = []; importToken.value = ''; importBatches.value = []; organizationEpoch++; members.value = []; organizations.value = []; organization.value = null; tournaments.value = []; tournamentResources.value = { venues: [], sponsors: [] }; teams.value = []; allOriginTeams.value = []; players.value = []; goodFaithVersions.value = []; playerEvidence.value = { documents: [], movements: [], restrictions: [] }; eligibility.value = null; categories.value = []; activity.value = []; generatedLink.value = null; createResult.value = null; teamLink.value = null; Object.keys(accessDrafts).forEach((key) => delete accessDrafts[key]); Object.keys(brandDrafts).forEach((key) => delete brandDrafts[key]); Object.keys(ruleDrafts).forEach((key) => delete ruleDrafts[key]); Object.keys(teamConfirmReasons).forEach((key) => delete teamConfirmReasons[key]); Object.keys(teamPublishReasons).forEach((key) => delete teamPublishReasons[key]); Object.keys(resourceReasons).forEach((key) => delete resourceReasons[key]); Object.keys(adminRevokeReasons).forEach((key) => delete adminRevokeReasons[key]); search.value = ''; organizationSearch.value = ''; playerSearch.value = ''; goodFaithSubmitReason.value = ''; goodFaithReviewReason.value = ''; statusFilter.value = 'Todos'; resetPlayerDraft(); Object.assign(venueDraft, { name: '', city: '' }); Object.assign(sponsorDraft, { name: '', city: '' }); Object.assign(createDraft, { name: '', administratorName: '', username: '' }); Object.assign(tournamentDraft, { name: '', editionName: '', categoryName: '', timezone: 'America/Asuncion', preset: 'F5', teamLimit: null, rules: suggestedRules(), paymentRates:{yellowGuaranies:0,redGuaranies:0,customCardRates:{}} }); quickCardOpen.value=false; Object.assign(quickCard,{name:'',color:'#2278C7',suspensionMatches:0,amountGuaranies:0}); Object.assign(categoryDraft, { editionName: '', categoryName: '', preset: 'F5', teamLimit: null, rules: suggestedRules() }); Object.assign(teamDraft, { name: '', color: '#165D46', categoryId: '' }); Object.assign(teamAdminDraft, { entryId: '', name: '', username: '' }); Object.assign(commissionDraft, { entryId: '', name: '', role: '', validFrom: '', validUntil: '' }); Object.assign(staffDraft, { entryId: '', name: '', role: '' }); wizardStep.value = 1; categoryStep.value = 1; tournamentRequestId.value = crypto.randomUUID(); categoryRequestId.value = crypto.randomUUID(); teamRequestId.value = crypto.randomUUID(); }
+function clearPrivate() { cancelFixtureReads(); organizerImages.clear(); organizerReads.invalidate(); workspaceTeams.value=[]; workspaceMatchdays.value=[]; workspaceScores.value={}; workspaceOfficialMatchIds.value=[]; lastTournamentId.value = ''; queuedCapture.value=[]; queueError.value=''; reviewTasks.value=[]; reviewHasMore.value=false; disciplineCases.value=[]; disciplineNotices.value=[]; fineCatalog.value=[]; privateStats.value=null; standingAdjustments.value=[]; disciplineServiceHistory.value=[]; selectedDisciplineCaseId.value=''; Object.keys(sessionStorage).filter((key) => key.startsWith('torneos-rule-draft:')).forEach((key) => sessionStorage.removeItem(key)); capture.value = null; pendingCapture.value = null; pendingCaptureUndo.value = null; fixture.value = { phase: null, rounds: [], groups: [], bracket: [] }; fixtureTie.value=null; referees.value=[]; newRefereeName.value=''; refereeArchiveReason.value=''; matchdays.value = []; scheduleMatchId.value = ''; schedulePreview.value = null; matchdayPreview.value = null; draftMatches.value = []; lineupVersions.value = []; lineupSearch.value = ''; importRows.value = []; importToken.value = ''; importBatches.value = []; organizationEpoch++; members.value = []; organizations.value = []; organization.value = null; tournaments.value = []; tournamentResources.value = { venues: [], sponsors: [] }; teams.value = []; allOriginTeams.value = []; players.value = []; goodFaithVersions.value = []; playerEvidence.value = { documents: [], movements: [], restrictions: [] }; eligibility.value = null; categories.value = []; activity.value = []; generatedLink.value = null; createResult.value = null; teamLink.value = null; Object.keys(accessDrafts).forEach((key) => delete accessDrafts[key]); Object.keys(brandDrafts).forEach((key) => delete brandDrafts[key]); Object.keys(ruleDrafts).forEach((key) => delete ruleDrafts[key]); Object.keys(teamConfirmReasons).forEach((key) => delete teamConfirmReasons[key]); Object.keys(teamPublishReasons).forEach((key) => delete teamPublishReasons[key]); Object.keys(resourceReasons).forEach((key) => delete resourceReasons[key]); Object.keys(adminRevokeReasons).forEach((key) => delete adminRevokeReasons[key]); search.value = ''; organizationSearch.value = ''; playerSearch.value = ''; goodFaithSubmitReason.value = ''; goodFaithReviewReason.value = ''; statusFilter.value = 'Todos'; resetPlayerDraft(); Object.assign(venueDraft, { name: '', city: '' }); Object.assign(sponsorDraft, { name: '', city: '' }); Object.assign(createDraft, { name: '', administratorName: '', username: '' }); Object.assign(tournamentDraft, { name: '', editionName: '', categoryName: '', timezone: 'America/Asuncion', preset: 'F5', teamLimit: null, rules: suggestedRules(), paymentRates:{yellowGuaranies:0,redGuaranies:0,customCardRates:{}} }); quickCardOpen.value=false; Object.assign(quickCard,{name:'',color:'#2278C7',suspensionMatches:0,amountGuaranies:0}); Object.assign(categoryDraft, { editionName: '', categoryName: '', preset: 'F5', teamLimit: null, rules: suggestedRules() }); Object.assign(teamDraft, { name: '', color: '#165D46', categoryId: '' }); Object.assign(teamAdminDraft, { entryId: '', name: '', username: '' }); Object.assign(commissionDraft, { entryId: '', name: '', role: '', validFrom: '', validUntil: '' }); Object.assign(staffDraft, { entryId: '', name: '', role: '' }); wizardStep.value = 1; categoryStep.value = 1; tournamentRequestId.value = crypto.randomUUID(); categoryRequestId.value = crypto.randomUUID(); teamRequestId.value = crypto.randomUUID(); }
 async function api<T = any>(path: string, method = 'GET', body?: unknown): Promise<T> {
   const anonymous = path.startsWith('/public/');
   const csrfToken = user.value?.csrfToken;
@@ -373,12 +382,7 @@ async function api<T = any>(path: string, method = 'GET', body?: unknown): Promi
     const headers: Record<string, string> = {};
     if (body && !(body instanceof FormData)) headers['Content-Type'] = 'application/json';
     if (!anonymous && csrfToken && !['GET', 'HEAD'].includes(method)) headers['X-CSRF-Token'] = csrfToken;
-    let response: Response | undefined;
-    if (path === '/auth/me' && method === 'GET' && initialSession) {
-      const pending = initialSession;
-      initialSession = undefined;
-      response = await pending;
-    }
+    let response = method === 'GET' ? await takeFixtureRead(path) : undefined;
     response ??= await fetch(`/api/v1${path}`, { method, credentials: anonymous ? 'omit' : 'same-origin', headers, signal: controller.signal, body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined });
     if (response.status === 204) return undefined as T;
     const result = await response.json();
@@ -542,7 +546,7 @@ async function loadTournamentSection() {
     workspaceCompetition.value = null;
     void loadTournamentWorkspace().catch(() => undefined);
     for (const category of categories.filter(category => category.has_announced_fixture)) {
-      void readAnnouncedFixture(organizationId,category.category_id,scope.csrfToken).catch(() => undefined);
+      void readAnnouncedFixture(organizationId,category.category_id,scope.csrfToken,takeFixtureRead).catch(() => undefined);
     }
   }
   const needsTeams=['equipos','pagos','estadisticas','fixture','partidos'].includes(section)&&!(editing&&dayTarget==='new');
@@ -1583,7 +1587,7 @@ watch(route, (next, previous) => { success.value = ''; publishPreviewCategory.va
 watch(route, () => { passwordDraft.value = ''; ownPasswordOpen.value = false; adminPasswordTarget.value = ''; });
 watch([route, user], async () => { await nextTick(); document.querySelector<HTMLElement>('.bottom-nav a[aria-current="page"]')?.scrollIntoView({ inline: 'center', block: 'nearest' }); }, { flush: 'post' });
 onMounted(() => { window.addEventListener('hashchange', routeChanged); window.addEventListener('popstate', routeChanged); document.addEventListener('click',internalLinkClicked); window.addEventListener('online', connectionChanged); window.addEventListener('offline', connectionChanged); const mountedRoute=route.value; routeChanged(); if(route.value===mountedRoute)void loadView(); });
-onUnmounted(() => { organizerImages.clear(); routeEpoch++;privateMatchStream?.close();window.removeEventListener('hashchange', routeChanged); window.removeEventListener('popstate', routeChanged);document.removeEventListener('click',internalLinkClicked); window.removeEventListener('online', connectionChanged); window.removeEventListener('offline', connectionChanged); clearTimeout(toastTimer);if(loadingTimer)clearTimeout(loadingTimer); });
+onUnmounted(() => { cancelFixtureReads(); organizerImages.clear(); routeEpoch++;privateMatchStream?.close();window.removeEventListener('hashchange', routeChanged); window.removeEventListener('popstate', routeChanged);document.removeEventListener('click',internalLinkClicked); window.removeEventListener('online', connectionChanged); window.removeEventListener('offline', connectionChanged); clearTimeout(toastTimer);if(loadingTimer)clearTimeout(loadingTimer); });
 </script>
 
 <template>
