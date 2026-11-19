@@ -160,7 +160,6 @@ watch(() => [props.organization?.id,currentTournament.value?.id,props.resultsRev
     }
   },{immediate:true});
 const bracketRounds=computed<PlannedRound[]>(()=>[...new Set((bracket.value?.slots||[]).map(slot=>slot.stage))].map(stage=>{const ties=(bracket.value?.slots||[]).filter(slot=>slot.stage===stage).sort((a,b)=>a.slot-b.slot);const size=ties.length*2;return {size,name:stage===1&&bracket.value?.repechage?'Repechaje':knockoutRoundName(size),pairing:'positions' as const,legs:ties.some(tie=>tie.twoLegs)?2 as const:1 as const,ties};}));
-const roundByMatchId=computed(()=>{const result=new Map<string,string>(),slots=bracket.value?.slots||[];for(const stage of new Set(slots.map(slot=>slot.stage))){const name=stage===1&&bracket.value?.repechage?'Repechaje':knockoutRoundName(slots.filter(slot=>slot.stage===stage).length*2);for(const slot of slots.filter(slot=>slot.stage===stage))for(const id of Object.values(slot.matchIds||{}))if(id)result.set(id,name);}return result;});
 const categoryTeams=computed(()=>props.teams.filter(team=>team.category_id===currentCategoryId.value));
 const defense=computed(()=>(stats.value?.defense||[]).filter(row=>row.played>0).sort((a,b)=>a.goalsAgainst-b.goalsAgainst||a.teamName.localeCompare(b.teamName,'es')));
 const sectionFlyerSources=computed(():Record<string,string[]>|null=>{
@@ -196,8 +195,8 @@ async function toggleSelector(){selectorOpen.value=!selectorOpen.value;if(select
 function team(id:string){return props.teams.find(item=>item.id===id&&item.category_id===currentCategoryId.value);}
 function byName(name:string){return categoryTeams.value.find(item=>item.name===name);}
 function shortDate(value:string){const [y,m,d]=value.split('-');return `${d}/${m}/${y}`;}
-function dayTitle(day:FanDay){const names=[...new Set(day.matches.map(match=>roundByMatchId.value.get(match.id)))];if(names.length===1&&names[0]){const legs=[...new Set(day.matches.map(match=>match.tie_leg))];return legs.length===1&&legs[0]?`${names[0]} · ${legs[0]}`:names[0];}return names.length>1&&names.every(Boolean)?'Eliminación':`Fecha ${day.ordinal}`;}
-function matchTitle(match:FanMatch){const day=days.value.find(item=>item.matches.some(entry=>entry.id===match.id));return `${roundByMatchId.value.get(match.id)||`Fecha ${day?.ordinal||''}`}${match.tie_leg?` · ${match.tie_leg}`:''}`;}
+function dayTitle(day:FanDay){const names=[...new Set(day.matches.map(match=>match.bracket_round))];if(names.length===1&&names[0]){const legs=[...new Set(day.matches.map(match=>match.tie_leg))];return legs.length===1&&legs[0]?`${names[0]} · ${legs[0]}`:names[0];}return names.length>1&&names.every(Boolean)?'Eliminación':`Fecha ${day.ordinal}`;}
+function matchTitle(match:FanMatch){const day=days.value.find(item=>item.matches.some(entry=>entry.id===match.id));return `${match.bracket_round||`Fecha ${day?.ordinal||''}`}${match.tie_leg?` · ${match.tie_leg}`:''}`;}
 function openMatch(match:FanMatch){selectedMatch.value=match;if(!restoringNavigation)pushPublicNavigation(tabToView[tab.value]||'partidos',{kind:'partido',id:match.id});}
 function openTeam(item:FanTeam){selectedTeam.value=item;if(!restoringNavigation)pushPublicNavigation('equipos',{kind:'equipo',id:item.entry_id});}
 function openBracketMatch(id:string){const match=days.value.flatMap(day=>day.matches).find(item=>item.id===id);if(match)openMatch(match);}

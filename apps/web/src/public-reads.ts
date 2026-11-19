@@ -8,6 +8,7 @@ export interface PublicFixtureMatchSummary {
   match_date: string | null;
   match_time: string | null;
   tie_leg: string | null;
+  bracket_round?: string | null;
   result: { status: 'provisional' | 'official'; score: { home: number; away: number }; shootout: { home: number; away: number } } | null;
 }
 

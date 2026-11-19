@@ -1820,6 +1820,8 @@ test('T04: copa directa respeta participantes, sortea una vez y espera nuevo sor
   assert.equal(compactTournaments.find((item:{id:string})=>item.id===tournamentId).has_public_bracket,true);
   const published = (await app.inject(`${publicRoot}/brackets`)).json().find((item: { tournament_name: string }) => item.tournament_name === created.body.name);
   assert.deepEqual(scopedBracket.json(),[published]);
+  const playoffList=(await app.inject(`${publicRoot}/fixture?resumen=1&torneo=${tournamentId}`)).json();
+  assert.ok(playoffList.some((item:any)=>item.matches.length===firstMatches.length&&item.matches.every((match:any)=>match.bracket_round==='Cuartos de final')));
   assert.equal(published.slots.length, 7);
   assert.equal(published.slots.filter((slot: { stage: number }) => slot.stage === 1).length, 4);
   assert.ok(published.slots.filter((slot: { stage: number; matchId: string | null }) => slot.stage === 1 && slot.matchId).every((slot: { matchId: string; matchIds: { first: string } }) => firstMatches.some((match: { id: string }) => match.id === slot.matchId && match.id === slot.matchIds.first)));
