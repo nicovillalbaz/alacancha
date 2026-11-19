@@ -1,13 +1,14 @@
 /* Solo se guardan archivos estáticos. Nunca respuestas de /api ni datos de sesión. */
 const CACHE = 'torneos-static-v1';
-const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
+const SHELL = ['/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(async cache => {
     const response = await fetch('/index.html', { cache: 'reload' });
     if (!response.ok) throw new Error('No se pudo preparar la aplicación sin conexión.');
-    const html = await response.text();
+    const html = await response.clone().text();
     const assets = [...html.matchAll(/(?:src|href)="(\/assets\/[^\"]+)"/g)].map(match => match[1]);
-    await cache.addAll([...SHELL, ...assets]);
+    await cache.addAll([...new Set([...SHELL, ...assets])]);
+    await cache.put('/index.html', response);
   }));
 });
 self.addEventListener('activate', event => {

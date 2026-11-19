@@ -55,7 +55,7 @@ test('Analytics requiere ID válido y solo se inserta en páginas públicas', as
 test('alias de torneo abre directo, conserva SEO y redirige enlaces largos', async () => {
   const directory=await mkdtemp(join(tmpdir(),'torneos-alias-'));
   const tournamentId='33333333-3333-4333-8333-333333333333';
-  const page={organization_id:'11111111-1111-4111-8111-111111111111',organization_name:'Federación Caacupeña',public_slug:'federacion-larga',has_logo:true,tournament_id:tournamentId,tournament_name:'Copa Caacupé',tournament_slug:'fcfs-copacaacupe',has_emblem:true,official:false};
+  const page={organization_id:'11111111-1111-4111-8111-111111111111',organization_name:'Federación Caacupeña',public_slug:'federacion-larga',has_logo:true,tournament_id:tournamentId,tournament_name:'Copa Caacupé',tournament_slug:'fcfs-copacaacupe',has_emblem:true,official:false,preview:false};
   const pool={query:async()=>({rows:[page]})} as unknown as DatabasePool;
   const app=Fastify();
   try{
@@ -73,6 +73,7 @@ test('alias de torneo abre directo, conserva SEO y redirige enlaces largos', asy
     assert.match(classification.body,/tabla de posiciones y los cruces de clasificación de Copa Caacupé/);
     assert.match(classification.body,/rel="canonical" href="https:\/\/torneos.example\/fcfs-copacaacupe\?vista=clasificacion"/);
     assert.doesNotMatch(classification.body,/origen=mensaje/);
+    assert.match(classification.body,/href="https:\/\/torneos.example\/fcfs-copacaacupe\?vista=equipos"/);
     assert.match(classification.body,/data-public-tournament-id="33333333-3333-4333-8333-333333333333"/);
     for(const oldPath of ['/federacion-larga',`/federacion-larga/${tournamentId}`]){
       const old=await app.inject(oldPath);assert.equal(old.statusCode,308);assert.equal(old.headers.location,'https://torneos.example/fcfs-copacaacupe');
@@ -81,5 +82,10 @@ test('alias de torneo abre directo, conserva SEO y redirige enlaces largos', asy
     assert.equal(scopedRedirect.headers.location,'https://torneos.example/fcfs-copacaacupe?vista=equipos');
     const root=await app.inject('/');assert.match(root.body,/href="\/fcfs-copacaacupe"/);
     const sitemap=await app.inject('/sitemap.xml');assert.match(sitemap.body,/fcfs-copacaacupe/);assert.doesNotMatch(sitemap.body,/federacion-larga/);
+    assert.match(sitemap.body,/fcfs-copacaacupe\?vista=clasificacion/);
+    page.preview=true;
+    const onlyTeams=await app.inject('/sitemap.xml');
+    assert.match(onlyTeams.body,/fcfs-copacaacupe\?vista=equipos/);
+    assert.doesNotMatch(onlyTeams.body,/vista=clasificacion/);
   }finally{await app.close();await rm(directory,{recursive:true,force:true});}
 });

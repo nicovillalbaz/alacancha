@@ -6,16 +6,18 @@ import { resolve } from 'node:path';
 
 test('PWA instala interfaz estática y nunca intercepta datos privados', async () => {
   const handlers=new Map<string,(event:any)=>void>(),saved:string[]=[];
-  const cache={addAll:async(paths:string[])=>{saved.push(...paths);},match:async(path:string)=>path==='/index.html'?'offline-shell':null,put:async()=>{}};
+  const cache={addAll:async(paths:string[])=>{saved.push(...paths);},match:async(path:string)=>path==='/index.html'?'offline-shell':null,put:async(path:string)=>{saved.push(path);}};
+  let shellRequests = 0;
   const caches={open:async()=>cache,keys:async()=>[],delete:async()=>true,match:cache.match};
   const self={location:{origin:'https://torneos.test'},clients:{claim:async()=>{}},addEventListener:(name:string,handler:(event:any)=>void)=>handlers.set(name,handler)};
   const source=await readFile(resolve('apps/web/public/sw.js'),'utf8');
   runInNewContext(source,{self,caches,URL,Promise,Error,fetch:async(path:string)=>{
-    if(path==='/index.html')return {ok:true,text:async()=>'<script src="/assets/app-1.js"></script><link href="/assets/app-1.css">'};
+    if(path==='/index.html'){shellRequests++;return new Response('<script src="/assets/app-1.js"></script><link href="/assets/app-1.css">');}
     throw new Error('sin red');
   }});
-  await new Promise<void>(resolveWait=>handlers.get('install')!({waitUntil:async(promise:Promise<void>)=>{await promise;resolveWait();}}));
+  await new Promise<void>((resolveWait,reject)=>handlers.get('install')!({waitUntil:(promise:Promise<void>)=>{void promise.then(resolveWait,reject);}}));
   assert.ok(saved.includes('/index.html'));
+  assert.equal(shellRequests+saved.filter(path=>path==='/index.html').length,2);
   assert.ok(saved.includes('/assets/app-1.js'));
   assert.ok(saved.includes('/assets/app-1.css'));
   let intercepted=false;

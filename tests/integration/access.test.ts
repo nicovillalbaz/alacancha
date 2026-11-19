@@ -2152,6 +2152,11 @@ test('T04: jornada multicategoría, conflictos, publicación única y reprograma
   const published = await Promise.all([request(adminA, 'POST', `${root}/matchdays/${dayId}/publish`, { expectedRevision: preview.json().revision, reason: 'Publicación oficial sintética' }), request(adminA, 'POST', `${root}/matchdays/${dayId}/publish`, { expectedRevision: preview.json().revision, reason: 'Publicación oficial sintética' })]);
   assert.deepEqual(published.map((r) => r.statusCode).sort(), [200, 201]);
   assert.equal((await app.inject(publicPath)).json().find((day: { id: string }) => day.id === dayId).matches.length, 3);
+  const scoped = (await app.inject(`${publicPath}?partido=${one.id}`)).json();
+  assert.equal(scoped.length,1);
+  assert.deepEqual(scoped[0].matches.map((match: { id: string }) => match.id),[one.id]);
+  assert.deepEqual((await app.inject(`/api/v1/public/organizations/${ids.b}/fixture?partido=${one.id}`)).json(),[]);
+  assert.deepEqual((await app.inject(`${publicPath}?torneo=${randomUUID()}`)).json(),[]);
   assert.equal('referee_name' in (await app.inject(publicPath)).json().find((day: { id: string }) => day.id === dayId).matches[0], false);
   assert.equal((await request(adminA, 'PATCH', path(sameTeamLater.id), { ...slot('16:00', 'Cancha B'), matchdayId: dayId })).json().code, 'MATCHDAY_PUBLISHED');
   const { rows: [before] } = await pool.query("SELECT count(*)::int total FROM fixture_outbox o JOIN matchday_publications p ON p.id=o.publication_id WHERE p.matchday_id=$1", [dayId]); assert.equal(before.total, 1);
@@ -2159,14 +2164,22 @@ test('T04: jornada multicategoría, conflictos, publicación única y reprograma
   let revised:Awaited<ReturnType<typeof request>>;
   try{
     const address=await fixtureStream.listen({host:'127.0.0.1',port:0});
-    const response=await fetch(`${address}/api/v1/public/organizations/${ids.a}/results/stream`,{signal:fixtureAbort.signal});
-    assert.equal(response.status,200);
-    const reader=response.body!.getReader(),decoder=new TextDecoder();
-    assert.match(decoder.decode((await reader.read()).value),/event: ready/);
+    const streams=await Promise.all(Array.from({length:2},()=>fetch(`${address}/api/v1/public/organizations/${ids.a}/results/stream`,{signal:fixtureAbort.signal})));
+    const readers=await Promise.all(streams.map(async response=>{
+      assert.equal(response.status,200);
+      const reader=response.body!.getReader();
+      assert.match(new TextDecoder().decode((await reader.read()).value),/event: ready/);
+      return reader;
+    }));
     revised=await request(adminA, 'PATCH', path(one.id), { ...slot('15:00', 'Cancha A', 'Lluvia sintética, se cambia el horario'), expectedRevision: 1 });
-    let received='';
-    while(!received.includes('event: fixture')){const chunk=await reader.read();if(chunk.done)break;received+=decoder.decode(chunk.value);}
-    assert.match(received,/event: fixture/);
+    const {rows:[latest]}=await pool.query('SELECT max(revision) AS revision FROM matchday_publications WHERE organization_id=$1 AND matchday_id=$2',[ids.a,dayId]);
+    const change = `"matchdayId":"${dayId}","revision":${latest.revision}`;
+    await Promise.all(readers.map(async reader=>{
+      let received='';
+      const decoder=new TextDecoder();
+      while(!received.includes(change)){const chunk=await reader.read();if(chunk.done)break;received+=decoder.decode(chunk.value);}
+      assert.ok(received.includes(change),received);
+    }));
   }finally{clearTimeout(fixtureTimeout);fixtureAbort.abort();await fixtureStream.close();}
   assert.equal(revised.statusCode, 200, revised.body);
   const updated = (await app.inject(publicPath)).json().find((day: { id: string }) => day.id === dayId);

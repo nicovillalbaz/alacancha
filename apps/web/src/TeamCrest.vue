@@ -4,7 +4,7 @@ function initials(name:string){return name.trim().split(/\s+/).slice(0,2).map(pa
 </script>
 <template>
   <span class="team-crest" :class="`team-crest-${size}`" :style="{'--team-color':color||'#365b70'}">
-    <img v-if="hasShield&&teamId&&organizationId" :src="`/api/v1/public/organizations/${organizationId}/teams/${teamId}/shield`" :alt="`Escudo de ${name}`">
+    <img v-if="hasShield&&teamId&&organizationId" :src="`/api/v1/public/organizations/${organizationId}/teams/${teamId}/shield`" :loading="size==='lg'?'eager':'lazy'" decoding="async" :alt="`Escudo de ${name}`">
     <span v-else :aria-label="`Equipo ${name}`" role="img">{{ initials(name) }}</span>
   </span>
 </template>

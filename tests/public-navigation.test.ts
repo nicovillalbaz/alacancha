@@ -2,6 +2,20 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {closePublicDetail,publicMeasurementUrl,publicNavigationUrl,readPublicNavigation} from '../apps/web/src/public-navigation.ts';
 import {claimFanView} from '../apps/web/src/public-visits.ts';
+import {createPublicReads} from '../apps/web/src/public-reads.ts';
+
+test('las lecturas públicas comparten la solicitud en curso y se renuevan con el resultado', async t => {
+  let fetched = 0;
+  const fetchMock = t.mock.method(globalThis,'fetch', async () => Response.json({value:++fetched}));
+  const read = createPublicReads();
+  const first = read('/cup/competition','1');
+  assert.equal(first, read('/cup/competition','1'));
+  assert.deepEqual(await first,{value:1});
+  assert.deepEqual(await read('/cup/competition','1'),{value:1});
+  assert.deepEqual(await read('/cup/competition','2'),{value:2});
+  assert.equal(fetchMock.mock.callCount(),2);
+  assert.equal(fetchMock.mock.calls[0].arguments[1]?.credentials,'omit');
+});
 
 test('una sesión cuenta una visita, una apertura por copa y una apertura por sección', () => {
   function newSession() {

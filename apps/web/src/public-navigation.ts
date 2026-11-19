@@ -18,6 +18,9 @@ export function publicNavigationUrl(pathname: string, search: string, view: stri
   const suffix = query.toString();
   return `${pathname}${suffix ? `?${suffix}` : ''}`;
 }
+export function publicSectionHref(view: string) {
+  return publicNavigationUrl(location.pathname, '', view);
+}
 
 export function publicMeasurementUrl(canonical: string, current: URL) {
   const page = new URL(canonical);

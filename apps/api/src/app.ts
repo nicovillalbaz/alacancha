@@ -882,10 +882,13 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const organizationId = uuid((request.params as { id: string }).id);
     const { rows: [organization] } = await pool.query("SELECT id,name,accent,logo_id,public_slug FROM organizations WHERE id=$1 AND status='active'", [organizationId]);
     if (!organization) fail(404, 'NOT_FOUND', 'No se encontró contenido público de esta organización.');
-    const { rows } = await pool.query(tournamentRows, [organizationId, null, true]);
-    const { rows: teams } = await pool.query(`SELECT t.id,t.name,t.color,(t.shield_id IS NOT NULL) has_shield,e.id entry_id,e.category_id FROM team_entries e JOIN teams t ON t.organization_id=e.organization_id AND t.id=e.team_id JOIN categories c ON c.organization_id=e.organization_id AND c.id=e.category_id JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id JOIN tournaments tr ON tr.organization_id=ed.organization_id AND tr.id=ed.tournament_id WHERE e.organization_id=$1 AND e.status='active' AND e.public_visible AND ((c.status='published' AND ed.status='published' AND tr.status='published') OR tr.public_preview_at IS NOT NULL) ORDER BY t.name LIMIT 200`, [organizationId]);
-    const { rows: sponsors } = await pool.query(`SELECT ts.tournament_id,s.id,s.name FROM tournament_sponsors ts JOIN sponsors s ON s.organization_id=ts.organization_id AND s.id=ts.sponsor_id JOIN tournaments t ON t.organization_id=ts.organization_id AND t.id=ts.tournament_id WHERE ts.organization_id=$1 AND ts.archived_at IS NULL AND ts.public_visible AND t.status='published' ORDER BY s.name LIMIT 200`, [organizationId]);
-    return { organization, tournaments: rows, teams, sponsors };
+    const compact = (request.query as { portal?: string }).portal === '1';
+    const [tournaments, teams, sponsors] = await Promise.all([
+      pool.query(tournamentRows, [organizationId, null, true]),
+      pool.query(`SELECT t.id,t.name,t.color,(t.shield_id IS NOT NULL) has_shield,e.id entry_id,e.category_id FROM team_entries e JOIN teams t ON t.organization_id=e.organization_id AND t.id=e.team_id JOIN categories c ON c.organization_id=e.organization_id AND c.id=e.category_id JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id JOIN tournaments tr ON tr.organization_id=ed.organization_id AND tr.id=ed.tournament_id WHERE e.organization_id=$1 AND e.status='active' AND e.public_visible AND ((c.status='published' AND ed.status='published' AND tr.status='published') OR tr.public_preview_at IS NOT NULL) ORDER BY t.name LIMIT 200`, [organizationId]),
+      compact ? null : pool.query(`SELECT ts.tournament_id,s.id,s.name FROM tournament_sponsors ts JOIN sponsors s ON s.organization_id=ts.organization_id AND s.id=ts.sponsor_id JOIN tournaments t ON t.organization_id=ts.organization_id AND t.id=ts.tournament_id WHERE ts.organization_id=$1 AND ts.archived_at IS NULL AND ts.public_visible AND t.status='published' ORDER BY s.name LIMIT 200`, [organizationId]),
+    ]);
+    return { organization, tournaments: tournaments.rows, teams: teams.rows, ...(sponsors ? { sponsors: sponsors.rows } : {}) };
   });
   app.get('/api/v1/public/organizations/:id/draws', async (request) => {
     const organizationId = uuid((request.params as { id: string }).id);
@@ -1715,7 +1718,8 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     await organizationAccess(request,organizationId);
     const state=await positionCompetitionState(pool,organizationId,category);
     if(!state)return fail(404,'BLUEPRINT_NOT_FOUND','No se encontró el formato de esta Copa.');
-    const stats=state.rulesPublished?await categoryStatistics(pool,organizationId,category):null;
+    const summary = (request.query as { resumen?: string }).resumen === '1';
+    const stats=state.rulesPublished&&!summary?await categoryStatistics(pool,organizationId,category):null;
     const names=stats?await playerStatNames(pool,organizationId,stats.players.map(player=>player.registrationId)):new Map();
     return {competition:state.competition,results:state.results,matches:state.matches,preparedMatches:state.preparedMatches,rulesPublished:state.rulesPublished,players:stats?.players.map(player=>({...player,name:names.get(player.registrationId)?.name||'Jugador',publicName:names.get(player.registrationId)?.publicName||false}))||[],defense:stats?.defense||[],titleTie:state.titleTie,titleExtra:state.titleExtra};
   });
@@ -2434,49 +2438,83 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
   });
   app.get('/api/v1/public/organizations/:id/fixture', async (request) => {
     const organizationId = uuid((request.params as { id: string }).id);
-    const { rows: allowed } = await pool.query(`SELECT e.id,e.team_id FROM team_entries e JOIN categories c ON c.organization_id=e.organization_id AND c.id=e.category_id JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id JOIN tournaments t ON t.organization_id=ed.organization_id AND t.id=ed.tournament_id JOIN organizations o ON o.id=e.organization_id WHERE e.organization_id=$1 AND e.status='active' AND e.public_visible AND c.status='published' AND ed.status='published' AND t.status='published' AND o.status='active'`, [organizationId]);
+    const query = request.query as { partido?: string; torneo?: string };
+    const matchId = query.partido === undefined ? null : uuid(query.partido);
+    const tournamentId = query.torneo === undefined ? null : uuid(query.torneo);
+    type PublishedMatch = { id: string; category_id:string; home_entry_id: string; away_entry_id: string; category_name: string; home_name: string; away_name: string; venue_name: string; court_label: string; match_date: string; match_time: string };
+    type PublishedDay = { id: string; ordinal: number; edition_id: string; edition_name: string; tournament_id: string; tournament_name: string; snapshot: PublishedMatch[] };
+    const [{rows: allowed}, {rows: published}] = await Promise.all([
+      pool.query(`SELECT e.id,e.team_id FROM team_entries e JOIN categories c ON c.organization_id=e.organization_id AND c.id=e.category_id JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id JOIN tournaments t ON t.organization_id=ed.organization_id AND t.id=ed.tournament_id JOIN organizations o ON o.id=e.organization_id WHERE e.organization_id=$1 AND e.status='active' AND e.public_visible AND c.status='published' AND ed.status='published' AND t.status='published' AND o.status='active' AND ($2::uuid IS NULL OR t.id=$2)`, [organizationId,tournamentId]),
+      pool.query<PublishedDay>(`SELECT md.id,md.ordinal,md.edition_id,ed.name edition_name,t.id tournament_id,t.name tournament_name,p.snapshot
+        FROM matchdays md JOIN editions ed ON ed.organization_id=md.organization_id AND ed.id=md.edition_id
+        JOIN tournaments t ON t.organization_id=ed.organization_id AND t.id=ed.tournament_id
+        JOIN LATERAL (SELECT snapshot FROM matchday_publications WHERE organization_id=md.organization_id AND matchday_id=md.id ORDER BY revision DESC LIMIT 1) p ON true
+        WHERE md.organization_id=$1 AND md.status='published' AND ed.status='published' AND t.status='published'
+          AND ($2::uuid IS NULL OR p.snapshot @> jsonb_build_array(jsonb_build_object('id',$2::text)))
+          AND ($3::uuid IS NULL OR t.id=$3)
+        ORDER BY t.name,ed.name,md.ordinal LIMIT 200`, [organizationId,matchId,tournamentId]),
+    ]);
     const visible = new Set(allowed.map((entry) => entry.id));
     const teamByEntry=new Map(allowed.map(entry=>[entry.id,entry.team_id]));
-    const {rows:tieRows}=await pool.query('SELECT match_id,return_match_id,decider_match_id FROM fixture_bracket_slots WHERE organization_id=$1',[organizationId]);
-    const tieLeg=new Map<string,string>();
-    for(const tie of tieRows){if(tie.return_match_id){tieLeg.set(tie.match_id,'Ida');tieLeg.set(tie.return_match_id,'Vuelta');}if(tie.decider_match_id)tieLeg.set(tie.decider_match_id,'Desempate');}
-    const {rows:results}=await pool.query(`SELECT r.match_id,r.status,r.roster_snapshot,approved.snapshot approved_snapshot,submitted.snapshot submitted_snapshot,rv.rules
+    const days = published.map(day => ({ ...day, matches: day.snapshot.filter(match =>
+      (!matchId || match.id === matchId) && visible.has(match.home_entry_id) && visible.has(match.away_entry_id)) }))
+      .filter(day => day.matches.length);
+    const ids = [...new Set(days.flatMap(day => day.matches.map(match => match.id)))];
+    if (!ids.length) return [];
+    const [{rows:tieRows},{rows:results}] = await Promise.all([
+      pool.query(`SELECT match_id,return_match_id,decider_match_id FROM fixture_bracket_slots WHERE organization_id=$1
+        AND (match_id=ANY($2::uuid[]) OR return_match_id=ANY($2::uuid[]) OR decider_match_id=ANY($2::uuid[]))`, [organizationId,ids]),
+      pool.query(`SELECT r.match_id,r.status,r.roster_snapshot,approved.snapshot approved_snapshot,submitted.snapshot submitted_snapshot,rv.rules
       FROM match_records r LEFT JOIN match_acta_snapshots approved ON approved.organization_id=r.organization_id AND approved.id=r.approval_id
       LEFT JOIN match_acta_snapshots submitted ON submitted.organization_id=r.organization_id AND submitted.id=r.submission_id
       LEFT JOIN draft_matches m ON m.organization_id=r.organization_id AND m.id=r.match_id
       LEFT JOIN rule_versions rv ON rv.organization_id=r.organization_id AND rv.category_id=m.category_id AND rv.version=r.rule_version
-      WHERE r.organization_id=$1`,[organizationId]);
+      WHERE r.organization_id=$1 AND r.match_id=ANY($2::uuid[])`,[organizationId,ids]),
+    ]);
+    const tieLeg=new Map<string,string>();
+    for(const tie of tieRows){if(tie.return_match_id){tieLeg.set(tie.match_id,'Ida');tieLeg.set(tie.return_match_id,'Vuelta');}if(tie.decider_match_id)tieLeg.set(tie.decider_match_id,'Desempate');}
     type RosterPlayer = { registrationId: string; shirtNumber?: number | null };
     type PublicRoster = { home?: RosterPlayer[]; away?: RosterPlayer[] };
     const snapshots=results.map(row=>({matchId:row.match_id,status:row.approved_snapshot?'official':'provisional',snapshot:row.approved_snapshot || (row.status==='submitted'?row.submitted_snapshot:null),rules:row.rules,roster:row.roster_snapshot as PublicRoster|null})).filter(row=>row.snapshot);
     const publicNames=await playerStatNames(pool,organizationId,[...new Set(snapshots.flatMap(row=>[...(row.snapshot.events as MatchJournalEvent[]).flatMap(event=>[event.registrationId,event.relatedRegistrationId]),...(row.roster?.home||[]).map(player=>player.registrationId),...(row.roster?.away||[]).map(player=>player.registrationId)].filter((id):id is string=>!!id)))]);
     const resultByMatch=new Map(snapshots.map(row=>{const snapshot=row.snapshot;const events=snapshot.events as MatchJournalEvent[];const voided=new Set(events.filter(event=>event.kind==='void').map(event=>event.voidsEventId));const parsedRules=ruleSchema.safeParse(row.rules);const cards=parsedRules.success?parsedRules.data.advanced?.discipline.customCards||[]:[];const players=(['home','away'] as const).flatMap(side=>(row.roster?.[side]||[]).flatMap(player=>{const published=publicNames.get(player.registrationId);return published?.publicName?[{side,name:published.name,shirtNumber:player.shirtNumber??null}]:[];}));return [row.matchId,{status:row.status,score:snapshot.score,shootout:snapshot.shootout,players,events:events.filter(event=>event.kind!=='void'&&!voided.has(event.id)).map(event=>{const card=event.kind==='custom_card'?cards.find(item=>item.code===event.cardCode):null;return {id:event.id,kind:event.kind,teamEntryId:event.teamEntryId,period:event.period,minute:event.minute,cardLabel:card?.label||null,cardColor:card?.color||null,name:event.registrationId&&publicNames.get(event.registrationId)?.publicName?publicNames.get(event.registrationId)!.name:'Jugador',relatedName:event.relatedRegistrationId&&publicNames.get(event.relatedRegistrationId)?.publicName?publicNames.get(event.relatedRegistrationId)!.name:null};})}];}));
-    const { rows } = await pool.query(`SELECT md.id,md.ordinal,md.edition_id,ed.name edition_name,t.id tournament_id,t.name tournament_name,p.snapshot
-      FROM matchdays md JOIN editions ed ON ed.organization_id=md.organization_id AND ed.id=md.edition_id
-      JOIN tournaments t ON t.organization_id=ed.organization_id AND t.id=ed.tournament_id
-      JOIN LATERAL (SELECT snapshot FROM matchday_publications WHERE organization_id=md.organization_id AND matchday_id=md.id ORDER BY revision DESC LIMIT 1) p ON true
-      WHERE md.organization_id=$1 AND md.status='published' AND ed.status='published' AND t.status='published'
-      ORDER BY t.name,ed.name,md.ordinal LIMIT 200`, [organizationId]);
-    return rows.map((day) => ({ id: day.id, ordinal: day.ordinal, edition_id: day.edition_id, edition_name: day.edition_name, tournament_id: day.tournament_id, tournament_name: day.tournament_name,
-      matches: (day.snapshot as Array<{ id: string; category_id:string; home_entry_id: string; away_entry_id: string; category_name: string; home_name: string; away_name: string; venue_name: string; court_label: string; match_date: string; match_time: string }>).filter((match) => visible.has(match.home_entry_id) && visible.has(match.away_entry_id)).map((match) => {const result=resultByMatch.get(match.id);return { id: match.id, category_id:match.category_id, category_name: match.category_name, home_name: match.home_name, away_name: match.away_name,home_team_id:teamByEntry.get(match.home_entry_id),away_team_id:teamByEntry.get(match.away_entry_id), venue_name: match.venue_name, court_label: match.court_label, match_date: match.match_date, match_time: match.match_time, tie_leg:tieLeg.get(match.id)||null, result:result?{...result,events:result.events.map(event=>({id:event.id,kind:event.kind,side:event.teamEntryId===match.home_entry_id?'home':event.teamEntryId===match.away_entry_id?'away':'unknown',period:event.period,minute:event.minute,cardLabel:event.cardLabel,cardColor:event.cardColor,name:event.name,relatedName:event.relatedName}))}:null };} ) })).filter((day) => day.matches.length);
+    return days.map((day) => ({ id: day.id, ordinal: day.ordinal, edition_id: day.edition_id, edition_name: day.edition_name, tournament_id: day.tournament_id, tournament_name: day.tournament_name,
+      matches: day.matches.map((match) => {const result=resultByMatch.get(match.id);return { id: match.id, category_id:match.category_id, category_name: match.category_name, home_name: match.home_name, away_name: match.away_name,home_team_id:teamByEntry.get(match.home_entry_id),away_team_id:teamByEntry.get(match.away_entry_id), venue_name: match.venue_name, court_label: match.court_label, match_date: match.match_date, match_time: match.match_time, tie_leg:tieLeg.get(match.id)||null, result:result?{...result,events:result.events.map(event=>({id:event.id,kind:event.kind,side:event.teamEntryId===match.home_entry_id?'home':event.teamEntryId===match.away_entry_id?'away':'unknown',period:event.period,minute:event.minute,cardLabel:event.cardLabel,cardColor:event.cardColor,name:event.name,relatedName:event.relatedName}))}:null };} ) }));
   });
-  app.get('/api/v1/public/organizations/:id/results/stream',async(request,reply)=>{
-    const organizationId=uuid((request.params as {id:string}).id);
-    const {rowCount:active}=await pool.query("SELECT 1 FROM organizations WHERE id=$1 AND status='active'",[organizationId]);
-    if(!active) fail(404,'NOT_FOUND','No se encontró el torneo público.');
-    const streamStartedAt=new Date().toISOString();
+  const publicResultFeeds = new Map<string, ReturnType<typeof createPublicResultFeed>>();
+  async function createPublicResultFeed(organizationId: string) {
+    const overlap = 15_000;
+    const streamStartedAt=new Date(Date.now()-overlap).toISOString();
     const drawVersionsSql=`SELECT p.blueprint_id,b.category_id,max(p.revision)::int revision FROM fixture_position_publications p
       JOIN fixture_position_blueprints b ON b.organization_id=p.organization_id AND b.id=p.blueprint_id
       WHERE p.organization_id=$1 GROUP BY p.blueprint_id,b.category_id`;
-    const drawVersions=new Map<string,number>((await pool.query(drawVersionsSql,[organizationId])).rows.map(item=>[item.blueprint_id,item.revision]));
-    reply.hijack();reply.raw.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache, no-transform','Connection':'keep-alive','X-Accel-Buffering':'no'});
-    trackStream(reply.raw);
-    reply.raw.write('event: ready\ndata: {}\n\n');
+    const drawVersions=new Map<string,{categoryId:string;revision:number}>(
+      (await pool.query(drawVersionsSql,[organizationId])).rows.map(item=>[item.blueprint_id,{categoryId:item.category_id,revision:item.revision}]));
+    const clients = new Set<ServerResponse>();
+    const recent: { at: number; message: string }[] = [];
+    let interval: ReturnType<typeof setInterval> | undefined;
+    function notifyClients(message: string) {
+      const now = Date.now();
+      recent.push({ at: now, message });
+      while (recent.length > 100 || (recent[0] && now - recent[0].at > overlap)) recent.shift();
+      publish(message);
+    }
+    function publish(message: string) {
+      for (const client of clients) {
+        if (client.writableLength > 64 * 1024) client.destroy();
+        else if (!client.destroyed && !client.writableEnded) client.write(message);
+      }
+    }
+    function stop() {
+      if (interval) clearInterval(interval);
+      interval = undefined;
+      publicResultFeeds.delete(organizationId);
+    }
     let cursor=streamStartedAt,lastId='00000000-0000-0000-0000-000000000000';
     let fixtureCursor=cursor,fixtureLastId=lastId;
     let running=false,closed=false;
     const poll=async()=>{if(running||closed)return;running=true;try{
-      const {rows}=await pool.query(`SELECT x.id,x.match_id,x.created_at::text created_text FROM match_record_outbox x
+      const {rows}=await pool.query(`SELECT x.id,x.match_id,t.id tournament_id,x.created_at::text created_text FROM match_record_outbox x
         JOIN draft_matches m ON m.organization_id=x.organization_id AND m.id=x.match_id
         JOIN matchdays md ON md.organization_id=m.organization_id AND md.id=m.matchday_id
         JOIN team_entries he ON he.organization_id=m.organization_id AND he.id=m.home_entry_id
@@ -2487,20 +2525,54 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
         WHERE x.organization_id=$1 AND (x.created_at,x.id)>($2::timestamptz,$3::uuid) AND x.kind IN ('match.submitted','match.official','match.corrected')
         AND md.status='published' AND he.public_visible AND ae.public_visible AND c.status='published' AND ed.status='published' AND t.status='published'
         ORDER BY x.created_at,x.id LIMIT 100`,[organizationId,cursor,lastId]);
-      for(const item of rows){reply.raw.write(`event: result\ndata: ${JSON.stringify({matchId:item.match_id})}\n\n`);cursor=item.created_text;lastId=item.id;}
-      const {rows:fixtures}=await pool.query(`SELECT id,created_at::text created_text FROM fixture_outbox
-        WHERE organization_id=$1 AND (created_at,id)>($2::timestamptz,$3::uuid)
-        ORDER BY created_at,id LIMIT 100`,[organizationId,fixtureCursor,fixtureLastId]);
-      for(const item of fixtures){reply.raw.write('event: fixture\ndata: {}\n\n');fixtureCursor=item.created_text;fixtureLastId=item.id;}
+      for(const item of rows){notifyClients(`event: result\ndata: ${JSON.stringify({matchId:item.match_id,tournamentId:item.tournament_id})}\n\n`);cursor=item.created_text;lastId=item.id;}
+      const {rows:fixtures}=await pool.query(`SELECT x.id,x.created_at::text created_text,p.matchday_id,p.revision,ed.tournament_id
+        FROM fixture_outbox x JOIN matchday_publications p ON p.organization_id=x.organization_id AND p.id=x.publication_id
+        JOIN matchdays md ON md.organization_id=p.organization_id AND md.id=p.matchday_id
+        JOIN editions ed ON ed.organization_id=md.organization_id AND ed.id=md.edition_id
+        WHERE x.organization_id=$1 AND (x.created_at,x.id)>($2::timestamptz,$3::uuid)
+        ORDER BY x.created_at,x.id LIMIT 100`,[organizationId,fixtureCursor,fixtureLastId]);
+      for(const item of fixtures){notifyClients(`event: fixture\ndata: ${JSON.stringify({matchdayId:item.matchday_id,revision:item.revision,tournamentId:item.tournament_id})}\n\n`);fixtureCursor=item.created_text;fixtureLastId=item.id;}
       const {rows:draws}=await pool.query(drawVersionsSql,[organizationId]);
-      for(const item of draws)if(item.revision>(drawVersions.get(item.blueprint_id)||0)){
-        reply.raw.write(`event: draw\ndata: ${JSON.stringify({categoryId:item.category_id,revision:item.revision})}\n\n`);
-        drawVersions.set(item.blueprint_id,item.revision);
+      for(const item of draws)if(item.revision>(drawVersions.get(item.blueprint_id)?.revision||0)){
+        const revision = {categoryId:item.category_id,revision:item.revision};
+        publish(`event: draw\ndata: ${JSON.stringify(revision)}\n\n`);
+        drawVersions.set(item.blueprint_id,revision);
       }
-      reply.raw.write(': keepalive\n\n');
-    }catch{closed=true;reply.raw.end();}finally{running=false;}};
-    const interval=setInterval(()=>{void poll();},3000);
-    reply.raw.on('close',()=>{closed=true;clearInterval(interval);});
+      publish(': keepalive\n\n');
+    }catch {
+      if (closed) return;
+      closed = true;
+      stop();
+      for (const client of clients) client.end();
+    }finally{running=false;}};
+    return (client: ServerResponse) => {
+      clients.add(client);
+      client.on('close', () => {
+        clients.delete(client);
+        if (!clients.size && !closed) {
+          closed = true;
+          stop();
+        }
+      });
+      client.write(`event: ready\ndata: ${JSON.stringify({draws:[...drawVersions.values()]})}\n\n`);
+      for (const item of recent) if (Date.now() - item.at <= overlap) client.write(item.message);
+      if (!interval) interval=setInterval(()=>{void poll();},3000);
+    };
+  }
+  app.get('/api/v1/public/organizations/:id/results/stream',async(request,reply)=>{
+    const organizationId=uuid((request.params as {id:string}).id);
+    const {rowCount:active}=await pool.query("SELECT 1 FROM organizations WHERE id=$1 AND status='active'",[organizationId]);
+    if(!active) fail(404,'NOT_FOUND','No se encontró el torneo público.');
+    let feed=publicResultFeeds.get(organizationId);
+    if(!feed){
+      feed=createPublicResultFeed(organizationId).catch(error=>{publicResultFeeds.delete(organizationId);throw error;});
+      publicResultFeeds.set(organizationId,feed);
+    }
+    const subscribe=await feed;
+    reply.hijack();reply.raw.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache, no-transform','Connection':'keep-alive','X-Accel-Buffering':'no'});
+    trackStream(reply.raw);
+    subscribe(reply.raw);
     return reply;
   });
   app.get('/api/v1/public/organizations/:id/brackets', async (request) => {
