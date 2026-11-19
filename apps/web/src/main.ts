@@ -12,6 +12,7 @@ let currentArea: 'public'|'panel'|undefined;
 let areaEpoch=0;
 let unmount: (() => void)|undefined;
 let startingFixture: FixtureStart | undefined;
+let closeFixtureOpening: (() => void) | undefined;
 
 const worker = import.meta.env.PROD && 'serviceWorker' in navigator
   ? new Promise<ServiceWorkerRegistration|null>(resolve => {
@@ -44,6 +45,8 @@ function showCurrentArea() {
     startingFixture.cancel();
     startingFixture = undefined;
   }
+  closeFixtureOpening?.();
+  closeFixtureOpening = undefined;
   if (area === currentArea) return;
   currentArea = area;
   const epoch=++areaEpoch;
@@ -58,6 +61,13 @@ function showCurrentArea() {
 
   // The browser can read the direct fixture while the organizer entry downloads.
   startingFixture = isFixtureOverview(route) ? startFixtureReads(route) : undefined;
+  if (startingFixture) {
+    const opening = startingFixture.opening;
+    const isCurrent = () => epoch === areaEpoch && routeFromUrl(location.pathname,location.hash,root.dataset) === route;
+    void Promise.all([opening,import('./fixture-opening-view.ts')]).then(([data, view]) => {
+      if (data && isCurrent()) closeFixtureOpening = view.showFixtureOpening(root,data,isCurrent);
+    }).catch(() => undefined);
+  }
   void loadArea[area]().then(({mount}) => {
     if (epoch !== areaEpoch) return;
     const fixture = startingFixture;

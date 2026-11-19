@@ -1,0 +1,38 @@
+.fixture-opening-hidden {
+  position: fixed;
+  inset: 0;
+  visibility: hidden;
+  overflow: hidden;
+}
+.fixture-opening {
+  min-height: 100svh;
+  color: #10252b;
+  background: #fff;
+}
+.fixture-opening-title {
+  min-height: 65px;
+  padding: 22px max(16px, calc((100vw - 1100px) / 2));
+  border-bottom: 1px solid #dce7e0;
+  font-size: 1rem;
+  font-weight: 750;
+  overflow-wrap: anywhere;
+}
+.fixture-opening section {
+  max-width: 692px;
+  margin: auto;
+  padding: 16px;
+}
+.fixture-opening h1 { margin: 0 0 18px; font-size: 1rem; }
+.fixture-opening h2 { margin: 0 0 8px; font-size: .82rem; }
+.fixture-opening-match {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) 52px minmax(0,1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 60px;
+  border-top: 1px solid #e5ede8;
+  font-size: .77rem;
+  overflow-wrap: anywhere;
+}
+.fixture-opening-match span { font-weight: 750; text-align: center; }
+.fixture-opening-match strong:last-child { text-align: right; }

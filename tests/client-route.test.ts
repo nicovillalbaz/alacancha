@@ -58,14 +58,18 @@ test('el arranque del Fixture comparte el calendario anunciado con la vista', {t
     if (path === announcement) {
       assert.equal(options.credentials,'omit');
       announce();
+      return Response.json({rounds:[{ordinal:1,matches:[{homeEntryId:'local',awayEntryId:'visitante'}]}],
+        teams:[{entry_id:'local',name:'Local'},{entry_id:'visitante',name:'Visitante'}]});
     }
+    if (path.endsWith('/matchdays?vista=lista')) return Response.json([]);
     return Response.json({path});
   });
   const start = startFixtureReads('torneo/copa/fixture');
   try {
     await requestedAnnouncement;
-    assert.equal((await (await start.take(announcement))?.json()).path,announcement);
+    assert.equal((await (await start.take(announcement))?.json()).rounds[0].ordinal,1);
     assert.equal(start.take(announcement),undefined);
+    assert.deepEqual((await start.opening)?.matches,[{home:'Local',away:'Visitante',score:'vs'}]);
     assert.deepEqual(fetch.mock.calls.map(call => call.arguments[0]),[
       '/api/v1/auth/me',`/api/v1${org}/tournaments`,`/api/v1${org}`,
       `/api/v1${org}/teams?torneo=copa`,`/api/v1${org}/editions/2026/matchdays?vista=lista`,
