@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import {ref,watch} from 'vue';
-import type {TeamSummary} from '@torneos/shared';
+import type {TournamentEntry} from '@torneos/shared';
 
-const props=defineProps<{teamIds:string[];position:number;entries:TeamSummary[];disabled:boolean}>();
+const props=defineProps<{teamIds:string[];position:number;entries:TournamentEntry[];disabled:boolean}>();
 const emit=defineEmits<{save:[entryOrder:string[]]}>();
 const order=ref<string[]>([]);
 watch(()=>props.teamIds.join(','),()=>{order.value=[];});

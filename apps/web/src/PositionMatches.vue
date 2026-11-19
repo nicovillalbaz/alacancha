@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import {computed,ref,watch} from 'vue';
-import type {PositionBlueprintView,PositionCompetitionView,TeamSummary} from '@torneos/shared';
+import type {PositionBlueprintView,PositionCompetitionView,TournamentEntry} from '@torneos/shared';
 import SportTabs from './SportTabs.vue';
 
-const props=defineProps<{view:PositionBlueprintView;competition:PositionCompetitionView|null;entries:TeamSummary[];organizationId:string;categoryId:string;tournamentId:string}>();
+const props=defineProps<{view:PositionBlueprintView;competition:PositionCompetitionView|null;entries:TournamentEntry[];organizationId:string;categoryId:string;tournamentId:string}>();
 type Game=PositionBlueprintView['games'][number];
 const tab=ref('days'),day=ref(0),round=ref('F1'),selectedCode=ref('');
 const slots=computed(()=>new Map(props.view.slots.map(slot=>[slot.slot_code,slot])));

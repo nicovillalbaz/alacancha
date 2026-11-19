@@ -960,16 +960,16 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     await organizationAccess(request, organizationId, true);
     return (await pool.query('SELECT c.id,c.name category_name,c.team_limit,e.name edition_name,t.name tournament_name FROM categories c JOIN editions e ON e.organization_id=c.organization_id AND e.id=c.edition_id JOIN tournaments t ON t.organization_id=e.organization_id AND t.id=e.tournament_id WHERE c.organization_id=$1 ORDER BY t.name,e.name,c.name LIMIT 200', [organizationId])).rows;
   });
-  const teamRows = `SELECT t.id,t.name,t.color,(t.shield_id IS NOT NULL) has_shield,e.id entry_id,e.category_id,e.status,e.public_visible,c.name category_name,ed.name edition_name,tr.name tournament_name,
-    COALESCE((SELECT jsonb_agg(jsonb_build_object('id',cm.id,'name',cm.name,'title',cm.title,'status',cm.status,'valid_from',to_char(cm.valid_from,'YYYY-MM-DD'),'valid_until',to_char(cm.valid_until,'YYYY-MM-DD'),'ended_at',cm.ended_at) ORDER BY cm.created_at) FROM commission_members cm WHERE cm.organization_id=e.organization_id AND cm.entry_id=e.id),'[]'::jsonb) commission,
+  const teamRows = (summary = false) => `SELECT t.id,t.name,t.color,(t.shield_id IS NOT NULL) has_shield,e.id entry_id,e.category_id,e.status,e.public_visible,c.name category_name,ed.name edition_name,tr.name tournament_name
+    ${summary ? '' : `,COALESCE((SELECT jsonb_agg(jsonb_build_object('id',cm.id,'name',cm.name,'title',cm.title,'status',cm.status,'valid_from',to_char(cm.valid_from,'YYYY-MM-DD'),'valid_until',to_char(cm.valid_until,'YYYY-MM-DD'),'ended_at',cm.ended_at) ORDER BY cm.created_at) FROM commission_members cm WHERE cm.organization_id=e.organization_id AND cm.entry_id=e.id),'[]'::jsonb) commission,
     COALESCE((SELECT jsonb_agg(jsonb_build_object('id',s.id,'name',s.name,'role',s.role,'status',s.status) ORDER BY s.created_at) FROM team_staff s WHERE s.organization_id=e.organization_id AND s.entry_id=e.id),'[]'::jsonb) staff,
-    COALESCE((SELECT jsonb_agg(jsonb_build_object('id',m.id,'name',u.display_name,'username',u.username,'status',m.status,'assignment',CASE WHEN a.revoked_at IS NULL THEN 'active' ELSE 'revoked' END,'revoked_at',a.revoked_at) ORDER BY a.created_at) FROM team_admin_assignments a JOIN memberships m ON m.organization_id=a.organization_id AND m.id=a.membership_id JOIN users u ON u.id=m.user_id WHERE a.organization_id=e.organization_id AND a.entry_id=e.id AND ($3::boolean OR a.revoked_at IS NULL)),'[]'::jsonb) administrators
+    COALESCE((SELECT jsonb_agg(jsonb_build_object('id',m.id,'name',u.display_name,'username',u.username,'status',m.status,'assignment',CASE WHEN a.revoked_at IS NULL THEN 'active' ELSE 'revoked' END,'revoked_at',a.revoked_at) ORDER BY a.created_at) FROM team_admin_assignments a JOIN memberships m ON m.organization_id=a.organization_id AND m.id=a.membership_id JOIN users u ON u.id=m.user_id WHERE a.organization_id=e.organization_id AND a.entry_id=e.id AND ($3::boolean OR a.revoked_at IS NULL)),'[]'::jsonb) administrators`}
     FROM team_entries e JOIN teams t ON t.organization_id=e.organization_id AND t.id=e.team_id
     JOIN categories c ON c.organization_id=e.organization_id AND c.id=e.category_id
     JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id
     JOIN tournaments tr ON tr.organization_id=ed.organization_id AND tr.id=ed.tournament_id
     WHERE e.organization_id=$1 AND ($2::uuid IS NULL OR t.id=$2) AND ($3::boolean OR EXISTS(SELECT 1 FROM team_admin_assignments a WHERE a.organization_id=e.organization_id AND a.entry_id=e.id AND a.membership_id=$4 AND a.revoked_at IS NULL))
-    ORDER BY t.name,c.name,e.id LIMIT 200`;
+    ${summary?'AND tr.id=$5':''} ORDER BY t.name,c.name,e.id LIMIT 200`;
   async function teamScope(request: FastifyRequest, organizationId: string) {
     const auth = await organizationAccess(request, organizationId);
     const { rows: [member] } = await pool.query("SELECT id,role FROM memberships WHERE organization_id=$1 AND user_id=$2 AND status='active'", [organizationId, auth.user_id]);
@@ -1052,12 +1052,15 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
   app.get('/api/v1/organizations/:id/teams', async (request) => {
     const organizationId = uuid((request.params as { id: string }).id);
     const scope = await teamScope(request, organizationId);
-    return (await pool.query(teamRows, [organizationId, null, scope.organizer, scope.membershipId])).rows;
+    const options=request.query as {torneo?:string};
+    const tournament=options.torneo===undefined?null:uuid(options.torneo);
+    const params=[organizationId, null, scope.organizer, scope.membershipId];
+    return (await pool.query(teamRows(!!tournament),tournament?[...params,tournament]:params)).rows;
   });
   app.get('/api/v1/organizations/:id/teams/:teamId', async (request) => {
     const { id, teamId } = request.params as { id: string; teamId: string };
     const organizationId = uuid(id); const scope = await teamScope(request, organizationId);
-    const { rows } = await pool.query(teamRows, [organizationId, uuid(teamId), scope.organizer, scope.membershipId]);
+    const { rows } = await pool.query(teamRows(), [organizationId, uuid(teamId), scope.organizer, scope.membershipId]);
     if (!rows.length) fail(404, 'NOT_FOUND', 'No se encontró este equipo en tu ámbito.');
     return rows;
   });
@@ -1203,7 +1206,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const { id, teamId } = request.params as { id: string; teamId: string };
     const organizationId = uuid(id), team = uuid(teamId);
     const scope = await teamScope(request, organizationId);
-    const allowed = await pool.query(teamRows, [organizationId, team, scope.organizer, scope.membershipId]);
+    const allowed = await pool.query(teamRows(), [organizationId, team, scope.organizer, scope.membershipId]);
     if (!allowed.rowCount) fail(404, 'NOT_FOUND', 'No se encontró este equipo en tu ámbito.');
     const { rows: [media] } = await pool.query('SELECT m.filename,m.content_type FROM teams t JOIN media m ON m.organization_id=t.organization_id AND m.id=t.shield_id WHERE t.organization_id=$1 AND t.id=$2', [organizationId, team]);
     if (!media) fail(404, 'NOT_FOUND', 'Este equipo aún no tiene escudo.');
@@ -1635,11 +1638,15 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       return reviewed;
     });
   });
-  async function matchdaySnapshot(client: PoolClient, organizationId: string, matchdayId: string, archived = false) {
-    const { rows } = await client.query(`SELECT m.id,m.category_id,m.fixture_phase_id,(m.position_game_id IS NOT NULL) position_match,c.name category_name,m.home_entry_id,m.away_entry_id,home.id home_team_id,away.id away_team_id,home.name home_name,away.name away_name,
+  async function matchdaySnapshotRows(client: PoolClient, organizationId: string, matchdayIds: string[], archived: boolean, view: 'legacy'|'list'|'editor') {
+    if (!matchdayIds.length) return [];
+    const compact = view === 'list';
+    const { rows } = await client.query(`SELECT m.matchday_id,m.id,m.category_id,m.fixture_phase_id,(m.position_game_id IS NOT NULL) position_match,c.name category_name,m.home_entry_id,m.away_entry_id,home.id home_team_id,away.id away_team_id,home.name home_name,away.name away_name,
       (home.shield_id IS NOT NULL) home_has_shield,(away.shield_id IS NOT NULL) away_has_shield,
-      v.id venue_id,coalesce(v.name,'') venue_name,coalesce(m.court_label,'') court_label,coalesce(to_char(m.match_date,'YYYY-MM-DD'),'') match_date,
-      coalesce(to_char(m.starts_at AT TIME ZONE t.timezone,'HH24:MI'),'') match_time,coalesce(m.duration_minutes,60) duration_minutes,m.referee_name,m.referee_id,m.schedule_revision,r.status acta_status
+      coalesce(v.name,'') venue_name,coalesce(m.court_label,'') court_label,coalesce(to_char(m.match_date,'YYYY-MM-DD'),'') match_date,
+      coalesce(to_char(m.starts_at AT TIME ZONE t.timezone,'HH24:MI'),'') match_time,r.status acta_status
+      ${compact?'':',v.id venue_id,coalesce(m.duration_minutes,60) duration_minutes,m.referee_name,m.referee_id,m.schedule_revision'}
+      ${view==='legacy'?'':",approved.snapshot->'score' official_score"}
       FROM draft_matches m JOIN matchdays md ON md.organization_id=m.organization_id AND md.id=m.matchday_id
       JOIN categories c ON c.organization_id=m.organization_id AND c.id=m.category_id
       JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id
@@ -1650,8 +1657,13 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       JOIN teams away ON away.organization_id=a.organization_id AND away.id=a.team_id
       LEFT JOIN venues v ON v.organization_id=m.organization_id AND v.id=m.venue_id
       LEFT JOIN match_records r ON r.organization_id=m.organization_id AND r.match_id=m.id
-      WHERE m.organization_id=$1 AND md.id=$2 AND ${archived ? 'm.archived_at IS NOT NULL' : 'm.archived_at IS NULL'} ORDER BY m.starts_at,m.court_label,m.id`, [organizationId, matchdayId]);
+      ${view==='legacy'?'':"LEFT JOIN match_acta_snapshots approved ON approved.organization_id=r.organization_id AND approved.id=r.approval_id AND approved.kind='approved'"}
+      WHERE m.organization_id=$1 AND md.id=ANY($2::uuid[]) AND ${archived ? 'm.archived_at IS NOT NULL' : 'm.archived_at IS NULL'} ORDER BY m.starts_at,m.court_label,m.id`, [organizationId, matchdayIds]);
     return rows;
+  }
+  async function matchdaySnapshot(client: PoolClient, organizationId: string, matchdayId: string, archived = false) {
+    return (await matchdaySnapshotRows(client,organizationId,[matchdayId],archived,'legacy'))
+      .map(({matchday_id,...match})=>match);
   }
   async function scheduleConflicts(client: PoolClient, organizationId: string, matchId: string, homeEntryId: string, awayEntryId: string, venueId: string, courtLabel: string, refereeId: string | null, refereeName: string | null, startsAt: Date, durationMinutes: number) {
     const end = new Date(startsAt.getTime() + durationMinutes * 60000);
@@ -2104,15 +2116,27 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
   app.get('/api/v1/organizations/:id/editions/:editionId/matchdays', async (request) => {
     const { id, editionId } = request.params as { id: string; editionId: string };
     const organizationId = uuid(id), edition = uuid(editionId); await organizationAccess(request, organizationId);
+    const options=request.query as {vista?:string;fecha?:string};
+    const dayId=options.fecha === undefined ? null : uuid(options.fecha);
+    const view=options.vista==='editar'?'editor':options.vista==='lista'?'list':'legacy';
     return transaction(pool, async (client) => {
       const { rowCount } = await client.query('SELECT 1 FROM editions WHERE organization_id=$1 AND id=$2', [organizationId, edition]);
       if (!rowCount) fail(404, 'EDITION_NOT_FOUND', 'No se encontró la edición.');
-      const { rows } = await client.query('SELECT id,edition_id,ordinal,status,revision,archived_at FROM matchdays WHERE organization_id=$1 AND edition_id=$2 ORDER BY ordinal', [organizationId, edition]);
-      const days = [];
-      for (const day of rows) {
-        days.push({ ...day, archivedAt:day.archived_at, matches:day.archived_at?[]:await matchdaySnapshot(client,organizationId,day.id), archivedMatches:day.archived_at?[]:await matchdaySnapshot(client,organizationId,day.id,true) });
-      }
-      return days;
+      const {rows:days} = await client.query('SELECT id,edition_id,ordinal,status,revision,archived_at FROM matchdays WHERE organization_id=$1 AND edition_id=$2 AND ($3::uuid IS NULL OR id=$3) ORDER BY ordinal', [organizationId, edition,dayId]);
+      const activeIds=options.vista==='fechas'?[]:days.filter(day=>!day.archived_at).map(day=>day.id);
+      const archiveIds=view==='editor'||options.vista===undefined?activeIds:[];
+      const groupRows = (rows: Awaited<ReturnType<typeof matchdaySnapshotRows>>) => {
+        const grouped = new Map<string,typeof rows>();
+        for(const {matchday_id,...match} of rows){
+          const list=grouped.get(matchday_id)||[];
+          if(!grouped.has(matchday_id))grouped.set(matchday_id,list);
+          list.push(match);
+        }
+        return grouped;
+      };
+      const active=groupRows(await matchdaySnapshotRows(client,organizationId,activeIds,false,view));
+      const archived=groupRows(await matchdaySnapshotRows(client,organizationId,archiveIds,true,view));
+      return days.map(day=>({ ...day, archivedAt:day.archived_at, matches:active.get(day.id)||[], archivedMatches:archived.get(day.id)||[] }));
     });
   });
   app.post('/api/v1/organizations/:id/editions/:editionId/matchdays', async (request, reply) => {

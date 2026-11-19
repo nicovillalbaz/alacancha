@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { knockoutRoundName, previewCompetitionBracket, type FixtureOverview, type MatchdaySummary, type PlannedRound, type TeamSummary, type TournamentSummary, type PositionBlueprintView, type PositionCompetitionView } from '@torneos/shared';
+import { knockoutRoundName, previewCompetitionBracket, type FixtureOverview, type MatchdaySummary, type PlannedRound, type TournamentEntry, type TournamentSummary, type PositionBlueprintView, type PositionCompetitionView } from '@torneos/shared';
 import Icon from './Icon.vue';
 import BracketView from './BracketView.vue';
 import SportTabs from './SportTabs.vue';
 import AnnouncedFixtureMatches from './AnnouncedFixtureMatches.vue';
+import { organizerReads } from './view-reads.ts';
 
 interface CaseRow { id: string; entry_id: string; team_name: string; summary: string; fine_amount_guaranies: number | null }
 interface StatsRow {
@@ -15,7 +16,7 @@ interface StatsRow {
   tables: Array<{ groupNo: number | null; groups: Array<{ position: number; teamIds: string[]; unresolved: boolean }>; totals: Array<{ teamId: string; points: number; played: number; goalsFor: number; goalsAgainst: number }> }>;
 }
 type AnnouncedFixture={revision:number;rounds:Array<{ordinal:number;matches:Array<{homeEntryId:string;awayEntryId:string}>}>;teams:Array<{entry_id:string;team_id:string;name:string;color:string;has_shield:boolean}>};
-const props = defineProps<{ tournament: TournamentSummary; categories: TournamentSummary[]; entries: TeamSummary[]; days: MatchdaySummary[]; officialMatchIds: string[]; scores:Record<string,{home:number;away:number}>; cases: Record<string, CaseRow[]>; stats: Record<string, StatsRow>; brackets: Record<string, FixtureOverview>; positionBlueprint?:PositionBlueprintView & {categoryId?:string}; positionCompetition?:PositionCompetitionView|null; section: string; dayId?: string; canManage: boolean; organizationId: string; csrfToken:string }>();
+const props = defineProps<{ tournament: TournamentSummary; categories: TournamentSummary[]; entries: TournamentEntry[]; days: MatchdaySummary[]; officialMatchIds: string[]; scores:Record<string,{home:number;away:number}>; cases: Record<string, CaseRow[]>; stats: Record<string, StatsRow>; brackets: Record<string, FixtureOverview>; positionBlueprint?:PositionBlueprintView & {categoryId?:string}; positionCompetition?:PositionCompetitionView|null; section: string; dayId?: string; canManage: boolean; organizationId: string; csrfToken:string }>();
 const emit=defineEmits<{refresh:[]}>();
 const announcedFixtures=ref<Record<string,AnnouncedFixture>>({});
 const announcedState=ref<'loading'|'ready'|'error'>('loading');
@@ -28,24 +29,30 @@ async function openAnnouncedMatch(categoryId:string,revision:number,ordinal:numb
     const response=await fetch(`/api/v1/organizations/${props.organizationId}/categories/${categoryId}/fixture/announced/rounds/${ordinal}/prepare`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':props.csrfToken},body:JSON.stringify({expectedRevision:revision,...match})});
     const result=await response.json();
     if(!response.ok)throw new Error(result.message||'No se pudo abrir el partido.');
+    organizerReads.invalidate('schedule','payments');
     location.hash=`#/partido/${categoryId}/${result.matchId}`;
   }catch(cause){prepareError.value=cause instanceof Error?cause.message:'No se pudo abrir el partido.';}
   finally{preparingMatch.value=false;}
 }
-watch(()=>[props.organizationId,props.tournament.id,props.categories.map(item=>item.category_id).join(','),props.section].join(':'),async(_key,_old,onCleanup)=>{
+const announcedCategoryIds=computed(()=>!props.dayId&&['fixture','partidos'].includes(props.section)
+  ? props.categories.filter(category=>category.has_announced_fixture).map(category=>category.category_id).join(',') : '');
+watch([()=>props.organizationId,()=>props.csrfToken,()=>props.tournament.id,announcedCategoryIds],async([organizationId,csrfToken,, ids],_old,onCleanup)=>{
   announcedFixtures.value={};announcedRound.value=1;
-  if(!['fixture','partidos'].includes(props.section)){announcedState.value='ready';return;}
+  if(!ids){announcedState.value='ready';return;}
   announcedState.value='loading';
-  const controller=new AbortController();onCleanup(()=>controller.abort());
+  let active=true;onCleanup(()=>{active=false;});
   try{
-    const plans=await Promise.all(props.categories.map(async category=>{
-      const response=await fetch(`/api/v1/public/organizations/${props.organizationId}/categories/${category.category_id}/fixture/announced`,{signal:controller.signal,credentials:'same-origin'});
-      if(response.status===404)return null;
-      if(!response.ok)throw new Error('No se pudo cargar el calendario anunciado.');
-      return [category.category_id,await response.json() as AnnouncedFixture] as const;
+    const plans=await Promise.all(ids.split(',').map(async categoryId=>{
+      const plan=await organizerReads.read<AnnouncedFixture|null>('schedule',`${csrfToken}:${organizationId}:announced:${categoryId}`,async()=>{
+        const response=await fetch(`/api/v1/public/organizations/${organizationId}/categories/${categoryId}/fixture/announced`,{signal:AbortSignal.timeout(12000),credentials:'omit'});
+        if(response.status===404)return null;
+        if(!response.ok)throw new Error('No se pudo cargar el calendario anunciado.');
+        return response.json();
+      });
+      return plan ? [categoryId,plan] as const : null;
     }));
-    if(!controller.signal.aborted){announcedFixtures.value=Object.fromEntries(plans.filter((plan):plan is NonNullable<typeof plan>=>plan!==null));announcedState.value='ready';}
-  }catch(cause){if(!controller.signal.aborted)announcedState.value='error';}
+    if(active){announcedFixtures.value=Object.fromEntries(plans.filter((plan):plan is NonNullable<typeof plan>=>plan!==null));announcedState.value='ready';}
+  }catch{if(active)announcedState.value='error';}
 },{immediate:true});
 const announcedPlans=computed(()=>props.categories.flatMap(category=>announcedFixtures.value[category.category_id]?[{category,plan:announcedFixtures.value[category.category_id]}]:[]));
 function announcedStatuses(categoryId:string,ordinal:number){

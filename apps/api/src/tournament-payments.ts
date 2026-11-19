@@ -27,12 +27,11 @@ const cardChargesInput = z.object({ entryId:id, items:z.array(z.object({eventId:
 
 // La instantánea aprobada es la fuente; un evento anulado en una rectificación
 // deja de aparecer como tarjeta pendiente, sin borrar un cobro ya asentado.
-const officialCardsQuery = `SELECT (event.value->>'id')::uuid event_id,r.match_id,r.status record_status,m.category_id,
+const officialCardsQuery = (compact = false) => `SELECT (event.value->>'id')::uuid event_id,r.match_id,r.status record_status,m.category_id,
   event.value->>'kind' kind,event.value->>'cardCode' card_code,
-  event.value->>'registrationId' registration_id,(event.value->>'teamEntryId')::uuid entry_id,
-  coalesce(player.given_names||' '||player.family_names,'Jugador') player_name,
-  team.name team_name,home.name home_name,away.name away_name,rv.rules,
-  to_char(coalesce(m.match_date,(approved.created_at AT TIME ZONE t.timezone)::date),'YYYY-MM-DD') occurred_on
+  (event.value->>'teamEntryId')::uuid entry_id,team.name team_name,rv.rules
+  ${compact?'':`,event.value->>'registrationId' registration_id,coalesce(player.given_names||' '||player.family_names,'Jugador') player_name,
+  home.name home_name,away.name away_name,to_char(coalesce(m.match_date,(approved.created_at AT TIME ZONE t.timezone)::date),'YYYY-MM-DD') occurred_on`}
   FROM match_records r
   JOIN match_acta_snapshots approved ON approved.organization_id=r.organization_id AND approved.id=r.approval_id AND approved.kind='approved'
   JOIN draft_matches m ON m.organization_id=r.organization_id AND m.id=r.match_id
@@ -43,12 +42,12 @@ const officialCardsQuery = `SELECT (event.value->>'id')::uuid event_id,r.match_i
   CROSS JOIN LATERAL jsonb_array_elements(approved.snapshot->'events') event(value)
   JOIN team_entries te ON te.organization_id=r.organization_id AND te.id=(event.value->>'teamEntryId')::uuid
   JOIN teams team ON team.organization_id=te.organization_id AND team.id=te.team_id
-  JOIN team_entries he ON he.organization_id=r.organization_id AND he.id=m.home_entry_id
+  ${compact?'':`JOIN team_entries he ON he.organization_id=r.organization_id AND he.id=m.home_entry_id
   JOIN teams home ON home.organization_id=he.organization_id AND home.id=he.team_id
   JOIN team_entries ae ON ae.organization_id=r.organization_id AND ae.id=m.away_entry_id
   JOIN teams away ON away.organization_id=ae.organization_id AND away.id=ae.team_id
   LEFT JOIN player_registrations pr ON pr.organization_id=r.organization_id AND pr.id=(event.value->>'registrationId')::uuid
-  LEFT JOIN players player ON player.organization_id=pr.organization_id AND player.id=pr.player_id
+  LEFT JOIN players player ON player.organization_id=pr.organization_id AND player.id=pr.player_id`}
   WHERE r.organization_id=$1 AND t.id=$2
     AND event.value->>'kind' IN ('yellow','second_yellow','red','custom_card')
     AND ($3::uuid IS NULL OR (event.value->>'id')::uuid=$3)
@@ -86,7 +85,7 @@ export function registerTournamentPaymentRoutes(app: FastifyInstance, pool: Data
     await client.query('SELECT id FROM match_records WHERE organization_id=$1 AND match_id=$2 FOR SHARE',[organizationId,eventMatch.match_id]);
     const {rows:[recordStatus]}=await client.query('SELECT status FROM match_records WHERE organization_id=$1 AND match_id=$2',[organizationId,eventMatch.match_id]);
     if(recordStatus?.status!=='official')fail(409,'ACTA_IN_REVIEW','Terminá la rectificación del acta antes de generar el cargo.');
-    const {rows:[card]}=await client.query(officialCardsQuery,[organizationId,tournamentId,eventId]);
+    const {rows:[card]}=await client.query(officialCardsQuery(),[organizationId,tournamentId,eventId]);
     const details=card&&cardDetails(card);
     if(!details)fail(409,'CARD_NOT_OFFICIAL','La tarjeta no figura en el acta oficial vigente.');
     if(expectedEntryId && card.entry_id!==expectedEntryId)fail(400,'TEAM_MISMATCH','La tarjeta no corresponde al equipo seleccionado.');
@@ -110,6 +109,7 @@ export function registerTournamentPaymentRoutes(app: FastifyInstance, pool: Data
   }
   app.get(root,async request=>{
     const {organizationId,tournamentId}=await scope(request);
+    const compact=(request.query as {resumen?:string}).resumen==='1';
     const [{rows:[rate]},{rows:entries},{rows:cardRules},{rows:officialCards}]=await Promise.all([
       pool.query('SELECT version,yellow_guaranies,red_guaranies,custom_card_rates FROM tournament_payment_rates WHERE organization_id=$1 AND tournament_id=$2 ORDER BY version DESC LIMIT 1',[organizationId,tournamentId]),
       pool.query(`SELECT m.id,m.kind,m.category,m.entry_id,m.linked_charge_id,m.card_event_id,m.amount_guaranies,m.description,to_char(m.occurred_on,'YYYY-MM-DD') occurred_on,m.created_at,m.voided_at,m.void_reason,t.name team_name
@@ -119,7 +119,7 @@ export function registerTournamentPaymentRoutes(app: FastifyInstance, pool: Data
       pool.query(`SELECT c.id category_id,c.name category_name,r.rules FROM categories c JOIN editions e ON e.organization_id=c.organization_id AND e.id=c.edition_id
         JOIN LATERAL (SELECT rules FROM rule_versions WHERE organization_id=c.organization_id AND category_id=c.id ORDER BY version DESC LIMIT 1) r ON true
         WHERE c.organization_id=$1 AND e.tournament_id=$2`,[organizationId,tournamentId]),
-      pool.query(officialCardsQuery,[organizationId,tournamentId,null]),
+      pool.query(officialCardsQuery(compact),[organizationId,tournamentId,null]),
     ]);
     const active=entries.filter(row=>!row.voided_at);
     const paid=new Map<string,number>();
@@ -127,13 +127,17 @@ export function registerTournamentPaymentRoutes(app: FastifyInstance, pool: Data
     const charges=new Map(active.filter(row=>row.kind==='charge'&&row.card_event_id).map(row=>[row.card_event_id,row]));
     const cardEvents=officialCards.flatMap(row=>{const details=cardDetails(row);if(!details)return [];const charge=charges.get(row.event_id);
       const suggestedAmount=details.key==='yellow'?rate?.yellow_guaranies||0:details.key==='red'?rate?.red_guaranies||0:rate?.custom_card_rates?.[details.key]||0;
-      return [{eventId:row.event_id,matchId:row.match_id,entryId:row.entry_id,teamName:row.team_name,playerName:row.player_name,
-        matchLabel:`${row.home_name} vs ${row.away_name}`,occurredOn:row.occurred_on,label:details.label,
+      return [{eventId:row.event_id,entryId:row.entry_id,teamName:row.team_name,label:details.label,
         cardKey:details.key,canCharge:row.record_status==='official',suggestedAmount,chargeId:charge?.id||null,amountGuaranies:charge?.amount_guaranies||null,
-        outstandingGuaranies:charge?Math.max(0,charge.amount_guaranies-(paid.get(charge.id)||0)):null}];});
+        ...(compact?{}:{matchId:row.match_id,playerName:row.player_name,matchLabel:`${row.home_name} vs ${row.away_name}`,occurredOn:row.occurred_on,
+          outstandingGuaranies:charge?Math.max(0,charge.amount_guaranies-(paid.get(charge.id)||0)):null})}];});
     const currentEventIds=new Set(cardEvents.map(card=>card.eventId));
     return {rates:{version:rate?.version||0,yellowGuaranies:rate?.yellow_guaranies||0,redGuaranies:rate?.red_guaranies||0,customCardRates:rate?.custom_card_rates||{}},cards:cardRules.flatMap(row=>(row.rules?.advanced?.discipline?.customCards||[]).map((card:{code:string;label:string;color:string})=>({key:`${row.category_id}:${card.code}`,label:card.label,color:card.color,categoryName:row.category_name}))),cardEvents,
-      entries:entries.map(row=>({...row,source_changed:!!row.card_event_id&&!currentEventIds.has(row.card_event_id),outstanding_guaranies:row.kind==='charge'&&!row.voided_at?Math.max(0,row.amount_guaranies-(paid.get(row.id)||0)):null})),summary:{incomeGuaranies:active.filter(row=>row.kind==='income').reduce((sum,row)=>sum+row.amount_guaranies,0),expenseGuaranies:active.filter(row=>row.kind==='expense').reduce((sum,row)=>sum+row.amount_guaranies,0),pendingGuaranies:active.filter(row=>row.kind==='charge').reduce((sum,row)=>sum+Math.max(0,row.amount_guaranies-(paid.get(row.id)||0)),0)}};
+      entries:entries.map(row=>{
+        const {card_event_id,linked_charge_id,created_at,void_reason,...shown}=row;
+        return {...(compact?shown:row),source_changed:!!card_event_id&&!currentEventIds.has(card_event_id),
+          outstanding_guaranies:row.kind==='charge'&&!row.voided_at?Math.max(0,row.amount_guaranies-(paid.get(row.id)||0)):null};
+      }),summary:{incomeGuaranies:active.filter(row=>row.kind==='income').reduce((sum,row)=>sum+row.amount_guaranies,0),expenseGuaranies:active.filter(row=>row.kind==='expense').reduce((sum,row)=>sum+row.amount_guaranies,0),pendingGuaranies:active.filter(row=>row.kind==='charge').reduce((sum,row)=>sum+Math.max(0,row.amount_guaranies-(paid.get(row.id)||0)),0)}};
   });
   app.post(`${root}/card-charges/:eventId`,async(request,reply)=>{
     const {organizationId,tournamentId,actor}=await scope(request);

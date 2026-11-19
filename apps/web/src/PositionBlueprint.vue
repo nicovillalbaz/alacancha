@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import type { PositionBlueprintView, PositionCompetitionView, TeamSummary } from '@torneos/shared';
+import type { PositionBlueprintView, PositionCompetitionView, TournamentEntry } from '@torneos/shared';
 import SportTabs from './SportTabs.vue';
 import Icon from './Icon.vue';
 
-const props = defineProps<{ view:PositionBlueprintView; competition:PositionCompetitionView|null; entries:TeamSummary[]; canManage:boolean; organizationId:string; categoryId:string; tournamentId:string; csrfToken:string }>();
+const props = defineProps<{ view:PositionBlueprintView; competition:PositionCompetitionView|null; entries:TournamentEntry[]; canManage:boolean; organizationId:string; categoryId:string; tournamentId:string; csrfToken:string }>();
 const emit = defineEmits<{refresh:[]}>();
 const tab=ref('fechas'),selectedRound=ref('F1'),selectedDay=ref(1),stageTab=ref('groups'),drawTab=ref('positions'),openSlot=ref(''),saving=ref(false),error=ref(''),openingCodes=ref<string[]>([]);
 const groups=computed(()=>[...new Set(props.view.games.filter(game=>game.stage==='groups').map(game=>game.sporting_round)),'Cuartos','Cuadrangular 1','Cuadrangular 2','Cuadrangular 3']);

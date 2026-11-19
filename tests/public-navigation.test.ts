@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {closePublicDetail,publicMeasurementUrl,publicNavigationUrl,readPublicNavigation} from '../apps/web/src/public-navigation.ts';
 import {claimFanView} from '../apps/web/src/public-visits.ts';
+import {createViewReads} from '../apps/web/src/view-reads.ts';
 import {createPublicReads} from '../apps/web/src/public-reads.ts';
 
 test('las lecturas públicas comparten la solicitud en curso y se renuevan con el resultado', async t => {
@@ -15,6 +16,28 @@ test('las lecturas públicas comparten la solicitud en curso y se renuevan con e
   assert.deepEqual(await read('/cup/competition','2'),{value:2});
   assert.equal(fetchMock.mock.callCount(),2);
   assert.equal(fetchMock.mock.calls[0].arguments[1]?.credentials,'omit');
+});
+
+test('el panel comparte la consulta al volver atrás y descarta datos tras guardar o cambiar de sesión', async () => {
+  let time=0, calls=0;
+  const reads=createViewReads(10,15_000,()=>time);
+  let finish!: (value:number)=>void;
+  const original=reads.read('schedule','session-a:org-a',()=>new Promise<number>(resolve=>{calls++;finish=resolve;}));
+  assert.equal(reads.read('schedule','session-a:org-a',async()=>99),original);
+  await Promise.resolve();
+  reads.invalidate('schedule');
+  const afterChange=await reads.read('schedule','session-a:org-a',async()=>++calls);
+  finish(1);
+  assert.equal(await original,1);
+  assert.equal(afterChange,2);
+  assert.equal(await reads.read('schedule','session-a:org-a',async()=>++calls),2);
+  assert.equal(await reads.read('schedule','session-b:org-a',async()=>++calls),3);
+  assert.equal(await reads.read('schedule','session-a:org-b',async()=>++calls),4);
+  time=15_000;
+  assert.equal(await reads.read('schedule','session-a:org-a',async()=>++calls),5);
+  await assert.rejects(reads.read('payments','session-a:org-a',async()=>{throw new Error('red');}));
+  assert.equal(await reads.read('payments','session-a:org-a',async()=>++calls),6);
+  assert.equal(await reads.read('schedule','session-a:org-a',async()=>++calls),5);
 });
 
 test('una sesión cuenta una visita, una apertura por copa y una apertura por sección', () => {

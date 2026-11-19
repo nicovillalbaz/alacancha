@@ -88,7 +88,7 @@ watch([() => props.organization?.id, () => selectedMatch.value?.id, () => props.
 const stats = ref<FanStats|null>(null), statsLoading = ref(false), statsError = ref(false);
 const flyers = ref<FanFlyer[]>([]);
 const usesStats = computed(() => ['standings','scorers','defense'].includes(tab.value) || !!selectedTeam.value);
-const usesFlyers = computed(() => usesStats.value && !selectedTeam.value || tab.value === 'matches');
+const usesFlyers = computed(() => !!selectedMatch.value || (!selectedTeam.value && !selectedAnnouncedMatch.value && ['matches','standings','scorers','defense'].includes(tab.value)));
 const statsRetry = ref(0);
 let shownStats = '';
 watch(() => [props.organization?.id, currentCategoryId.value, props.resultsRevision, usesStats.value, props.loading, category.value?.presentation_only, statsRetry.value] as const,
@@ -112,13 +112,14 @@ watch(() => [props.organization?.id, currentCategoryId.value, props.resultsRevis
       if (current) statsLoading.value = false;
     }
   }, { immediate: true });
-watch(() => [props.organization?.id, props.resultsRevision, usesFlyers.value, props.loading, currentTournament.value?.presentation_only] as const,
-  async ([org, revision, needed, loading, preview], _previous, onCleanup) => {
-    if (!org || !needed || loading || preview) return;
+watch(() => [props.organization?.id, currentTournament.value?.id, props.resultsRevision, usesFlyers.value, props.loading, currentTournament.value?.presentation_only] as const,
+  async ([org, tournament, revision, needed, loading, preview], previous, onCleanup) => {
+    if (previous && (org!==previous[0] || tournament!==previous[1])) flyers.value=[];
+    if (!org || !tournament || !needed || loading || preview) return;
     let current = true;
     onCleanup(() => { current = false; });
     try {
-      const data = await readPublic<FanFlyer[]>(`/organizations/${org}/flyers`, String(revision));
+      const data = await readPublic<FanFlyer[]>(`/organizations/${org}/flyers?torneo=${tournament}`, String(revision));
       if (current) flyers.value = data;
     } catch { /* Los flyers son opcionales. */ }
   }, { immediate: true, flush: 'post' });
@@ -188,7 +189,7 @@ watch(tab,value=>{if(!restoringNavigation&&!props.loading){pushPublicNavigation(
 watch(() => [currentTournament.value?.id, tab.value, props.loading, props.error] as const, ([id, value, loading, error]) => {
   if (id && !loading && !error && tabs.value.some(item => item.key === value)) recordFanView({id, section: tabToView[value]});
 }, { immediate: true, flush: 'post' });
-function flyer(kind:string,sourceId:string){return flyers.value.find(item=>item.tournamentId===props.selectedTournamentId&&item.kind===kind&&item.sourceId===sourceId);}
+function flyer(kind:string,sourceId:string){return flyers.value.find(item=>item.tournamentId===currentTournament.value?.id&&item.kind===kind&&item.sourceId===sourceId);}
 function flyerUrl(item:FanFlyer){return `/api/v1/public/organizations/${props.organization?.id}/flyers/${item.id}/file`;}
 </script>
 

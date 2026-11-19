@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, defineComponent, h, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
-import { accessLabels, accessStates, roleLabels, rulePresets, ruleSchema, tiebreakerLabels, playerDraftSchema, matchPeriodCodes, knockoutRoundName, previewCompetitionBracket, type PlannedRound, type AccessState, type CurrentUser, type OrganizationSummary, type RuleConfig, type TournamentSummary, type TournamentResources, type TeamSummary, type PlayerDraftSummary, type PlayerDraftInput, type GoodFaithVersion, type PlayerDocument, type PlayerMovement, type PlayerRestriction, type EligibilityResult, type DraftMatch, type LineupVersion, type PlayerImportBatch, type PlayerIdentitySearch, type PlayerIdentityChange, type FixtureOverview, type PositionBlueprintView, type PositionCompetitionView, type MatchdaySummary, type MatchCaptureView, type MatchJournalEvent } from '@torneos/shared';
+import { accessLabels, accessStates, roleLabels, rulePresets, ruleSchema, tiebreakerLabels, playerDraftSchema, matchPeriodCodes, knockoutRoundName, previewCompetitionBracket, type PlannedRound, type AccessState, type CurrentUser, type OrganizationSummary, type RuleConfig, type TournamentSummary, type TournamentResources, type TeamSummary, type TournamentEntry, type PlayerDraftSummary, type PlayerDraftInput, type GoodFaithVersion, type PlayerDocument, type PlayerMovement, type PlayerRestriction, type EligibilityResult, type DraftMatch, type LineupVersion, type PlayerImportBatch, type PlayerIdentitySearch, type PlayerIdentityChange, type FixtureOverview, type PositionBlueprintView, type PositionCompetitionView, type MatchdaySummary, type MatchCaptureView, type MatchJournalEvent } from '@torneos/shared';
 import Icon from './Icon.vue';
 import PublicDirectory from './PublicDirectory.vue';
 import type { PublicDraw } from './PublicPositionPortal.vue';
@@ -12,6 +12,7 @@ import {cleanLegacyHash,routeFromUrl} from './client-route.ts';
 import {measurePublicNavigation,setPublicSectionBase} from './public-navigation.ts';
 import {recordFanView} from './public-visits.ts';
 import type {PublicFixtureDay,PublicPortalTournament} from './public-reads.ts';
+import {organizerReads,publicCatalogReads} from './view-reads.ts';
 import type {PublicVisitReport} from '@torneos/shared';
 import { queueMatchEvent,queuedMatchEvents,removeQueuedMatchEvent,type QueuedMatchEvent } from './offline-events.ts';
 
@@ -160,6 +161,7 @@ function publicStatsTabsFor(item:TournamentSummary){return [
 ];}
 function activePublicStatsTab(item:TournamentSummary){const tabs=publicStatsTabsFor(item);return tabs.some(tab=>tab.key===publicStatsTab[item.category_id])?publicStatsTab[item.category_id]:tabs[0].key;}
 const workspaceMatchdays = ref<MatchdaySummary[]>([]);
+const workspaceTeams = ref<TournamentEntry[]>([]);
 const workspaceScores=ref<Record<string,{home:number;away:number}>>({});
 const workspaceOfficialMatchIds = ref<string[]>([]);
 const workspaceCases = ref<Record<string, DisciplineCase[]>>({});
@@ -323,7 +325,7 @@ const selectedTeamTournamentId = computed(() => tournaments.value.find(item => i
 const tournamentContext = computed(() => selectedTournament.value || tournaments.value.find(item => item.id === selectedTeamTournamentId.value) || tournamentList.value.find(item => item.id === lastTournamentId.value) || null);
 const tournamentTabs = [['equipos','Equipos','users'],['pagos','Pagos','card'],['fixture','Fixture','calendar'],['partidos','Partidos','ball'],['estadisticas','Estadísticas','chart']] as const;
 const tournamentDays = computed(() => workspaceMatchdays.value.filter(day => tournamentCategories.value.some(category => category.edition_id === day.edition_id)));
-const tournamentEntries = computed(() => teams.value.filter(team => tournamentCategories.value.some(category => category.category_id === team.category_id)));
+const tournamentEntries = computed(() => workspaceTeams.value.filter(team => tournamentCategories.value.some(category => category.category_id === team.category_id)));
 const selectedEntry = computed(() => teams.value.find((item) => item.entry_id === parts.value[1]));
 watch(() => selectedEntry.value?.entry_id, () => { goodFaithTab.value = 'players'; });
 watch(() => user.value?.organizationId, () => { teamMatches.value = {}; teamDraftShield.value = null; });
@@ -393,26 +395,53 @@ function openTeamAction(action: 'admin'|'commission'|'staff'|'category') { teamA
 function selectedNav(path: string) { return parts.value[0] === path || (path === 'torneos' && ['nuevo-torneo', 'torneo', 'nueva-categoria', 'categoria', 'fixture', 'programar', 'partido', 'flyers', 'flyer-settings', 'nuevo-equipo', 'equipo', 'buena-fe', 'nuevo-jugador', 'jugador'].includes(parts.value[0])) || (path === 'equipos' && ['nuevo-equipo', 'equipo', 'buena-fe', 'nuevo-jugador', 'jugador', 'disciplina'].includes(parts.value[0])) || (path === 'administradores' && ['administrador', 'acceso-administrador', 'invitar', 'recuperar', 'nueva-organizacion'].includes(parts.value[0])) || (path === 'organizaciones' && ['organizacion', 'estado-organizacion'].includes(parts.value[0])); }
 function navPath(path: string) { return path === 'organizacion' && user.value?.organizationId ? `organizacion/${user.value.organizationId}` : path === 'organizacion' ? 'organizaciones' : path; }
 function notify(message: string) { success.value = message; clearTimeout(toastTimer); toastTimer = setTimeout(() => { success.value = ''; }, 4500); }
-function clearPrivate() { lastTournamentId.value = ''; queuedCapture.value=[]; queueError.value=''; reviewTasks.value=[]; reviewHasMore.value=false; disciplineCases.value=[]; disciplineNotices.value=[]; fineCatalog.value=[]; privateStats.value=null; standingAdjustments.value=[]; disciplineServiceHistory.value=[]; selectedDisciplineCaseId.value=''; Object.keys(sessionStorage).filter((key) => key.startsWith('torneos-rule-draft:')).forEach((key) => sessionStorage.removeItem(key)); capture.value = null; pendingCapture.value = null; pendingCaptureUndo.value = null; fixture.value = { phase: null, rounds: [], groups: [], bracket: [] }; fixtureTie.value=null; referees.value=[]; newRefereeName.value=''; refereeArchiveReason.value=''; matchdays.value = []; publicFixture.value = []; publicBrackets.value = []; scheduleMatchId.value = ''; schedulePreview.value = null; matchdayPreview.value = null; draftMatches.value = []; lineupVersions.value = []; lineupSearch.value = ''; importRows.value = []; importToken.value = ''; importBatches.value = []; organizationEpoch++; members.value = []; organizations.value = []; organization.value = null; tournaments.value = []; tournamentResources.value = { venues: [], sponsors: [] }; teams.value = []; allOriginTeams.value = []; players.value = []; goodFaithVersions.value = []; playerEvidence.value = { documents: [], movements: [], restrictions: [] }; eligibility.value = null; categories.value = []; activity.value = []; generatedLink.value = null; createResult.value = null; teamLink.value = null; Object.keys(accessDrafts).forEach((key) => delete accessDrafts[key]); Object.keys(brandDrafts).forEach((key) => delete brandDrafts[key]); Object.keys(ruleDrafts).forEach((key) => delete ruleDrafts[key]); Object.keys(teamConfirmReasons).forEach((key) => delete teamConfirmReasons[key]); Object.keys(teamPublishReasons).forEach((key) => delete teamPublishReasons[key]); Object.keys(resourceReasons).forEach((key) => delete resourceReasons[key]); Object.keys(adminRevokeReasons).forEach((key) => delete adminRevokeReasons[key]); search.value = ''; organizationSearch.value = ''; playerSearch.value = ''; goodFaithSubmitReason.value = ''; goodFaithReviewReason.value = ''; statusFilter.value = 'Todos'; resetPlayerDraft(); Object.assign(venueDraft, { name: '', city: '' }); Object.assign(sponsorDraft, { name: '', city: '' }); Object.assign(createDraft, { name: '', administratorName: '', username: '' }); Object.assign(tournamentDraft, { name: '', editionName: '', categoryName: '', timezone: 'America/Asuncion', preset: 'F5', teamLimit: null, rules: suggestedRules(), paymentRates:{yellowGuaranies:0,redGuaranies:0,customCardRates:{}} }); quickCardOpen.value=false; Object.assign(quickCard,{name:'',color:'#2278C7',suspensionMatches:0,amountGuaranies:0}); Object.assign(categoryDraft, { editionName: '', categoryName: '', preset: 'F5', teamLimit: null, rules: suggestedRules() }); Object.assign(teamDraft, { name: '', color: '#165D46', categoryId: '' }); Object.assign(teamAdminDraft, { entryId: '', name: '', username: '' }); Object.assign(commissionDraft, { entryId: '', name: '', role: '', validFrom: '', validUntil: '' }); Object.assign(staffDraft, { entryId: '', name: '', role: '' }); wizardStep.value = 1; categoryStep.value = 1; tournamentRequestId.value = crypto.randomUUID(); categoryRequestId.value = crypto.randomUUID(); teamRequestId.value = crypto.randomUUID(); }
+function clearPrivate() { organizerReads.invalidate(); workspaceTeams.value=[]; workspaceMatchdays.value=[]; workspaceScores.value={}; workspaceOfficialMatchIds.value=[]; lastTournamentId.value = ''; queuedCapture.value=[]; queueError.value=''; reviewTasks.value=[]; reviewHasMore.value=false; disciplineCases.value=[]; disciplineNotices.value=[]; fineCatalog.value=[]; privateStats.value=null; standingAdjustments.value=[]; disciplineServiceHistory.value=[]; selectedDisciplineCaseId.value=''; Object.keys(sessionStorage).filter((key) => key.startsWith('torneos-rule-draft:')).forEach((key) => sessionStorage.removeItem(key)); capture.value = null; pendingCapture.value = null; pendingCaptureUndo.value = null; fixture.value = { phase: null, rounds: [], groups: [], bracket: [] }; fixtureTie.value=null; referees.value=[]; newRefereeName.value=''; refereeArchiveReason.value=''; matchdays.value = []; publicFixture.value = []; publicBrackets.value = []; scheduleMatchId.value = ''; schedulePreview.value = null; matchdayPreview.value = null; draftMatches.value = []; lineupVersions.value = []; lineupSearch.value = ''; importRows.value = []; importToken.value = ''; importBatches.value = []; organizationEpoch++; members.value = []; organizations.value = []; organization.value = null; tournaments.value = []; tournamentResources.value = { venues: [], sponsors: [] }; teams.value = []; allOriginTeams.value = []; players.value = []; goodFaithVersions.value = []; playerEvidence.value = { documents: [], movements: [], restrictions: [] }; eligibility.value = null; categories.value = []; activity.value = []; generatedLink.value = null; createResult.value = null; teamLink.value = null; Object.keys(accessDrafts).forEach((key) => delete accessDrafts[key]); Object.keys(brandDrafts).forEach((key) => delete brandDrafts[key]); Object.keys(ruleDrafts).forEach((key) => delete ruleDrafts[key]); Object.keys(teamConfirmReasons).forEach((key) => delete teamConfirmReasons[key]); Object.keys(teamPublishReasons).forEach((key) => delete teamPublishReasons[key]); Object.keys(resourceReasons).forEach((key) => delete resourceReasons[key]); Object.keys(adminRevokeReasons).forEach((key) => delete adminRevokeReasons[key]); search.value = ''; organizationSearch.value = ''; playerSearch.value = ''; goodFaithSubmitReason.value = ''; goodFaithReviewReason.value = ''; statusFilter.value = 'Todos'; resetPlayerDraft(); Object.assign(venueDraft, { name: '', city: '' }); Object.assign(sponsorDraft, { name: '', city: '' }); Object.assign(createDraft, { name: '', administratorName: '', username: '' }); Object.assign(tournamentDraft, { name: '', editionName: '', categoryName: '', timezone: 'America/Asuncion', preset: 'F5', teamLimit: null, rules: suggestedRules(), paymentRates:{yellowGuaranies:0,redGuaranies:0,customCardRates:{}} }); quickCardOpen.value=false; Object.assign(quickCard,{name:'',color:'#2278C7',suspensionMatches:0,amountGuaranies:0}); Object.assign(categoryDraft, { editionName: '', categoryName: '', preset: 'F5', teamLimit: null, rules: suggestedRules() }); Object.assign(teamDraft, { name: '', color: '#165D46', categoryId: '' }); Object.assign(teamAdminDraft, { entryId: '', name: '', username: '' }); Object.assign(commissionDraft, { entryId: '', name: '', role: '', validFrom: '', validUntil: '' }); Object.assign(staffDraft, { entryId: '', name: '', role: '' }); wizardStep.value = 1; categoryStep.value = 1; tournamentRequestId.value = crypto.randomUUID(); categoryRequestId.value = crypto.randomUUID(); teamRequestId.value = crypto.randomUUID(); }
 async function api<T = any>(path: string, method = 'GET', body?: unknown): Promise<T> {
+  const anonymous = path.startsWith('/public/');
+  const csrfToken = user.value?.csrfToken;
+  const mutates = method !== 'GET' && method !== 'HEAD' && !anonymous;
+  if (mutates) organizerReads.invalidate();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 12000);
   try {
     const headers: Record<string, string> = {};
     if (body && !(body instanceof FormData)) headers['Content-Type'] = 'application/json';
-    if (user.value && !['GET', 'HEAD'].includes(method)) headers['X-CSRF-Token'] = user.value.csrfToken;
-    const response = await fetch(`/api/v1${path}`, { method, credentials: 'same-origin', headers, signal: controller.signal, body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined });
+    if (!anonymous && csrfToken && !['GET', 'HEAD'].includes(method)) headers['X-CSRF-Token'] = csrfToken;
+    const response = await fetch(`/api/v1${path}`, { method, credentials: anonymous ? 'omit' : 'same-origin', headers, signal: controller.signal, body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined });
     if (response.status === 204) return undefined as T;
     const result = await response.json();
     if (!response.ok) {
-      if (response.status === 401 && !publicRoute.value && user.value) { clearPrivate(); user.value = null; sessionNotice.value = 'Tu sesión terminó o el acceso cambió. Los eventos pendientes siguen en este dispositivo; ingresá de nuevo con la misma cuenta para revisarlos.'; go('acceso'); }
+      if (response.status === 401 && !publicRoute.value && csrfToken && csrfToken === user.value?.csrfToken) { clearPrivate(); user.value = null; sessionNotice.value = 'Tu sesión terminó o el acceso cambió. Los eventos pendientes siguen en este dispositivo; ingresá de nuevo con la misma cuenta para revisarlos.'; go('acceso'); }
       throw new RequestError(result.message || 'No se pudo completar la operación.', result.code, response.status);
     }
     return result;
   } catch (failure) {
     if (failure instanceof RequestError) throw failure;
     throw new RequestError('No hay respuesta del servidor. Tus datos siguen en el formulario; podés volver a intentar.', 'NETWORK_ERROR');
-  } finally { clearTimeout(timer); }
+  } finally {
+    clearTimeout(timer);
+    if (mutates) organizerReads.invalidate();
+  }
+}
+function publicCatalogRead<T>(group: string,path: string) {
+  return publicCatalogReads.read<T>(group,path,()=>api<T>(path));
+}
+function panelRead<T>(group: string,path: string,revision='') {
+  const scope=user.value;
+  if(!scope?.organizationId)return api<T>(path);
+  return organizerReads.read<T>(group,`${scope.csrfToken}:${scope.organizationId}:${path}:${revision}`,()=>api<T>(path));
+}
+async function refreshWorkspace() {
+  organizerReads.invalidate('schedule','payments');
+  const epoch=routeEpoch;
+  try{await loadTournamentSection();}
+  catch(cause){if(epoch===routeEpoch)error.value=cause instanceof Error?cause.message:'No se pudo actualizar el torneo.';}
+}
+async function refreshPaymentRules() {
+  organizerReads.invalidate('catalog','schedule');
+  const epoch=routeEpoch;
+  try{await loadTournaments(true);}
+  catch(cause){if(epoch===routeEpoch)error.value=cause instanceof Error?cause.message:'No se pudo actualizar el reglamento.';}
 }
 async function perform(action: () => Promise<void>) {
   if (busy.value) return;
@@ -429,9 +458,13 @@ async function loadOrganization(id: string) {
   organization.value = result;
   if (!brandDrafts[id]) brandDrafts[id] = { name: result.name, accent: result.accent, version: result.version };
 }
-async function loadTournaments() {
-  if (!user.value?.organizationId) return;
-  tournaments.value = await api<TournamentSummary[]>(`/organizations/${user.value.organizationId}/tournaments`);
+async function loadTournaments(reuse = false) {
+  const scope=user.value;
+  if (!scope?.organizationId) return;
+  if(!reuse)organizerReads.invalidate('catalog');
+  const rows=await panelRead<TournamentSummary[]>('catalog',`/organizations/${scope.organizationId}/tournaments`);
+  if(user.value?.organizationId!==scope.organizationId||user.value?.csrfToken!==scope.csrfToken)return;
+  tournaments.value = rows;
   if (selectedTournament.value) {
     lastTournamentId.value = selectedTournament.value.id;
     sessionStorage.setItem(`tournament-context:${user.value.organizationId}`, selectedTournament.value.id);
@@ -447,14 +480,15 @@ async function loadTournaments() {
 async function loadTournamentResources(tournamentId: string) {
   if (!user.value?.organizationId) return;
   const organizationId = user.value.organizationId;
-  const result = await api<TournamentResources>(`/organizations/${organizationId}/tournaments/${tournamentId}/resources`);
+  const result = await panelRead<TournamentResources>('venues',`/organizations/${organizationId}/tournaments/${tournamentId}/resources`);
   if (user.value?.organizationId === organizationId && selectedTournament.value?.id === tournamentId) tournamentResources.value = result;
 }
-async function loadTeams(includeCategories = true) {
+async function loadTeams() {
   if (!user.value?.organizationId) return;
-  const organizationId=user.value.organizationId;
-  const [teamRows,categoryRows]=await Promise.all([api<TeamSummary[]>(`/organizations/${organizationId}/teams`),includeCategories&&canManageTournaments()?api<typeof categories.value>(`/organizations/${organizationId}/categories`):Promise.resolve(null)]);
-  if (user.value?.organizationId !== organizationId) return;
+  const {organizationId,csrfToken}=user.value;
+  const path = `/organizations/${organizationId}/teams`;
+  const [teamRows,categoryRows]=await Promise.all([api<TeamSummary[]>(path),canManageTournaments()?api<typeof categories.value>(`/organizations/${organizationId}/categories`):Promise.resolve(null)]);
+  if (user.value?.organizationId !== organizationId || user.value.csrfToken!==csrfToken) return;
   teams.value=teamRows;
   if(categoryRows)categories.value=categoryRows;
   if (parts.value[0] === 'nuevo-equipo' && scopedCategories.value.length === 1 && !teamDraft.categoryId) teamDraft.categoryId = scopedCategories.value[0].id;
@@ -517,44 +551,56 @@ async function loadMatchdays(editionId: string) {
   matchdays.value = await api<MatchdaySummary[]>(`/organizations/${user.value.organizationId}/editions/${editionId}/matchdays`);
 }
 async function loadTournamentSection() {
-  const organizationId = user.value?.organizationId;
+  const scope=user.value;
+  const organizationId = scope?.organizationId;
   const tournament = selectedTournament.value;
   if (!organizationId || !tournament) return;
   const requestEpoch=routeEpoch;
   const categories = tournamentCategories.value;
   const section=tournamentSection.value;
-  const active = () => requestEpoch===routeEpoch && user.value?.organizationId===organizationId && selectedTournament.value?.id===tournament.id;
-  const needsBlueprint=['fixture','partidos','estadisticas'].includes(section);
+  const active = () => requestEpoch===routeEpoch && user.value?.organizationId===organizationId && user.value.csrfToken===scope?.csrfToken && selectedTournament.value?.id===tournament.id;
+  const dayTarget=parts.value[3];
+  const editing=section==='fixture' && !!dayTarget && canManageTournaments();
+  const needsBlueprint=!editing&&['fixture','partidos','estadisticas'].includes(section);
+  const needsTeams=['equipos','pagos','estadisticas','fixture','partidos'].includes(section)&&!(editing&&dayTarget==='new');
+  async function loadWorkspaceTeams(){
+    const entries=await panelRead<TournamentEntry[]>('teams',`/organizations/${organizationId}/teams?torneo=${tournament!.id}`);
+    if(active())workspaceTeams.value=entries;
+  }
   await Promise.all([needsBlueprint ? (async()=>{
     const categoryId = tournament.category_id;
     if (workspaceBlueprint.value.categoryId !== categoryId) {workspaceBlueprint.value = { blueprint:null, slots:[], games:[] };workspaceCompetition.value=null;}
-    const blueprint=await api<PositionBlueprintView>(`/organizations/${organizationId}/categories/${categoryId}/fixture/blueprint`);
-    const competition=blueprint.blueprint?await api<PositionCompetitionView>(`/organizations/${organizationId}/categories/${categoryId}/fixture/blueprint/competition${section==='estadisticas'?'':'?resumen=1'}`):null;
-    if(requestEpoch!==routeEpoch||selectedTournament.value?.category_id!==categoryId)return;
+    const blueprint=await panelRead<PositionBlueprintView>('schedule',`/organizations/${organizationId}/categories/${categoryId}/fixture/blueprint`);
+    const competition=blueprint.blueprint?await panelRead<PositionCompetitionView>('schedule',`/organizations/${organizationId}/categories/${categoryId}/fixture/blueprint/competition${section==='estadisticas'?'':'?resumen=1'}`):null;
+    if(!active()||selectedTournament.value?.category_id!==categoryId)return;
     workspaceBlueprint.value={...blueprint,categoryId};workspaceCompetition.value=competition;
-  })():Promise.resolve(),['equipos','pagos','estadisticas','fixture','partidos'].includes(section)?loadTeams(false):Promise.resolve()]);
+  })():Promise.resolve(),needsTeams?loadWorkspaceTeams():Promise.resolve()]);
   if(!active())return;
-  if (needsBlueprint && workspaceBlueprint.value.blueprint && !(section==='fixture'&&parts.value[3])) return;
+  if (needsBlueprint && workspaceBlueprint.value.blueprint) return;
   if (section === 'multas' && canManageTournaments()) {
     const results = await Promise.all(categories.map(async category => [category.category_id, await api<DisciplineCase[]>(`/organizations/${organizationId}/categories/${category.category_id}/discipline/cases`)] as const));
     if (active()) workspaceCases.value = Object.fromEntries(results);
   }
-  if (needsBlueprint) {
+  if (needsBlueprint || editing) {
     const editionIds = [...new Set(categories.map(category => category.edition_id))];
-    const [days,brackets,stats,published]=await Promise.all([
-      section==='estadisticas'?Promise.resolve(null):Promise.all(editionIds.map(editionId => api<MatchdaySummary[]>(`/organizations/${organizationId}/editions/${editionId}/matchdays`))),
-      Promise.all(categories.map(async category=>[category.category_id,await api<FixtureOverview>(`/organizations/${organizationId}/categories/${category.category_id}/fixture`).catch(cause=>{if(cause instanceof RequestError&&[404,409].includes(cause.status))return{phase:null,rounds:[],groups:[],bracket:[]};throw cause;})] as const)),
-      section==='estadisticas'&&canManageTournaments()?Promise.all(categories.map(async category=>[category.category_id,await api<PrivateStats>(`/organizations/${organizationId}/categories/${category.category_id}/statistics`).catch(cause=>{if(cause instanceof RequestError&&[404,409].includes(cause.status))return{officialMatches:0,entries:[],players:[],defense:[],tables:[]};throw cause;})] as const)):Promise.resolve(null),
-      ['fixture','partidos'].includes(section)?api<PublicFixtureDay[]>(`/public/organizations/${organizationId}/fixture?torneo=${tournament.id}&resumen=1`):Promise.resolve(null),
+    const dayQuery=editing?(dayTarget==='new'?'vista=fechas':`vista=editar&fecha=${dayTarget}`):'vista=lista';
+    const readDays=()=>Promise.all(editionIds.map(editionId => panelRead<MatchdaySummary[]>('schedule',`/organizations/${organizationId}/editions/${editionId}/matchdays?${dayQuery}`)));
+    const [sectionDays,brackets,stats]=await Promise.all([
+      section==='estadisticas'?Promise.resolve(null):readDays(),
+      editing?Promise.resolve(null):Promise.all(categories.map(async category=>[category.category_id,await panelRead<FixtureOverview>('schedule',`/organizations/${organizationId}/categories/${category.category_id}/fixture`).catch(cause=>{if(cause instanceof RequestError&&[404,409].includes(cause.status))return{phase:null,rounds:[],groups:[],bracket:[]};throw cause;})] as const)),
+      section==='estadisticas'&&canManageTournaments()?Promise.all(categories.map(async category=>[category.category_id,await panelRead<PrivateStats>('schedule',`/organizations/${organizationId}/categories/${category.category_id}/statistics`).catch(cause=>{if(cause instanceof RequestError&&[404,409].includes(cause.status))return{officialMatches:0,entries:[],players:[],defense:[],tables:[]};throw cause;})] as const)):Promise.resolve(null),
     ]);
     if(!active())return;
-    if(days)workspaceMatchdays.value=days.flat();
-    workspaceBrackets.value=Object.fromEntries(brackets);
-    if(stats)workspaceStats.value=Object.fromEntries(stats);
-    if (published) {
-      workspaceOfficialMatchIds.value = published.flatMap(day => day.matches.filter(match => match.result?.status === 'official').map(match => match.id));
-      workspaceScores.value=Object.fromEntries(published.flatMap(day=>day.matches.filter(match=>match.result?.status==='official').map(match=>[match.id,match.result!.score])));
+    const days=sectionDays??(brackets?.some(([,overview])=>overview.bracket.length)?await readDays():null);
+    if(!active())return;
+    if(days){
+      workspaceMatchdays.value=days.flat();
+      const official=workspaceMatchdays.value.flatMap(day=>day.matches.filter(match=>match.official_score));
+      workspaceOfficialMatchIds.value=official.map(match=>match.id);
+      workspaceScores.value=Object.fromEntries(official.map(match=>[match.id,match.official_score!]));
     }
+    if(brackets)workspaceBrackets.value=Object.fromEntries(brackets);
+    if(stats)workspaceStats.value=Object.fromEntries(stats);
   }
 }
 async function loadReferees(){if(user.value?.organizationId)referees.value=await api(`/organizations/${user.value.organizationId}/fixture/referees`);}
@@ -646,7 +692,7 @@ async function advanceFixture() {
 }
 async function loadCapture() {
   capture.value = null; capturePreview.value=null; captureStartBlocked.value=false; pendingCapture.value = null; pendingCaptureUndo.value = null; lastCaptureTap = { key: '', at: 0 }; quickCapturePlayerOpen.value=false;
-  queuedCapture.value=[];queueError.value='';captureHistory.value=[];
+  queuedCapture.value=[];queueError.value='';captureHistory.value=[];captureHistoryOpen.value=false;capturePeopleOpen.value=false;capturePeopleError.value='';operators.value=[];matchAssignments.value=[];
   privateMatchStream?.close();privateMatchStream=null;
   const matchId=parts.value[2];
   if (!user.value?.organizationId || !matchId) return;
@@ -658,15 +704,13 @@ async function loadCapture() {
     if(day&&match&&!match.acta_status)return;
   }
   queuedCapture.value=await queuedMatchEvents(user.value.id,user.value.organizationId,matchId);queueError.value='';
-  await loadMatchAssignments();
+  if(!canManageTournaments())await loadMatchAssignments();
   const assigned=matchAssignments.value.find(item=>item.match_id===matchId);
   if(!canManageTournaments()&&assigned?.day_status!=='published'){captureStartBlocked.value=true;return;}
   if(!canManageTournaments()&&assigned&&!assigned.acta_status)return;
-  if (canManageTournaments()) operators.value=await api<OperatorSummary[]>(`/organizations/${user.value.organizationId}/operators`);
   try {
     capture.value = await api<MatchCaptureView>(`/organizations/${user.value.organizationId}/matches/${matchId}/record`);
     captureTeamId.value = capture.value.home.entryId;
-    await loadCaptureHistory();
     watchCaptureChanges();
   } catch (cause) {
     if (!(cause instanceof RequestError) || cause.code !== 'RECORD_NOT_FOUND') throw cause;
@@ -674,7 +718,14 @@ async function loadCapture() {
 }
 function watchCaptureChanges(){if(!capture.value||!user.value?.organizationId)return;privateMatchStream?.close();const organizationId=user.value.organizationId,matchId=capture.value.matchId;privateMatchStream=new EventSource(`/api/v1/organizations/${organizationId}/matches/${matchId}/record/stream`);privateMatchStream.addEventListener('changed',()=>{void api<MatchCaptureView>(`/organizations/${organizationId}/matches/${matchId}/record`).then(result=>{if(capture.value?.matchId===matchId){capture.value=result;void loadCaptureHistory();}}).catch(cause=>{if(cause instanceof RequestError && cause.status===403){privateMatchStream?.close();error.value='Se revocó tu asignación para este partido.';}});});}
 async function loadMatchAssignments() {if(user.value?.organizationId) matchAssignments.value=await api<MatchAssignment[]>(`/organizations/${user.value.organizationId}/match-assignments`);}
-async function loadCaptureHistory(){if(user.value?.organizationId && capture.value) try {captureHistory.value=await api(`/organizations/${user.value.organizationId}/matches/${capture.value.matchId}/acta/history`);}catch{captureHistory.value=[];}}
+async function loadCaptureHistory(){
+  if(!captureHistoryOpen.value||!user.value?.organizationId||!capture.value)return;
+  const {matchId,revision,status}=capture.value,epoch=routeEpoch;
+  try{
+    const history=await panelRead<typeof captureHistory.value>('history',`/organizations/${user.value.organizationId}/matches/${matchId}/acta/history`,`${revision}:${status}`);
+    if(epoch===routeEpoch&&revision===capture.value?.revision&&status===capture.value.status)captureHistory.value=history;
+  }catch{if(epoch===routeEpoch)captureHistory.value=[];}
+}
 async function loadTeamActa(){teamActa.value=null;if(user.value?.organizationId&&parts.value[1]&&parts.value[2])teamActa.value=await api(`/organizations/${user.value.organizationId}/matches/${parts.value[2]}/acta/for-team/${parts.value[1]}`);}
 async function loadDiscipline(){
   if(!user.value?.organizationId||!selectedEntry.value)return;
@@ -702,6 +753,24 @@ async function resolveDisciplineAppeal(decision:'confirm'|'revoke'){if(!user.val
 async function readDisciplineNotice(id:string){if(!user.value?.organizationId||!selectedEntry.value)return;await perform(async()=>{await api(`/organizations/${user.value!.organizationId}/entries/${selectedEntry.value!.entry_id}/discipline/notices/${id}/read`,'POST',{});await loadDiscipline();});}
 async function setPlayerPublicName(player:{registrationId:string;publicName:boolean}){if(!user.value?.organizationId)return;await perform(async()=>{await api(`/organizations/${user.value!.organizationId}/registrations/${player.registrationId}/publication`,'POST',{visible:!player.publicName,reason:publicationReasons[player.registrationId]});publicationReasons[player.registrationId]='';await loadDiscipline();notify(player.publicName?'Nombre retirado del portal.':'Nombre autorizado para goleadores públicos.');});}
 async function signTeamActa(){if(!teamActa.value?.submissionId||!user.value?.organizationId)return;await perform(async()=>{await api(`/organizations/${user.value!.organizationId}/matches/${parts.value[2]}/acta/sign`,'POST',{entryId:parts.value[1],submissionId:teamActa.value!.submissionId});await loadTeamActa();notify('Conformidad guardada.');});}
+const captureHistoryOpen=ref(false), capturePeopleOpen=ref(false), capturePeopleError=ref('');
+function openCaptureHistory(event:Event){
+  captureHistoryOpen.value=(event.currentTarget as HTMLDetailsElement).open;
+  void loadCaptureHistory();
+}
+async function openCapturePeople(event:Event){
+  capturePeopleOpen.value=(event.currentTarget as HTMLDetailsElement).open;
+  if(!capturePeopleOpen.value||!user.value?.organizationId)return;
+  const organizationId=user.value.organizationId,epoch=routeEpoch;
+  capturePeopleError.value='';
+  try{
+    const [assignments,people]=await Promise.all([
+      panelRead<MatchAssignment[]>('people',`/organizations/${organizationId}/match-assignments`),
+      panelRead<OperatorSummary[]>('people',`/organizations/${organizationId}/operators`),
+    ]);
+    if(epoch===routeEpoch){matchAssignments.value=assignments;operators.value=people;}
+  }catch(cause){if(epoch===routeEpoch)capturePeopleError.value=cause instanceof Error?cause.message:'No se pudieron cargar las asignaciones.';}
+}
 const canCaptureMatch=computed(()=>canManageTournaments() || matchAssignments.value.some(item=>item.match_id===parts.value[2] && item.duty==='capture'));
 const canReviewMatch=computed(()=>canManageTournaments() || matchAssignments.value.some(item=>item.match_id===parts.value[2] && item.duty==='review'));
 async function createOperator(){if(!user.value?.organizationId)return;await perform(async()=>{const result=await api<{membershipId:string;invitation:LinkResult|null}>(`/organizations/${user.value!.organizationId}/operators`,'POST',operatorDraft);operatorInvitation.value=result.invitation;operators.value=await api(`/organizations/${user.value!.organizationId}/operators`);notify('Planillero creado. Entregá la invitación fuera del sistema.');});}
@@ -720,8 +789,7 @@ async function startCapture() {
     }
     capture.value = await api<MatchCaptureView>(`/organizations/${user.value!.organizationId}/matches/${parts.value[2]}/record/start`, 'POST', {});
     captureTeamId.value = capture.value.home.entryId;
-    await loadMatchAssignments();
-    if(canManageTournaments())operators.value=await api<OperatorSummary[]>(`/organizations/${user.value!.organizationId}/operators`);
+
     watchCaptureChanges();
     notify('Partido listo para cargar.');
   });
@@ -1312,6 +1380,7 @@ async function chooseOrganization(id: string) {
   await perform(async () => { importRows.value = []; importToken.value = ''; importBatches.value = []; reviewTasks.value=[]; reviewHasMore.value=false; organizationEpoch++; organization.value = null; tournaments.value = []; tournamentResources.value = { venues: [], sponsors: [] }; teams.value = []; allOriginTeams.value = []; players.value = []; goodFaithVersions.value = []; categories.value = []; teamLink.value = null; resetPlayerDraft(); Object.keys(ruleDrafts).forEach((key) => delete ruleDrafts[key]); Object.keys(teamConfirmReasons).forEach((key) => delete teamConfirmReasons[key]); Object.keys(teamPublishReasons).forEach((key) => delete teamPublishReasons[key]); Object.assign(teamAdminDraft, { entryId: '', name: '', username: '' }); Object.assign(commissionDraft, { entryId: '', name: '', role: '', validFrom: '', validUntil: '' }); Object.assign(staffDraft, { entryId: '', name: '', role: '' }); user.value = await api<CurrentUser>('/auth/context', 'POST', { organizationId: id }); await loadOrganization(id); go(user.value.memberships.some(item=>item.organization_id===id&&item.role==='tournament_admin'&&item.status==='active')?'torneos':user.value.memberships.some(item=>item.organization_id===id&&item.role==='operator'&&item.status==='active')?'mis-partidos':'equipos'); });
 }
 async function loadView(force = false) {
+  if (force) organizerReads.invalidate();
   const epoch = ++routeEpoch;
   const viewParts = [...parts.value];
   error.value = ''; loading.value = true; loadingVisual.value=false;
@@ -1323,7 +1392,7 @@ async function loadView(force = false) {
     if(parts.value[0]!=='partido'){privateMatchStream?.close();privateMatchStream=null;}
     if (parts.value[0] === 'acceso') return;
     if (parts.value[0] === 'portal') {
-      const selected=await api<{kind:'organization'|'tournament';organization_id:string;tournament_id?:string;tournament_count?:number;single_tournament_id?:string|null;single_tournament_slug?:string|null}>(`/public/resolve/${encodeURIComponent(viewParts[1]||'')}`);
+      const selected=await publicCatalogRead<{kind:'organization'|'tournament';organization_id:string;tournament_id?:string;tournament_count?:number;single_tournament_id?:string|null;single_tournament_slug?:string|null}>('resolve',`/public/resolve/${encodeURIComponent(viewParts[1]||'')}`);
       if(epoch!==routeEpoch)return;
       const tournamentId=selected.kind==='tournament'?selected.tournament_id||'':viewParts[2]||(selected.tournament_count===1?selected.single_tournament_id||'':'');
       if(selected.kind==='organization'&&!viewParts[2]&&tournamentId&&selected.single_tournament_slug)history.replaceState(null,'',`/${selected.single_tournament_slug}`);
@@ -1334,7 +1403,7 @@ async function loadView(force = false) {
     }
     if (parts.value[0] === 'publico') {
       publicOrganization.value = null; publicTournaments.value = []; publicTeams.value = []; publicFixture.value = []; publicBrackets.value = []; publicDraws.value=[];publicAnnouncedFixtures.value={};
-      if(!viewParts[1]){publicOrganizations.value=[];const organizations=await api<PublicOrganizationItem[]>('/public/organizations');if(epoch!==routeEpoch)return;publicOrganizations.value=organizations;setPublicPageMeta('A la cancha · Torneos','Encontrá organizaciones, torneos, partidos, resultados y estadísticas.',`${location.origin}/`);recordFanView();return;}
+      if(!viewParts[1]){publicOrganizations.value=[];const organizations=await publicCatalogRead<PublicOrganizationItem[]>('catalog','/public/organizations');if(epoch!==routeEpoch)return;publicOrganizations.value=organizations;setPublicPageMeta('A la cancha · Torneos','Encontrá organizaciones, torneos, partidos, resultados y estadísticas.',`${location.origin}/`);recordFanView();return;}
       const organizationId=viewParts[1];
       const tournamentId=viewParts[2];
       const fixturePath = `/public/organizations/${organizationId}/fixture?resumen=1${tournamentId ? `&torneo=${tournamentId}` : ''}`;
@@ -1346,7 +1415,12 @@ async function loadView(force = false) {
         ? api<PublicFixtureDay[]>(fixturePath).catch(() => null) : null;
       const announcedRequests = new Map((canUseHints ? mount?.publicAnnouncedCategories?.split(',') || [] : []).map(id =>
         [id, api<AnnouncedFixture>(announcedPath(id)).catch(() => null)]));
-      const [result,draws] = await Promise.all([api<{ organization: PublicOrganization; tournaments: PublicPortalTournament[]; teams: typeof publicTeams.value }>(`/public/organizations/${organizationId}/tournaments?portal=1&resumen=1`),api<PublicDraw[]>(`/public/organizations/${organizationId}/draws`)]);
+      const drawPath = `/public/organizations/${organizationId}/draws`;
+      const drawGroup = `draws/${organizationId}`;
+      const [result,draws] = await Promise.all([
+        publicCatalogRead<{ organization: PublicOrganization; tournaments: PublicPortalTournament[]; teams: typeof publicTeams.value }>('catalog',`/public/organizations/${organizationId}/tournaments?portal=1&resumen=1`),
+        publicCatalogRead<PublicDraw[]>(drawGroup,drawPath),
+      ]);
       if(epoch!==routeEpoch)return;
       publicDraws.value=draws;
       publicCatalog.value=[...new Map([...result.tournaments.map(item=>[item.id,{id:item.id,name:item.name,public_slug:item.public_slug||null,organization_id:organizationId,organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const),...draws.map(item=>[item.tournament_id,{id:item.tournament_id,name:item.tournament_name,public_slug:item.public_slug||null,organization_id:organizationId,organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const)].map(item=>[item[0],item[1]])).values()];
@@ -1390,8 +1464,9 @@ async function loadView(force = false) {
         } catch { /* Una desconexión posterior volverá a pedir el calendario. */ }
         finally { updatingResults = false; }
       }
-      const drawOrganizationId=organizationId;
-      const refreshDraws=()=>{void api<PublicDraw[]>(`/public/organizations/${drawOrganizationId}/draws`).then(latest=>{
+      const refreshDraws=()=>{
+        publicCatalogReads.invalidate(drawGroup);
+        void publicCatalogRead<PublicDraw[]>(drawGroup,drawPath).then(latest=>{
         if(!currentPublicView())return;
         if(latest.some(item=>(publicDraws.value.find(current=>current.category_id===item.category_id)?.revision||0)>item.revision))return;
         publicDraws.value=latest;
@@ -1447,7 +1522,7 @@ async function loadView(force = false) {
             } else {
               try {
                 const revisions = JSON.parse(event.data).draws as {categoryId:string;revision:number}[] | undefined;
-                if (revisions?.some(row => (publicDraws.value.find(item=>item.category_id===row.categoryId)?.revision||0)<row.revision)) refreshDraws();
+                if (revisions && (revisions.length!==publicDraws.value.length || revisions.some(row => (publicDraws.value.find(item=>item.category_id===row.categoryId)?.revision||0)<row.revision))) refreshDraws();
               } catch { /* Las publicaciones nuevas llegan por el evento draw. */ }
             }
             streamReady=true;streamInterrupted=false;
@@ -1499,12 +1574,13 @@ async function loadView(force = false) {
       if (user.value.organizationId && parts.value[0] === 'bandeja') await loadReviewTasks(true);
       if (user.value.organizationId && parts.value[0]==='mis-partidos') await loadMatchAssignments();
       if (user.value.organizationId && ['torneos', 'nuevo-torneo', 'torneo', 'nueva-categoria', 'categoria', 'fixture', 'programar', 'partido','flyers','flyer-settings','equipos','nuevo-equipo','equipo','cuenta'].includes(parts.value[0])) {
-        await loadTournaments();
+        await loadTournaments(true);
+        if(epoch!==routeEpoch)return;
         if(parts.value[0]==='categoria'&&selectedTournament.value){const categoryId=selectedTournament.value.category_id;workspaceBlueprint.value={...(await api<PositionBlueprintView>(`/organizations/${user.value.organizationId}/categories/${categoryId}/fixture/blueprint`)),categoryId};}
         if (parts.value[0] === 'torneo' && selectedTournament.value) {
           await Promise.all([
             loadTournamentSection(),
-            ['ajustes','fixture'].includes(tournamentSection.value) ? loadTournamentResources(selectedTournament.value.id) : null,
+            tournamentSection.value==='ajustes' || (tournamentSection.value==='fixture' && parts.value[3] && parts.value[3]!=='new') ? loadTournamentResources(selectedTournament.value.id) : null,
           ]);
         }
         if(parts.value[0]==='flyers'&&selectedTournament.value){
@@ -1527,7 +1603,13 @@ async function loadView(force = false) {
         }
         if (['fixture','programar','partido'].includes(parts.value[0]) && selectedTournament.value) {
           if(parts.value[0]==='partido'){
-            if(canManageTournaments())await loadMatchdays(selectedTournament.value.edition_id);
+            if(canManageTournaments()){
+              const {organizationId}=user.value;
+              const editionId=selectedTournament.value.edition_id;
+              const days=await panelRead<MatchdaySummary[]>('schedule',`/organizations/${organizationId}/editions/${editionId}/matchdays?vista=lista`);
+              if(epoch!==routeEpoch)return;
+              matchdays.value=days;
+            }
           }else await Promise.all([loadFixture(selectedTournament.value.category_id), loadMatchdays(selectedTournament.value.edition_id), loadTournamentResources(selectedTournament.value.id),...(parts.value[0]==='programar'?[loadReferees()]:[])]);
           if (parts.value[0] === 'programar') prepareScheduleDraft();
         }
@@ -1809,12 +1891,12 @@ onUnmounted(() => { closePublicResults?.();privateMatchStream?.close();window.re
       <div v-else-if="!user.platformAdmin && ['torneo','categoria'].includes(parts[0]) && selectedTournament" class="form-page">
         <h1 v-if="parts[0] === 'torneo'" class="sr-only" tabindex="-1">{{ selectedTournament.name }}</h1><div v-else class="heading"><h1 tabindex="-1">{{ selectedTournament.category_name }}</h1><span class="badge" :class="selectedTournament.rule_status === 'published' ? 'active' : 'pending'">{{ selectedTournament.rule_status === 'published' ? 'Oficial' : 'Borrador' }}</span></div>
         <div v-if="parts[0] === 'torneo' && loading && ['fixture','partidos','estadisticas'].includes(tournamentSection)" class="loading" role="status">Cargando torneo…</div>
-        <PaymentsWorkspace v-else-if="parts[0] === 'torneo' && tournamentSection === 'pagos' && canManageTournaments()" :key="selectedTournament.id" :organization-id="user.organizationId!" :tournament-id="selectedTournament.id" :teams="tournamentEntries" :categories="tournamentCategories" :initial-entry-id="parts[3] === 'tarifas' ? '' : parts[3]" :show-rates="parts[3] === 'tarifas'" :csrf-token="user.csrfToken" @refresh="loadTournaments" />
-        <FixtureDayEditor v-else-if="parts[0] === 'torneo' && tournamentSection === 'fixture' && parts[3] && canManageTournaments()" :tournament="selectedTournament" :categories="tournamentCategories" :entries="tournamentEntries" :days="tournamentDays" :day-id="parts[3]" :focus-match-id="parts[4]" :venues="tournamentResources.venues" :official-match-ids="workspaceOfficialMatchIds" :organization-id="user.organizationId!" :csrf-token="user.csrfToken" @refresh="loadTournamentSection" />
-        <PositionBlueprint v-else-if="parts[0] === 'torneo' && tournamentSection === 'fixture' && workspaceBlueprint.blueprint && workspaceBlueprint.categoryId === selectedTournament.category_id" :view="workspaceBlueprint" :competition="workspaceCompetition" :entries="tournamentEntries" :can-manage="canManageTournaments()" :organization-id="user.organizationId!" :category-id="selectedTournament.category_id" :tournament-id="selectedTournament.id" :csrf-token="user.csrfToken" @refresh="loadTournamentSection" />
+        <PaymentsWorkspace v-else-if="parts[0] === 'torneo' && tournamentSection === 'pagos' && canManageTournaments()" :key="selectedTournament.id" :organization-id="user.organizationId!" :tournament-id="selectedTournament.id" :teams="tournamentEntries" :categories="tournamentCategories" :initial-entry-id="parts[3] === 'tarifas' ? '' : parts[3]" :show-rates="parts[3] === 'tarifas'" :csrf-token="user.csrfToken" @refresh="refreshPaymentRules" />
+        <FixtureDayEditor v-else-if="parts[0] === 'torneo' && tournamentSection === 'fixture' && parts[3] && canManageTournaments()" :tournament="selectedTournament" :categories="tournamentCategories" :entries="tournamentEntries" :days="tournamentDays" :day-id="parts[3]" :focus-match-id="parts[4]" :venues="tournamentResources.venues" :official-match-ids="workspaceOfficialMatchIds" :organization-id="user.organizationId!" :csrf-token="user.csrfToken" @refresh="refreshWorkspace" />
+        <PositionBlueprint v-else-if="parts[0] === 'torneo' && tournamentSection === 'fixture' && workspaceBlueprint.blueprint && workspaceBlueprint.categoryId === selectedTournament.category_id" :view="workspaceBlueprint" :competition="workspaceCompetition" :entries="tournamentEntries" :can-manage="canManageTournaments()" :organization-id="user.organizationId!" :category-id="selectedTournament.category_id" :tournament-id="selectedTournament.id" :csrf-token="user.csrfToken" @refresh="refreshWorkspace" />
         <PositionMatches v-else-if="parts[0] === 'torneo' && tournamentSection === 'partidos' && workspaceBlueprint.blueprint && workspaceBlueprint.categoryId === selectedTournament.category_id" :view="workspaceBlueprint" :competition="workspaceCompetition" :entries="tournamentEntries" :organization-id="user.organizationId!" :category-id="selectedTournament.category_id" :tournament-id="selectedTournament.id" />
         <PositionStatistics v-else-if="parts[0]==='torneo' && tournamentSection==='estadisticas' && workspaceBlueprint.blueprint && workspaceBlueprint.categoryId===selectedTournament.category_id" :view="workspaceBlueprint" :competition="workspaceCompetition" :entries="tournamentEntries" :organization-id="user.organizationId!" :category-id="selectedTournament.category_id" :can-manage="canManageTournaments()" @decide-title-extra="decideTitleExtra" @decide-tiebreak="decidePositionTiebreak" />
-        <TournamentWorkspace v-else-if="parts[0] === 'torneo'" :tournament="selectedTournament" :categories="tournamentCategories" :entries="tournamentEntries" :days="tournamentDays" :official-match-ids="workspaceOfficialMatchIds" :scores="workspaceScores" :cases="workspaceCases" :stats="workspaceStats" :brackets="workspaceBrackets" :position-blueprint="workspaceBlueprint" :position-competition="workspaceCompetition" :section="tournamentSection" :day-id="parts[3]" :can-manage="canManageTournaments()" :organization-id="user.organizationId!" :csrf-token="user.csrfToken" @refresh="loadView(true)" />
+        <TournamentWorkspace v-else-if="parts[0] === 'torneo'" :tournament="selectedTournament" :categories="tournamentCategories" :entries="tournamentEntries" :days="tournamentDays" :official-match-ids="workspaceOfficialMatchIds" :scores="workspaceScores" :cases="workspaceCases" :stats="workspaceStats" :brackets="workspaceBrackets" :position-blueprint="workspaceBlueprint" :position-competition="workspaceCompetition" :section="tournamentSection" :day-id="parts[3]" :can-manage="canManageTournaments()" :organization-id="user.organizationId!" :csrf-token="user.csrfToken" @refresh="refreshWorkspace" />
         <template v-if="parts[0] === 'torneo' && tournamentSection === 'ajustes'">
           <div class="tournament-emblem-editor"><img v-if="selectedTournament.has_emblem" :src="`/api/v1/organizations/${user.organizationId}/tournaments/${selectedTournament.id}/emblem`" :alt="`Emblema de ${selectedTournament.name}`"><Icon v-else name="trophy" /><div><strong>Emblema del torneo</strong><input id="tournament-emblem" class="file-input" type="file" accept="image/png,image/jpeg,image/webp" :disabled="busy" @change="uploadTournamentEmblem($event,selectedTournament.id)"><label for="tournament-emblem" class="team-shield-action"><Icon name="edit" />{{ selectedTournament.has_emblem ? 'Cambiar' : 'Añadir' }}</label></div></div>
           <details class="optional-section"><summary>Sedes</summary>
@@ -1907,8 +1989,8 @@ onUnmounted(() => { closePublicResults?.();privateMatchStream?.close();window.re
           </div>
           <section v-if="matchTab==='players'" id="partido-players-panel" role="tabpanel" aria-labelledby="partido-players-tab" class="match-players"><div v-for="team in [capture.home,capture.away]" :key="team.entryId"><h2><img v-if="team.hasShield" class="team-public-shield" :src="`/api/v1/organizations/${user.organizationId}/teams/${team.teamId}/shield`" :alt="`Escudo de ${team.name}`"><span v-else class="team-dot" :style="{background:team.color}"></span>{{ team.name }}</h2><p v-if="!team.players.length" class="empty-list">Sin jugadores cargados.</p><div v-for="player in team.players" :key="player.registrationId" class="match-player-row"><b>{{ player.shirtNumber ?? '—' }}</b><span>{{ player.name }}</span></div></div></section>
           <div v-if="matchTab==='management'" id="partido-management-panel" role="tabpanel" aria-labelledby="partido-management-tab">
-          <div v-if="canReviewMatch" class="action-grid mt"><button v-if="capture.status==='capturing' || capture.status==='submitted'" type="button" class="btn primary full" :disabled="busy || !!queuedCapture.length" @click="publishCaptureResult">Publicar resultado</button></div><details class="match-more mt"><summary>Revisión e historial</summary><section class="panel pad stack mt"><h2>Acta y revisión</h2><div class="field"><label for="acta-reason">Motivo o constancia</label><textarea id="acta-reason" v-model="actaReason" minlength="3" maxlength="300" placeholder="Ej. Resultado verificado con planilla"></textarea></div><label v-if="capture.status==='submitted' && canReviewMatch" class="row"><input v-model="overrideSignoffs" type="checkbox"> Aprobar sin ambas conformidades, con motivo registrado</label><div class="action-grid"><button v-if="capture.status==='capturing' && canCaptureMatch" type="button" class="btn primary" :disabled="busy || !!queuedCapture.length || actaReason.trim().length<3" @click="actaAction('submit')">Enviar acta</button><button v-if="capture.status==='submitted' && canReviewMatch" type="button" class="btn primary" :disabled="busy || actaReason.trim().length<3" @click="actaAction('approve')">Aprobar resultado</button><button v-if="capture.status==='submitted' && canReviewMatch" type="button" class="btn" :disabled="busy || actaReason.trim().length<3" @click="actaAction('reject')">Devolver</button><button v-if="capture.status==='official' && canReviewMatch" type="button" class="btn" :disabled="busy || actaReason.trim().length<3" @click="actaAction('reopen')">Rectificar acta</button></div><p v-if="capture.status==='submitted'" class="small muted">Los administradores de ambos equipos pueden dejar su conformidad. El revisor puede aprobar de forma excepcional con motivo.</p><div v-for="item in captureHistory" :key="item.id" class="team-person"><div><strong>Versión {{ item.version }} · {{ item.kind }}</strong><p class="small muted">{{ item.reason }} · {{ item.actor }}<template v-if="item.kind==='submitted'"> · {{ item.signoffs }} conformidades</template></p></div></div></section></details>
-        <details v-if="canManageTournaments()" class="match-more mt"><summary>Planilleros y revisores</summary><section class="panel pad stack mt"><h2>Planilleros y revisores</h2><div v-for="item in matchAssignments.filter(row=>row.match_id===parts[2])" :key="item.id" class="team-person"><div><strong>{{ item.name }} · {{ item.duty==='capture'?'Captura':'Revisión' }}</strong><p class="small muted">Asignación activa</p></div><div class="field"><label :for="`revoke-${item.id}`">Motivo de revocación</label><input :id="`revoke-${item.id}`" v-model="assignmentReasons[item.id]" minlength="3" maxlength="300"><button type="button" class="btn" :disabled="busy || !assignmentReasons[item.id] || assignmentReasons[item.id].trim().length<3" @click="revokeMatchAssignment(item.id)">Revocar</button></div></div><div class="field"><label for="assignment-person">Persona activa</label><select id="assignment-person" v-model="assignmentDraft.membershipId"><option value="">Elegí una persona</option><option v-for="item in operators.filter(row=>row.status==='active')" :key="item.id" :value="item.id">{{ item.name }}</option></select></div><div class="choices" role="group" aria-label="Función"><button type="button" class="choice" :aria-pressed="assignmentDraft.duty==='capture'" @click="assignmentDraft.duty='capture'">Captura</button><button type="button" class="choice" :aria-pressed="assignmentDraft.duty==='review'" @click="assignmentDraft.duty='review'">Revisión</button></div><div class="field"><label for="assignment-reason">Motivo</label><input id="assignment-reason" v-model="assignmentDraft.reason" minlength="3" maxlength="300"></div><button type="button" class="btn full" :disabled="busy || !assignmentDraft.membershipId || assignmentDraft.reason.trim().length<3" @click="assignMatch">Asignar a este partido</button><h3>Crear planillero</h3><div class="field"><label for="operator-name">Nombre</label><input id="operator-name" v-model="operatorDraft.name" minlength="2" maxlength="120"></div><div class="field"><label for="operator-user">Usuario</label><input id="operator-user" v-model="operatorDraft.username" minlength="3" maxlength="160"></div><button type="button" class="btn full" :disabled="busy || operatorDraft.name.trim().length<2 || operatorDraft.username.trim().length<3" @click="createOperator">Crear e invitar</button><div v-if="operatorInvitation" class="field"><label for="operator-link">Enlace de invitación, entrega manual</label><input id="operator-link" :value="operatorInvitation.url" readonly @focus="($event.target as HTMLInputElement).select()"></div></section></details>
+          <div v-if="canReviewMatch" class="action-grid mt"><button v-if="capture.status==='capturing' || capture.status==='submitted'" type="button" class="btn primary full" :disabled="busy || !!queuedCapture.length" @click="publishCaptureResult">Publicar resultado</button></div><details class="match-more mt" @toggle="openCaptureHistory"><summary>Revisión e historial</summary><section class="panel pad stack mt"><h2>Acta y revisión</h2><div class="field"><label for="acta-reason">Motivo o constancia</label><textarea id="acta-reason" v-model="actaReason" minlength="3" maxlength="300" placeholder="Ej. Resultado verificado con planilla"></textarea></div><label v-if="capture.status==='submitted' && canReviewMatch" class="row"><input v-model="overrideSignoffs" type="checkbox"> Aprobar sin ambas conformidades, con motivo registrado</label><div class="action-grid"><button v-if="capture.status==='capturing' && canCaptureMatch" type="button" class="btn primary" :disabled="busy || !!queuedCapture.length || actaReason.trim().length<3" @click="actaAction('submit')">Enviar acta</button><button v-if="capture.status==='submitted' && canReviewMatch" type="button" class="btn primary" :disabled="busy || actaReason.trim().length<3" @click="actaAction('approve')">Aprobar resultado</button><button v-if="capture.status==='submitted' && canReviewMatch" type="button" class="btn" :disabled="busy || actaReason.trim().length<3" @click="actaAction('reject')">Devolver</button><button v-if="capture.status==='official' && canReviewMatch" type="button" class="btn" :disabled="busy || actaReason.trim().length<3" @click="actaAction('reopen')">Rectificar acta</button></div><p v-if="capture.status==='submitted'" class="small muted">Los administradores de ambos equipos pueden dejar su conformidad. El revisor puede aprobar de forma excepcional con motivo.</p><div v-for="item in captureHistory" :key="item.id" class="team-person"><div><strong>Versión {{ item.version }} · {{ item.kind }}</strong><p class="small muted">{{ item.reason }} · {{ item.actor }}<template v-if="item.kind==='submitted'"> · {{ item.signoffs }} conformidades</template></p></div></div></section></details>
+        <details v-if="canManageTournaments()" class="match-more mt" @toggle="openCapturePeople"><summary>Planilleros y revisores</summary><section v-if="capturePeopleOpen" class="panel pad stack mt"><h2>Planilleros y revisores</h2><p v-if="capturePeopleError" class="notice error" role="alert">{{ capturePeopleError }}</p><div v-for="item in matchAssignments.filter(row=>row.match_id===parts[2])" :key="item.id" class="team-person"><div><strong>{{ item.name }} · {{ item.duty==='capture'?'Captura':'Revisión' }}</strong><p class="small muted">Asignación activa</p></div><div class="field"><label :for="`revoke-${item.id}`">Motivo de revocación</label><input :id="`revoke-${item.id}`" v-model="assignmentReasons[item.id]" minlength="3" maxlength="300"><button type="button" class="btn" :disabled="busy || !assignmentReasons[item.id] || assignmentReasons[item.id].trim().length<3" @click="revokeMatchAssignment(item.id)">Revocar</button></div></div><div class="field"><label for="assignment-person">Persona activa</label><select id="assignment-person" v-model="assignmentDraft.membershipId"><option value="">Elegí una persona</option><option v-for="item in operators.filter(row=>row.status==='active')" :key="item.id" :value="item.id">{{ item.name }}</option></select></div><div class="choices" role="group" aria-label="Función"><button type="button" class="choice" :aria-pressed="assignmentDraft.duty==='capture'" @click="assignmentDraft.duty='capture'">Captura</button><button type="button" class="choice" :aria-pressed="assignmentDraft.duty==='review'" @click="assignmentDraft.duty='review'">Revisión</button></div><div class="field"><label for="assignment-reason">Motivo</label><input id="assignment-reason" v-model="assignmentDraft.reason" minlength="3" maxlength="300"></div><button type="button" class="btn full" :disabled="busy || !assignmentDraft.membershipId || assignmentDraft.reason.trim().length<3" @click="assignMatch">Asignar a este partido</button><h3>Crear planillero</h3><div class="field"><label for="operator-name">Nombre</label><input id="operator-name" v-model="operatorDraft.name" minlength="2" maxlength="120"></div><div class="field"><label for="operator-user">Usuario</label><input id="operator-user" v-model="operatorDraft.username" minlength="3" maxlength="160"></div><button type="button" class="btn full" :disabled="busy || operatorDraft.name.trim().length<2 || operatorDraft.username.trim().length<3" @click="createOperator">Crear e invitar</button><div v-if="operatorInvitation" class="field"><label for="operator-link">Enlace de invitación, entrega manual</label><input id="operator-link" :value="operatorInvitation.url" readonly @focus="($event.target as HTMLInputElement).select()"></div></section></details>
           </div>
         </template>
       </div>

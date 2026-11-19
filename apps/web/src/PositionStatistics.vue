@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import {computed,ref} from 'vue';
-import type {PositionBlueprintView,PositionCompetitionView,TeamSummary} from '@torneos/shared';
+import type {PositionBlueprintView,PositionCompetitionView,TournamentEntry} from '@torneos/shared';
 import SportTabs from './SportTabs.vue';
 import PositionTieResolver from './PositionTieResolver.vue';
 
-const props=defineProps<{view:PositionBlueprintView;competition:PositionCompetitionView|null;entries:TeamSummary[];organizationId:string;categoryId:string;canManage:boolean}>();
+const props=defineProps<{view:PositionBlueprintView;competition:PositionCompetitionView|null;entries:TournamentEntry[];organizationId:string;categoryId:string;canManage:boolean}>();
 const emit=defineEmits<{decideTitleExtra:[input:{decision:'no_extra'|'extra';homeEntryId?:string;awayEntryId?:string}];decideTiebreak:[input:{table:'A'|'B'|'general';position:number;entryOrder:string[]}]}>();
 const tab=ref('groups');
 const groupTab=ref<'A'|'B'>('A');
