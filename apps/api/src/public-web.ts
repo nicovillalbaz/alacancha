@@ -110,7 +110,13 @@ export function registerPublicWebRoutes(app: FastifyInstance, pool: DatabasePool
       : tournament ? sectionsFor(tournament).map(key=>({url:publicSectionMetadata(cupUrl,name,key)!.canonical,name:publicSectionLabels[key]})) : [];
     const meta = `<title>${escapeHtml(title)}</title><meta name="description" content="${escapeHtml(description)}">${publicPage?`<link rel="canonical" href="${escapeHtml(canonical)}"><meta property="og:type" content="website"><meta property="og:title" content="${escapeHtml(title)}"><meta property="og:description" content="${escapeHtml(description)}"><meta property="og:url" content="${escapeHtml(canonical)}">${image?`<meta property="og:image" content="${escapeHtml(image)}">`:''}<meta name="twitter:card" content="${image?'summary_large_image':'summary'}">`:'<meta name="robots" content="noindex,nofollow">'}`;
     const analytics = publicPage && gaEnabled ? `<meta name="ga-measurement-id" content="${measurementId}"><script async src="https://www.googletagmanager.com/gtag/js?id=${measurementId}"></script><script src="/analytics.js"></script>` : '';
-    shell = shell.replace(/<title>[^<]*<\/title>/, '').replace(/<meta name="description"[^>]*>/, '').replace('</head>', `${meta}${analytics}</head>`);
+    const directDetail = ['partido', 'equipo', 'cruce'].some(key => url.searchParams.get(key));
+    const badges = tournament && !directDetail ? [
+      organization?.has_logo && `/api/v1/public/organizations/${tournament.organization_id}/logo`,
+      tournament.has_emblem && `/api/v1/public/organizations/${tournament.organization_id}/tournaments/${tournament.tournament_id}/emblem`,
+    ] : [];
+    const preloadedBadges = badges.filter(Boolean).map(src => `<link rel="preload" as="image" href="${escapeHtml(`${src}?size=128`)}">`).join('');
+    shell = shell.replace(/<title>[^<]*<\/title>/, '').replace(/<meta name="description"[^>]*>/, '').replace('</head>', `${meta}${preloadedBadges}${analytics}</head>`);
     const publicData = tournament
       ? ` data-public-tournament-id="${tournament.tournament_id}"${tournament.official&&!tournament.position?' data-public-fixture="1"':''}${!tournament.position&&tournament.announced_categories?.length?` data-public-announced-categories="${escapeHtml(tournament.announced_categories.join(','))}"`:''}`
       : '';

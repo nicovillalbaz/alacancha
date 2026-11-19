@@ -1,6 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import sharp from 'sharp';
 import { createPool } from '@torneos/db';
 import { migrate } from '../../packages/db/src/migrate.ts';
 import { seed } from '../../packages/db/src/seed.ts';
@@ -241,8 +242,31 @@ test('logo de organización: carga propia, acceso cruzado y lectura pública', a
   const ownerDownload = await request(owner, 'GET', `/organizations/${ids.a}/logo`);
   assert.equal(ownerDownload.statusCode, 200);
   assert.deepEqual(ownerDownload.rawPayload, image);
+  const thumbnailPath = `${publicPath}?size=128`;
+  const largeImage = await sharp({create: {width: 384, height: 192, channels: 4, background: '#33775588'}}).png({compressionLevel: 0}).toBuffer();
+  const largePayload = Buffer.concat([payload.subarray(0, payload.indexOf(image)), largeImage, payload.subarray(payload.indexOf(image) + image.length)]);
+  const upload = await app.inject({ method: 'POST', url: `/api/v1/organizations/${ids.a}/logo`, headers: { ...headers(owner), 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: largePayload });
+  assert.equal(upload.statusCode, 201, upload.body);
+  const thumbnail = await app.inject(thumbnailPath);
+  assert.equal(thumbnail.statusCode, 200);
+  assert.equal(thumbnail.headers['content-type'], 'image/webp');
+  assert.equal(thumbnail.headers['cache-control'], 'public, max-age=300');
+  const {width, height, hasAlpha} = await sharp(thumbnail.rawPayload).metadata();
+  assert.deepEqual({width, height, hasAlpha}, {width:128, height:64, hasAlpha:true});
+  assert.ok(thumbnail.rawPayload.length < largeImage.length);
+  assert.deepEqual((await app.inject(publicPath)).rawPayload, largeImage);
+  const staleHeaders = {'if-none-match': String(thumbnail.headers.etag)};
+  const fresh = await app.inject({url: thumbnailPath, headers: staleHeaders});
+  assert.equal(fresh.statusCode, 304);
+  assert.equal(fresh.rawPayload.length, 0);
+  const unrelated = await app.inject({url: `/api/v1/public/organizations/${ids.b}/logo?size=128`, headers: staleHeaders});
+  assert.equal(unrelated.statusCode, 404);
+  assert.equal(unrelated.headers['cache-control'], 'no-store');
   const ownerUpload = await app.inject({ method: 'POST', url: `/api/v1/organizations/${ids.a}/logo`, headers: { ...headers(owner), 'content-type': `multipart/form-data; boundary=${boundary}` }, payload });
   assert.equal(ownerUpload.statusCode, 201, ownerUpload.body);
+  const replaced = await app.inject({url: thumbnailPath, headers: staleHeaders});
+  assert.equal(replaced.statusCode, 200);
+  assert.notEqual(replaced.headers.etag, fresh.headers.etag);
 });
 
 test('marca de organización: superadmin puede editarla sin heredar datos del torneo', async () => {
@@ -1406,6 +1430,7 @@ test('T02: publicar el torneo muestra equipos y escudos; el organizador puede oc
   assert.equal((await request(adminB, 'POST', `/organizations/${ids.a}/entries/${entryId}/publication`, { publicVisible: false, reason: 'Intento de otro tenant' })).statusCode, 403);
   assert.equal((await request(adminA, 'POST', `/organizations/${ids.a}/entries/${entryId}/publication`, { publicVisible: false, reason: 'Retiro de visibilidad' })).statusCode, 200);
   assert.equal((await app.inject(publicShield)).statusCode, 404);
+  assert.equal((await app.inject({url: `${publicShield}?size=128`, headers: {'if-none-match': '*'}})).statusCode, 404);
   assert.equal((await request(adminA, 'POST', `/organizations/${ids.a}/entries/${entryId}/publication`, { publicVisible: true, reason: 'Mostrar de nuevo' })).statusCode, 200);
   assert.equal((await app.inject(publicShield)).statusCode, 200);
 });

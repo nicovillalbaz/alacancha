@@ -26,6 +26,7 @@ import { tieWinner, type ApprovedScore } from './fixture-progress.ts';
 import { positionCompetitionState, syncPositionMatches } from './position-competition.ts';
 import { registerPublicWebRoutes } from './public-web.ts';
 import { publicVisitReport, recordPublicVisit } from './public-visits.ts';
+import { publicImageDelivery } from './public-images.ts';
 
 interface Auth { session_id: string; user_id: string; organization_id: string | null; display_name: string; username: string; platform_admin: boolean; rawToken: string }
 declare module 'fastify' { interface FastifyRequest { auth: Auth | null } }
@@ -67,6 +68,7 @@ const requireOwner = (request: FastifyRequest): Auth => {
 
 export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
   const pool = suppliedPool || createPool(config.databaseUrl);
+  const sendPublicImage = publicImageDelivery(config.mediaDir);
   const app = Fastify({ logger: false, bodyLimit: 64 * 1024, trustProxy: config.production ? '127.0.0.1' : false });
   const openStreams = new Set<ServerResponse>();
   const trackStream = (stream: ServerResponse) => { openStreams.add(stream); stream.once('close', () => openStreams.delete(stream)); };
@@ -502,7 +504,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       OR EXISTS (SELECT 1 FROM tournaments t WHERE t.organization_id=o.id AND t.public_preview_at IS NOT NULL))`, [organizationId]);
     if (!media) fail(404, 'NOT_FOUND', 'No hay logo público para esta organización.');
     if (!/^[0-9a-f-]+\.(png|jpg|webp)$/.test(media.filename)) fail(500, 'INVALID_FILE', 'No se pudo abrir el archivo.');
-    return reply.header('Cache-Control','public, max-age=60, stale-while-revalidate=300').type(media.content_type).send(await readFile(resolve(config.mediaDir, media.filename)));
+    return sendPublicImage(request, reply, media);
   });
 
   const tournamentListFields = `t.id,t.name,t.public_slug,t.status,(t.emblem_id IS NOT NULL) has_emblem,(t.public_preview_at IS NOT NULL AND r.status IS NULL) presentation_only,EXISTS(SELECT 1 FROM undated_fixture_publications uf JOIN undated_fixture_plans up ON up.organization_id=uf.organization_id AND up.id=uf.plan_id WHERE uf.organization_id=c.organization_id AND up.category_id=c.id) has_announced_fixture,c.id category_id,c.name category_name`;
@@ -644,7 +646,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       OR t.public_preview_at IS NOT NULL)`, [organizationId, tournament]);
     if (!media) fail(404, 'NOT_FOUND', 'No hay emblema público para este torneo.');
     if (!/^[0-9a-f-]+\.(png|jpg|webp)$/.test(media.filename)) fail(500, 'INVALID_FILE', 'No se pudo abrir el archivo.');
-    return reply.header('Cache-Control','public, max-age=60, stale-while-revalidate=300').type(media.content_type).send(await readFile(resolve(config.mediaDir, media.filename)));
+    return sendPublicImage(request, reply, media);
   });
   app.post('/api/v1/organizations/:id/tournaments', async (request, reply) => {
     const organizationId = uuid((request.params as { id: string }).id);
@@ -995,7 +997,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       WHERE t.organization_id=$1 AND t.id=$2 AND EXISTS (SELECT 1 FROM fixture_position_publications p WHERE p.organization_id=t.organization_id AND (p.snapshot->'slots' @> jsonb_build_array(jsonb_build_object('team_id',t.id)) OR p.snapshot->'teams' @> jsonb_build_array(jsonb_build_object('team_id',t.id))) LIMIT 1)`,[organizationId,team]);
     if(!media)fail(404,'NOT_FOUND','No hay escudo público para este equipo.');
     if(!/^[0-9a-f-]+\.(png|jpg|webp)$/.test(media.filename))fail(500,'INVALID_FILE','No se pudo abrir el archivo.');
-    return reply.header('Cache-Control','public, max-age=60, stale-while-revalidate=300').type(media.content_type).send(await readFile(resolve(config.mediaDir,media.filename)));
+    return sendPublicImage(request, reply, media);
   });
 
   app.get('/api/v1/organizations/:id/categories', async (request) => {
@@ -1262,7 +1264,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const { rows: [media] } = await pool.query(`SELECT m.filename,m.content_type FROM teams t JOIN media m ON m.organization_id=t.organization_id AND m.id=t.shield_id JOIN team_entries e ON e.organization_id=t.organization_id AND e.team_id=t.id JOIN categories c ON c.organization_id=e.organization_id AND c.id=e.category_id JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id JOIN tournaments tr ON tr.organization_id=ed.organization_id AND tr.id=ed.tournament_id JOIN organizations o ON o.id=t.organization_id WHERE t.organization_id=$1 AND t.id=$2 AND o.status='active' AND e.status='active' AND e.public_visible AND ((c.status='published' AND ed.status='published' AND tr.status='published') OR tr.public_preview_at IS NOT NULL) LIMIT 1`, [organizationId, team]);
     if (!media) fail(404, 'NOT_FOUND', 'No hay escudo público para este equipo.');
     if (!/^[0-9a-f-]+\.(png|jpg|webp)$/.test(media.filename)) fail(500, 'INVALID_FILE', 'No se pudo abrir el archivo.');
-    return reply.header('Cache-Control','public, max-age=60, stale-while-revalidate=300').type(media.content_type).send(await readFile(resolve(config.mediaDir, media.filename)));
+    return sendPublicImage(request, reply, media);
   });
   for (const kind of ['commission','staff'] as const) {
     const table = kind === 'commission' ? 'commission_members' : 'team_staff';
