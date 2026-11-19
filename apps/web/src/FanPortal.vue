@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {computed,nextTick,onMounted,onUnmounted,ref,watch} from 'vue';
-import {knockoutRoundName,type TournamentSummary,type PlannedRound} from '@torneos/shared';
+import {knockoutRoundName,type PlannedRound} from '@torneos/shared';
 import Icon from './Icon.vue';
 import SportTabs from './SportTabs.vue';
 import PublicMatchTimeline from './PublicMatchTimeline.vue';
@@ -9,17 +9,18 @@ import BracketView from './BracketView.vue';
 import AnnouncedFixtureMatches from './AnnouncedFixtureMatches.vue';
 import {closePublicDetail,pushPublicNavigation,readPublicNavigation,publicSectionHref} from './public-navigation.ts';
 import {recordFanView} from './public-visits.ts';
-import {createPublicReads} from './public-reads.ts';
+import {createPublicReads,type PublicFixtureDay,type PublicFixtureMatchSummary,type PublicPortalTournament} from './public-reads.ts';
 
 type FanEvent={id:string;kind:string;side:'home'|'away'|'unknown';period:string|null;minute:number|null;cardLabel:string|null;cardColor:string|null;name:string;relatedName:string|null};
-type FanMatch={id:string;category_id:string;category_name:string;home_name:string;away_name:string;home_team_id:string;away_team_id:string;venue_name:string;court_label:string;match_date:string;match_time:string;tie_leg?:string|null;result:{status:'provisional'|'official';score:{home:number;away:number};shootout:{home:number;away:number};events:FanEvent[]}|null};
-type FanDay={id:string;ordinal:number;tournament_id:string;matches:FanMatch[]};
+type FanMatch=PublicFixtureMatchSummary;
+type FanDay=PublicFixtureDay;
+type FanMatchDetail={id:string;venue_name:string|null;result:{events:FanEvent[]}|null};
 type FanTeam={id:string;entry_id:string;name:string;color:string;has_shield:boolean;category_id:string};
 type FanBracket={phase_id:string;category_id:string;repechage?:boolean;slots:Array<{stage:number;slot:number;home:string;away:string;twoLegs?:boolean;homeScore?:number|null;awayScore?:number|null;scoreLabel?:string|null;winnerSide?:'home'|'away'|null;resolution?:'aggregate'|'match_points_penalties'|'match_points_third';matchId?:string|null;matchIds?:{first:string|null;second:string|null;third:string|null};legs?:Array<{label:string;home:number;away:number;matchId?:string|null}>;shootout?:{home:number;away:number}|null}>};
 type FanStats={available:boolean;phaseMode?:string|null;tables?:Array<{groupNo:number|null;rows:Array<{position:number;unresolved:boolean;teamName:string;played:number;wins:number;draws:number;losses:number;points:number;goalsFor:number;goalsAgainst:number;goalDifference:number}>}>;scorers?:Array<{name:string;teamName:string;goals:number}>;defense?:Array<{teamName:string;played:number;goalsAgainst:number}>;rosters?:Array<{entryId:string;players:Array<{name:string;goals:number;yellowCards:number;redCards:number}>}>};
 type FanFlyer={id:string;kind:string;sourceId:string;tournamentId:string;title:string;format:string};
 type CatalogItem={id:string;name:string;organization_id:string;organization_name:string};
-type FanTournament=Omit<TournamentSummary,'rules'> & {rules:TournamentSummary['rules']|null;presentation_only:boolean};
+type FanTournament=PublicPortalTournament;
 type AnnouncedFixture={revision:number;rounds:Array<{ordinal:number;matches:Array<{homeEntryId:string;awayEntryId:string}>}>;qualificationCount:number;quarterPairing:'in_person_draw';semifinalPairing:'pending'|'in_person_draw'|'bracket';finalPairing:'winners';teams:Array<{entry_id:string;team_id:string;name:string;color:string;has_shield:boolean}>};
 const props=defineProps<{catalog:CatalogItem[];organization:{id:string;name:string;logo_id?:string|null}|null;selectedTournamentId:string;tournaments:FanTournament[];fixture:FanDay[];announcedFixtures:Record<string,AnnouncedFixture>;brackets:FanBracket[];teams:FanTeam[];resultsRevision:number;loading:boolean;error:string}>();
 const emit=defineEmits<{navigate:[path:string]}>();
@@ -65,6 +66,25 @@ const tabs=computed(()=>[
   {key:'teams',label:'Equipos',icon:'users'},
 ]);
 const readPublic = createPublicReads();
+const matchDetail = ref<FanMatchDetail|null>(null);
+const matchLoading = ref(false), matchError = ref(false), matchRetry = ref(0);
+watch([() => props.organization?.id, () => selectedMatch.value?.id, () => props.resultsRevision, matchRetry],
+  async ([org,id,revision,attempt], _previous, onCleanup) => {
+    matchDetail.value = null;
+    matchError.value = false;
+    matchLoading.value = !!org && !!id;
+    if (!org || !id) return;
+    let active = true;
+    onCleanup(() => { active = false; });
+    try {
+      const days = await readPublic<{matches:FanMatchDetail[]}[]>(`/organizations/${org}/fixture?partido=${id}`, `${revision}:${attempt}`);
+      if (active) matchDetail.value = days[0]?.matches.find(match=>match.id===id) || null;
+    } catch {
+      if (active) matchError.value = true;
+    } finally {
+      if (active) matchLoading.value = false;
+    }
+  });
 const stats = ref<FanStats|null>(null), statsLoading = ref(false), statsError = ref(false);
 const flyers = ref<FanFlyer[]>([]);
 const usesStats = computed(() => ['standings','scorers','defense'].includes(tab.value) || !!selectedTeam.value);
@@ -186,8 +206,8 @@ function flyerUrl(item:FanFlyer){return `/api/v1/public/organizations/${props.or
       </template>
       <template v-else-if="selectedMatch">
         <div class="fan-detail-top"><button type="button" class="fan-close" aria-label="Cerrar partido" @click="closeDetail"><Icon name="close" /></button><span>{{ matchTitle(selectedMatch) }}</span><a v-if="flyer('result',selectedMatch.id)||flyer('match',selectedMatch.id)" class="fan-flyer-link" :href="flyerUrl(flyer('result',selectedMatch.id)||flyer('match',selectedMatch.id)!)" target="_blank" rel="noopener"><Icon name="download" /> Flyer</a></div>
-        <section class="fan-scoreboard" aria-label="Resultado del partido"><p class="fan-match-state">{{ selectedMatch.result?.status==='official'?'FINAL':selectedMatch.result?.status==='provisional'?'PROVISIONAL':selectedMatch.match_date?`${shortDate(selectedMatch.match_date)}${selectedMatch.match_time?` · ${selectedMatch.match_time}`:''}`:'FECHA PENDIENTE' }}</p><div class="fan-score-grid"><div class="fan-score-team"><TeamCrest size="lg" :name="selectedMatch.home_name" :team-id="selectedMatch.home_team_id" :organization-id="organization?.id" :color="team(selectedMatch.home_team_id)?.color" :has-shield="team(selectedMatch.home_team_id)?.has_shield" /><strong :title="selectedMatch.home_name">{{ selectedMatch.home_name }}</strong></div><div class="fan-score-number">{{ selectedMatch.result?`${selectedMatch.result.score.home} : ${selectedMatch.result.score.away}`:'—' }}</div><div class="fan-score-team"><TeamCrest size="lg" :name="selectedMatch.away_name" :team-id="selectedMatch.away_team_id" :organization-id="organization?.id" :color="team(selectedMatch.away_team_id)?.color" :has-shield="team(selectedMatch.away_team_id)?.has_shield" /><strong :title="selectedMatch.away_name">{{ selectedMatch.away_name }}</strong></div></div><p class="fan-score-meta">{{ selectedMatch.match_date?shortDate(selectedMatch.match_date):'Fecha pendiente' }}<template v-if="selectedMatch.match_time"> · {{ selectedMatch.match_time }}</template><template v-if="selectedMatch.venue_name"> · {{ selectedMatch.venue_name }}</template></p><p v-if="selectedMatch.result&&(selectedMatch.result.shootout.home||selectedMatch.result.shootout.away)" class="fan-score-meta">Penales {{ selectedMatch.result.shootout.home }} : {{ selectedMatch.result.shootout.away }}</p></section>
-        <div class="fan-content"><h2 class="fan-section-label">Eventos</h2><PublicMatchTimeline :events="selectedMatch.result?.events || []" :home-name="selectedMatch.home_name" :away-name="selectedMatch.away_name" /></div>
+        <section class="fan-scoreboard" aria-label="Resultado del partido"><p class="fan-match-state">{{ selectedMatch.result?.status==='official'?'FINAL':selectedMatch.result?.status==='provisional'?'PROVISIONAL':selectedMatch.match_date?`${shortDate(selectedMatch.match_date)}${selectedMatch.match_time?` · ${selectedMatch.match_time}`:''}`:'FECHA PENDIENTE' }}</p><div class="fan-score-grid"><div class="fan-score-team"><TeamCrest size="lg" :name="selectedMatch.home_name" :team-id="selectedMatch.home_team_id" :organization-id="organization?.id" :color="team(selectedMatch.home_team_id)?.color" :has-shield="team(selectedMatch.home_team_id)?.has_shield" /><strong :title="selectedMatch.home_name">{{ selectedMatch.home_name }}</strong></div><div class="fan-score-number">{{ selectedMatch.result?`${selectedMatch.result.score.home} : ${selectedMatch.result.score.away}`:'—' }}</div><div class="fan-score-team"><TeamCrest size="lg" :name="selectedMatch.away_name" :team-id="selectedMatch.away_team_id" :organization-id="organization?.id" :color="team(selectedMatch.away_team_id)?.color" :has-shield="team(selectedMatch.away_team_id)?.has_shield" /><strong :title="selectedMatch.away_name">{{ selectedMatch.away_name }}</strong></div></div><p class="fan-score-meta">{{ selectedMatch.match_date?shortDate(selectedMatch.match_date):'Fecha pendiente' }}<template v-if="selectedMatch.match_time"> · {{ selectedMatch.match_time }}</template><template v-if="matchDetail?.venue_name"> · {{ matchDetail.venue_name }}</template></p><p v-if="selectedMatch.result&&(selectedMatch.result.shootout.home||selectedMatch.result.shootout.away)" class="fan-score-meta">Penales {{ selectedMatch.result.shootout.home }} : {{ selectedMatch.result.shootout.away }}</p></section>
+        <div class="fan-content"><h2 class="fan-section-label">Eventos</h2><p v-if="matchLoading && !matchDetail" class="fan-status" role="status">Cargando eventos…</p><p v-else-if="matchError" class="fan-status" role="alert">No se pudo cargar la ficha. <button type="button" class="text-action" @click="matchRetry++">Reintentar</button></p><PublicMatchTimeline v-else :events="matchDetail?.result?.events || []" :home-name="selectedMatch.home_name" :away-name="selectedMatch.away_name" /></div>
       </template>
       <template v-else-if="selectedTeam">
         <div class="fan-detail-top"><button type="button" class="fan-close" aria-label="Cerrar equipo" @click="closeDetail"><Icon name="close" /></button><span>Equipo</span></div><div class="fan-team-hero"><TeamCrest size="lg" :name="selectedTeam.name" :team-id="selectedTeam.id" :organization-id="organization?.id" :color="selectedTeam.color" :has-shield="selectedTeam.has_shield" /><h1 :title="selectedTeam.name">{{ selectedTeam.name }}</h1></div><div class="fan-content"><div class="fan-roster-head"><h2>Jugadores</h2><span>Goles · Tarjetas</span></div><p v-if="statsLoading" class="fan-empty" role="status">Cargando jugadores...</p><p v-else-if="statsError" class="fan-empty" role="alert">No se pudo cargar el plantel. <button class="text-action" type="button" @click="statsRetry++">Reintentar</button></p><p v-else-if="!roster.length" class="fan-empty">Aún no hay jugadores publicados.</p><div v-for="player in roster" :key="player.name" class="fan-player-row"><strong :title="player.name">{{ player.name }}</strong><span class="fan-player-stat"><Icon name="ball" />{{ player.goals }}</span><span class="fan-player-stat"><i class="fan-small-card yellow"></i>{{ player.yellowCards }}</span><span class="fan-player-stat"><i class="fan-small-card red"></i>{{ player.redCards }}</span></div></div>

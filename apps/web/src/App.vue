@@ -11,6 +11,7 @@ import InstallButton from './InstallButton.vue';
 import {cleanLegacyHash,routeFromUrl} from './client-route.ts';
 import {measurePublicNavigation,setPublicSectionBase} from './public-navigation.ts';
 import {recordFanView} from './public-visits.ts';
+import type {PublicFixtureDay,PublicPortalTournament} from './public-reads.ts';
 import type {PublicVisitReport} from '@torneos/shared';
 import { queueMatchEvent,queuedMatchEvents,removeQueuedMatchEvent,type QueuedMatchEvent } from './offline-events.ts';
 
@@ -39,11 +40,9 @@ interface TechnicalError { id:string;occurred_at:string;source:'api'|'worker';or
 interface AccessDraft { status: AccessState; reason: string; version: number }
 interface LinkResult { url: string; expiresInHours: number }
 interface TokenInfo { name: string; username: string; organization_name: string | null; purpose: 'invite' | 'recovery'; has_password: boolean; currentUser: CurrentUser | null }
-interface PublicFixtureDay { id: string; ordinal: number; tournament_id:string; edition_name: string; tournament_name: string; matches: Array<{ id: string; category_id:string; category_name: string; home_name: string; away_name: string; home_team_id:string; away_team_id:string; venue_name: string; court_label: string; match_date: string; match_time: string; result: { status:'provisional'|'official'; score:{home:number;away:number};shootout:{home:number;away:number};players:Array<{side:'home'|'away';name:string;shirtNumber:number|null}>;events:Array<{id:string;kind:string;side:'home'|'away'|'unknown';period:string|null;minute:number|null;cardLabel:string|null;cardColor:string|null;name:string;relatedName:string|null}> }|null }> }
 interface PublicCatalogItem {id:string;name:string;public_slug:string|null;organization_id:string;organization_name:string;organization_slug:string}
 interface PublicOrganizationItem {id:string;name:string;public_slug:string;has_logo:boolean;tournament_count:number;single_tournament_id:string|null;single_tournament_slug:string|null}
 interface PublicOrganization {id:string;name:string;accent:string;logo_id:string|null;public_slug:string}
-type PublicTournamentSummary=Omit<TournamentSummary,'rules'> & {rules:TournamentSummary['rules']|null;presentation_only:boolean;has_announced_fixture:boolean};
 interface MatchAssignment {id:string;match_id:string;duty:'capture'|'review';membership_id:string;name:string;member_status:string;category_id:string;home_name:string;away_name:string;day_ordinal:number|null;day_status:'draft'|'published'|null;acta_status:'capturing'|'submitted'|'official'|null}
 interface OperatorSummary {id:string;name:string;username:string;status:string}
 interface PublicBracket { phase_id:string; category_id:string; category_name: string; edition_name: string; tournament_id:string; tournament_name: string; repechage?: boolean; slots: Array<{ stage: number; slot: number; home: string; away: string; twoLegs?: boolean;homeScore?:number|null;awayScore?:number|null }> }
@@ -144,9 +143,9 @@ watch(unresolvedTie,(tie)=>{if(!tie&&disciplineSettingsTab.value==='tiebreak')di
 function moveTieEntry(index:number,offset:number){const target=index+offset;if(target<0||target>=tieOrder.value.length)return;const copy=[...tieOrder.value];[copy[index],copy[target]]=[copy[target],copy[index]];tieOrder.value=copy;}
 const selectedDisciplineCase=computed(()=>disciplineCases.value.find(item=>item.id===selectedDisciplineCaseId.value)||null);
 let lastCaptureTap = { key: '', at: 0 };
-let publicResultsStream:EventSource|null=null;
+let closePublicResults:(()=>void)|null=null;
 let privateMatchStream:EventSource|null=null;
-const publicTournaments = ref<PublicTournamentSummary[]>([]);
+const publicTournaments = ref<PublicPortalTournament[]>([]);
 const publicCatalog=ref<PublicCatalogItem[]>([]);
 const publicOrganizations=ref<PublicOrganizationItem[]>([]);
 const publicDraws=ref<PublicDraw[]>([]);
@@ -546,7 +545,7 @@ async function loadTournamentSection() {
       section==='estadisticas'?Promise.resolve(null):Promise.all(editionIds.map(editionId => api<MatchdaySummary[]>(`/organizations/${organizationId}/editions/${editionId}/matchdays`))),
       Promise.all(categories.map(async category=>[category.category_id,await api<FixtureOverview>(`/organizations/${organizationId}/categories/${category.category_id}/fixture`).catch(cause=>{if(cause instanceof RequestError&&[404,409].includes(cause.status))return{phase:null,rounds:[],groups:[],bracket:[]};throw cause;})] as const)),
       section==='estadisticas'&&canManageTournaments()?Promise.all(categories.map(async category=>[category.category_id,await api<PrivateStats>(`/organizations/${organizationId}/categories/${category.category_id}/statistics`).catch(cause=>{if(cause instanceof RequestError&&[404,409].includes(cause.status))return{officialMatches:0,entries:[],players:[],defense:[],tables:[]};throw cause;})] as const)):Promise.resolve(null),
-      ['fixture','partidos'].includes(section)?api<PublicFixtureDay[]>(`/public/organizations/${organizationId}/fixture?torneo=${tournament.id}`):Promise.resolve(null),
+      ['fixture','partidos'].includes(section)?api<PublicFixtureDay[]>(`/public/organizations/${organizationId}/fixture?torneo=${tournament.id}&resumen=1`):Promise.resolve(null),
     ]);
     if(!active())return;
     if(days)workspaceMatchdays.value=days.flat();
@@ -1319,7 +1318,8 @@ async function loadView(force = false) {
   if(loadingTimer)clearTimeout(loadingTimer);
   loadingTimer=setTimeout(()=>{if(epoch===routeEpoch&&loading.value)loadingVisual.value=true;},180);
   try {
-    if(parts.value[0]!=='publico'){publicResultsStream?.close();publicResultsStream=null;}
+    closePublicResults?.();
+    closePublicResults=null;
     if(parts.value[0]!=='partido'){privateMatchStream?.close();privateMatchStream=null;}
     if (parts.value[0] === 'acceso') return;
     if (parts.value[0] === 'portal') {
@@ -1333,12 +1333,11 @@ async function loadView(force = false) {
       return;
     }
     if (parts.value[0] === 'publico') {
-      publicResultsStream?.close();publicResultsStream=null;
       publicOrganization.value = null; publicTournaments.value = []; publicTeams.value = []; publicFixture.value = []; publicBrackets.value = []; publicDraws.value=[];publicAnnouncedFixtures.value={};
       if(!viewParts[1]){publicOrganizations.value=[];const organizations=await api<PublicOrganizationItem[]>('/public/organizations');if(epoch!==routeEpoch)return;publicOrganizations.value=organizations;setPublicPageMeta('A la cancha · Torneos','Encontrá organizaciones, torneos, partidos, resultados y estadísticas.',`${location.origin}/`);recordFanView();return;}
       const organizationId=viewParts[1];
       const tournamentId=viewParts[2];
-      const fixturePath = `/public/organizations/${organizationId}/fixture${tournamentId ? `?torneo=${tournamentId}` : ''}`;
+      const fixturePath = `/public/organizations/${organizationId}/fixture?resumen=1${tournamentId ? `&torneo=${tournamentId}` : ''}`;
       const announcedPath = (category: string) => `/public/organizations/${organizationId}/categories/${category}/fixture/announced`;
       const mount = document.getElementById('app')?.dataset;
       const canUseHints = !!tournamentId && mount?.publicPath === location.pathname &&
@@ -1347,7 +1346,7 @@ async function loadView(force = false) {
         ? api<PublicFixtureDay[]>(fixturePath).catch(() => null) : null;
       const announcedRequests = new Map((canUseHints ? mount?.publicAnnouncedCategories?.split(',') || [] : []).map(id =>
         [id, api<AnnouncedFixture>(announcedPath(id)).catch(() => null)]));
-      const [result,draws] = await Promise.all([api<{ organization: PublicOrganization; tournaments: PublicTournamentSummary[]; teams: typeof publicTeams.value }>(`/public/organizations/${organizationId}/tournaments?portal=1`),api<PublicDraw[]>(`/public/organizations/${organizationId}/draws`)]);
+      const [result,draws] = await Promise.all([api<{ organization: PublicOrganization; tournaments: PublicPortalTournament[]; teams: typeof publicTeams.value }>(`/public/organizations/${organizationId}/tournaments?portal=1&resumen=1`),api<PublicDraw[]>(`/public/organizations/${organizationId}/draws`)]);
       if(epoch!==routeEpoch)return;
       publicDraws.value=draws;
       publicCatalog.value=[...new Map([...result.tournaments.map(item=>[item.id,{id:item.id,name:item.name,public_slug:item.public_slug||null,organization_id:organizationId,organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const),...draws.map(item=>[item.tournament_id,{id:item.tournament_id,name:item.tournament_name,public_slug:item.public_slug||null,organization_id:organizationId,organization_name:result.organization.name,organization_slug:result.organization.public_slug}] as const)].map(item=>[item[0],item[1]])).values()];
@@ -1366,7 +1365,7 @@ async function loadView(force = false) {
       publicAnnouncedFixtures.value=Object.fromEntries(announcedCandidates.flatMap((item,index)=>announced[index].status==='fulfilled'?[[item.category_id,announced[index].value]]:[]));
       const publicName=tournamentId?(publicTournament.value?.name||draws.find(item=>item.tournament_id===tournamentId)?.tournament_name):(result.organization as unknown as {name:string}|null)?.name||'Torneos';
       const title=tournamentId?`${publicName} · ${result.organization.name}`:`${publicName} · Torneos`;
-      const description=tournamentId&&previewOnly?(Object.keys(publicAnnouncedFixtures.value).length?`Fixture anunciado de ${publicName}: nueve jornadas sin fechas confirmadas, diez equipos y ocho clasificados.`:`Equipos de ${publicName}. Fixture y formato pendientes.`):tournamentId?`Partidos, fixture, clasificación y goleadores de ${publicName}.`:`Torneos, partidos, resultados y estadísticas de ${publicName}.`;
+      const description=tournamentId&&previewOnly?`Conocé los equipos y la información publicada de ${publicName}.`:tournamentId?`Partidos, fixture, clasificación y goleadores de ${publicName}.`:`Torneos, partidos, resultados y estadísticas de ${publicName}.`;
       const alias=tournamentId?publicCatalog.value.find(item=>item.id===tournamentId)?.public_slug:null;
       const canonical=`${location.origin}${alias?`/${alias}`:`/${result.organization.public_slug}${tournamentId?`/${tournamentId}`:''}`}`;
       const hasEmblem=publicTournament.value?.has_emblem&&(publicTournament.value.status==='published'||publicTournament.value.presentation_only)||draws.some(item=>item.tournament_id===tournamentId&&item.has_emblem);
@@ -1374,7 +1373,6 @@ async function loadView(force = false) {
       setPublicPageMeta(title,description,canonical,image,tournamentId ? publicName || '' : '');
       if(location.hash.startsWith('#/publico/')){history.replaceState(null,'',canonical);cleanRouteCache.set(new URL(canonical).pathname,route.value);measurePublicNavigation();}
       if(!tournamentId)recordFanView();
-      const stream=previewOnly?null:new EventSource(`/api/v1/public/organizations/${organizationId}/results/stream`);publicResultsStream=stream;
       const currentPublicView=()=>epoch===routeEpoch&&parts.value[0]==='publico'&&parts.value[1]===organizationId&&parts.value[2]===tournamentId;
       const refreshBrackets = () => { void api<PublicBracket[]>(`/public/organizations/${organizationId}/brackets`).then(brackets=>{if(currentPublicView())publicBrackets.value=tournamentId?brackets.filter(item=>item.tournament_id===tournamentId):brackets;}).catch(()=>{}); };
       if (!positionPortal && !previewOnly) refreshBrackets();
@@ -1399,7 +1397,8 @@ async function loadView(force = false) {
         publicDraws.value=latest;
       }).catch(()=>{});};
       let streamReady=false,streamInterrupted=false;
-      if(stream){
+      if(!previewOnly){
+        let stream:EventSource|null=null;
         let refreshTimer: ReturnType<typeof setTimeout> | undefined;
         let bracketsDirty = false;
         const queueRefresh = (fixtureChanged = false) => {
@@ -1422,22 +1421,50 @@ async function loadView(force = false) {
             return !tournamentId || !data.tournamentId || data.tournamentId === tournamentId;
           } catch { return true; }
         };
-        stream.addEventListener('result',event=>{if(relevant(event))queueRefresh();});
-        stream.addEventListener('fixture',event=>{if(relevant(event))queueRefresh(true);});
-        stream.addEventListener('draw',refreshDraws);
-        stream.addEventListener('error',()=>{streamInterrupted=true;});
-        stream.addEventListener('ready',event=>{
-          if (streamReady || streamInterrupted) {
-            queueRefresh(true);
-            refreshDraws();
-          } else {
-            try {
-              const revisions = JSON.parse(event.data).draws as {categoryId:string;revision:number}[] | undefined;
-              if (revisions?.some(row => (publicDraws.value.find(item=>item.category_id===row.categoryId)?.revision||0)<row.revision)) refreshDraws();
-            } catch { /* Las publicaciones nuevas llegan por el evento draw. */ }
+        const syncPublicStream = () => {
+          if (document.hidden || !navigator.onLine) {
+            if (stream) {
+              stream.close();
+              stream = null;
+              streamInterrupted = true;
+            }
+            if (refreshTimer) clearTimeout(refreshTimer);
+            refreshTimer = undefined;
+            return;
           }
-          streamReady=true;streamInterrupted=false;
-        });
+          if (stream || !currentPublicView()) return;
+          const source = new EventSource(`/api/v1/public/organizations/${organizationId}/results/stream`);
+          stream = source;
+          source.addEventListener('result',event=>{if(stream===source && relevant(event))queueRefresh();});
+          source.addEventListener('fixture',event=>{if(stream===source && relevant(event))queueRefresh(true);});
+          source.addEventListener('draw',()=>{if(stream===source)refreshDraws();});
+          source.addEventListener('error',()=>{if(stream===source)streamInterrupted=true;});
+          source.addEventListener('ready',event=>{
+            if (stream !== source) return;
+            if (streamReady || streamInterrupted) {
+              queueRefresh(true);
+              refreshDraws();
+            } else {
+              try {
+                const revisions = JSON.parse(event.data).draws as {categoryId:string;revision:number}[] | undefined;
+                if (revisions?.some(row => (publicDraws.value.find(item=>item.category_id===row.categoryId)?.revision||0)<row.revision)) refreshDraws();
+              } catch { /* Las publicaciones nuevas llegan por el evento draw. */ }
+            }
+            streamReady=true;streamInterrupted=false;
+          });
+        };
+        document.addEventListener('visibilitychange',syncPublicStream);
+        window.addEventListener('online',syncPublicStream);
+        window.addEventListener('offline',syncPublicStream);
+        closePublicResults = () => {
+          document.removeEventListener('visibilitychange',syncPublicStream);
+          window.removeEventListener('online',syncPublicStream);
+          window.removeEventListener('offline',syncPublicStream);
+          stream?.close();
+          stream = null;
+          if (refreshTimer) clearTimeout(refreshTimer);
+        };
+        syncPublicStream();
       }
       return;
     }
@@ -1636,7 +1663,7 @@ watch(route, (next, previous) => { success.value = ''; publishPreviewCategory.va
 watch(route, () => { passwordDraft.value = ''; ownPasswordOpen.value = false; adminPasswordTarget.value = ''; });
 watch([route, user], async () => { await nextTick(); document.querySelector<HTMLElement>('.bottom-nav a[aria-current="page"]')?.scrollIntoView({ inline: 'center', block: 'nearest' }); }, { flush: 'post' });
 onMounted(() => { window.addEventListener('hashchange', routeChanged); window.addEventListener('popstate', routeChanged); document.addEventListener('click',internalLinkClicked); window.addEventListener('online', connectionChanged); window.addEventListener('offline', connectionChanged); const mountedRoute=route.value; routeChanged(); if(route.value===mountedRoute)void loadView(); });
-onUnmounted(() => { publicResultsStream?.close();privateMatchStream?.close();window.removeEventListener('hashchange', routeChanged); window.removeEventListener('popstate', routeChanged);document.removeEventListener('click',internalLinkClicked); window.removeEventListener('online', connectionChanged); window.removeEventListener('offline', connectionChanged); clearTimeout(toastTimer);if(loadingTimer)clearTimeout(loadingTimer); });
+onUnmounted(() => { closePublicResults?.();privateMatchStream?.close();window.removeEventListener('hashchange', routeChanged); window.removeEventListener('popstate', routeChanged);document.removeEventListener('click',internalLinkClicked); window.removeEventListener('online', connectionChanged); window.removeEventListener('offline', connectionChanged); clearTimeout(toastTimer);if(loadingTimer)clearTimeout(loadingTimer); });
 </script>
 
 <template>

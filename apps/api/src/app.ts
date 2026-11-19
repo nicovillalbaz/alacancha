@@ -505,12 +505,18 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     return reply.header('Cache-Control','public, max-age=60, stale-while-revalidate=300').type(media.content_type).send(await readFile(resolve(config.mediaDir, media.filename)));
   });
 
-  const tournamentRows = `SELECT t.id,t.name,t.public_slug,t.timezone,t.status,(t.emblem_id IS NOT NULL) has_emblem,(t.public_preview_at IS NOT NULL AND r.status IS NULL) presentation_only,EXISTS(SELECT 1 FROM undated_fixture_publications uf JOIN undated_fixture_plans up ON up.organization_id=uf.organization_id AND up.id=uf.plan_id WHERE uf.organization_id=c.organization_id AND up.category_id=c.id) has_announced_fixture,e.id edition_id,e.name edition_name,c.id category_id,c.name category_name,c.preset,c.team_limit,r.version rule_version,r.revision rule_revision,r.status rule_status,CASE WHEN r.rules IS NULL THEN NULL ELSE r.rules || jsonb_build_object('maxBenchStaff',COALESCE(r.rules->'maxBenchStaff','0'::jsonb),'substitutions',COALESCE(r.rules->'substitutions','null'::jsonb),'eligibility',COALESCE(r.rules->'eligibility','null'::jsonb),'advanced',COALESCE(r.rules->'advanced','null'::jsonb),'initialPhase',COALESCE(r.rules->'initialPhase','null'::jsonb)) END rules
-    FROM tournaments t JOIN editions e ON e.organization_id=t.organization_id AND e.tournament_id=t.id
+  const tournamentListFields = `t.id,t.name,t.public_slug,t.status,(t.emblem_id IS NOT NULL) has_emblem,(t.public_preview_at IS NOT NULL AND r.status IS NULL) presentation_only,EXISTS(SELECT 1 FROM undated_fixture_publications uf JOIN undated_fixture_plans up ON up.organization_id=uf.organization_id AND up.id=uf.plan_id WHERE uf.organization_id=c.organization_id AND up.category_id=c.id) has_announced_fixture,c.id category_id,c.name category_name`;
+  const tournamentListSource = `FROM tournaments t JOIN editions e ON e.organization_id=t.organization_id AND e.tournament_id=t.id
     JOIN categories c ON c.organization_id=e.organization_id AND c.edition_id=e.id
     LEFT JOIN LATERAL (SELECT version,revision,status,rules FROM rule_versions rv WHERE rv.organization_id=c.organization_id AND rv.category_id=c.id AND ($3::boolean=false OR rv.status='published') ORDER BY version DESC LIMIT 1) r ON true
     WHERE t.organization_id=$1 AND ($2::uuid IS NULL OR t.id=$2) AND ($3::boolean=false OR (t.status='published' AND e.status='published' AND c.status='published' AND r.status='published') OR t.public_preview_at IS NOT NULL)
     ORDER BY t.created_at DESC,c.created_at,c.id LIMIT 200`;
+  const tournamentRows = `SELECT ${tournamentListFields},t.timezone,e.id edition_id,e.name edition_name,c.preset,c.team_limit,r.version rule_version,r.revision rule_revision,r.status rule_status,CASE WHEN r.rules IS NULL THEN NULL ELSE r.rules || jsonb_build_object('maxBenchStaff',COALESCE(r.rules->'maxBenchStaff','0'::jsonb),'substitutions',COALESCE(r.rules->'substitutions','null'::jsonb),'eligibility',COALESCE(r.rules->'eligibility','null'::jsonb),'advanced',COALESCE(r.rules->'advanced','null'::jsonb),'initialPhase',COALESCE(r.rules->'initialPhase','null'::jsonb)) END rules ${tournamentListSource}`;
+  const publicTournamentRows = `SELECT ${tournamentListFields},
+    CASE WHEN r.rules IS NULL THEN NULL ELSE jsonb_build_object('initialPhase',
+      CASE WHEN r.rules->'initialPhase'->>'mode' IS NULL THEN NULL
+      ELSE jsonb_build_object('mode',r.rules->'initialPhase'->>'mode') END)
+    END rules ${tournamentListSource}`;
   app.get('/api/v1/organizations/:id/tournaments', async (request) => {
     const organizationId = uuid((request.params as { id: string }).id);
     await organizationAccess(request, organizationId);
@@ -882,11 +888,13 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const organizationId = uuid((request.params as { id: string }).id);
     const { rows: [organization] } = await pool.query("SELECT id,name,accent,logo_id,public_slug FROM organizations WHERE id=$1 AND status='active'", [organizationId]);
     if (!organization) fail(404, 'NOT_FOUND', 'No se encontró contenido público de esta organización.');
-    const compact = (request.query as { portal?: string }).portal === '1';
+    const options = request.query as { portal?: string; resumen?: string };
+    const portal = options.portal === '1';
+    const compact = portal && options.resumen === '1';
     const [tournaments, teams, sponsors] = await Promise.all([
-      pool.query(tournamentRows, [organizationId, null, true]),
+      pool.query(compact ? publicTournamentRows : tournamentRows, [organizationId, null, true]),
       pool.query(`SELECT t.id,t.name,t.color,(t.shield_id IS NOT NULL) has_shield,e.id entry_id,e.category_id FROM team_entries e JOIN teams t ON t.organization_id=e.organization_id AND t.id=e.team_id JOIN categories c ON c.organization_id=e.organization_id AND c.id=e.category_id JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id JOIN tournaments tr ON tr.organization_id=ed.organization_id AND tr.id=ed.tournament_id WHERE e.organization_id=$1 AND e.status='active' AND e.public_visible AND ((c.status='published' AND ed.status='published' AND tr.status='published') OR tr.public_preview_at IS NOT NULL) ORDER BY t.name LIMIT 200`, [organizationId]),
-      compact ? null : pool.query(`SELECT ts.tournament_id,s.id,s.name FROM tournament_sponsors ts JOIN sponsors s ON s.organization_id=ts.organization_id AND s.id=ts.sponsor_id JOIN tournaments t ON t.organization_id=ts.organization_id AND t.id=ts.tournament_id WHERE ts.organization_id=$1 AND ts.archived_at IS NULL AND ts.public_visible AND t.status='published' ORDER BY s.name LIMIT 200`, [organizationId]),
+      portal ? null : pool.query(`SELECT ts.tournament_id,s.id,s.name FROM tournament_sponsors ts JOIN sponsors s ON s.organization_id=ts.organization_id AND s.id=ts.sponsor_id JOIN tournaments t ON t.organization_id=ts.organization_id AND t.id=ts.tournament_id WHERE ts.organization_id=$1 AND ts.archived_at IS NULL AND ts.public_visible AND t.status='published' ORDER BY s.name LIMIT 200`, [organizationId]),
     ]);
     return { organization, tournaments: tournaments.rows, teams: teams.rows, ...(sponsors ? { sponsors: sponsors.rows } : {}) };
   });
@@ -902,13 +910,21 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
   app.get('/api/v1/public/organizations/:id/draws/:categoryId/competition',async request=>{
     const {id,categoryId}=request.params as {id:string;categoryId:string};
     const organizationId=uuid(id),category=uuid(categoryId);
+    const summary = (request.query as { resumen?: string }).resumen === '1';
     const {rowCount}=await pool.query(`SELECT 1 FROM fixture_position_blueprints b JOIN fixture_position_publications p ON p.organization_id=b.organization_id AND p.blueprint_id=b.id
       JOIN organizations o ON o.id=b.organization_id AND o.status='active' WHERE b.organization_id=$1 AND b.category_id=$2 LIMIT 1`,[organizationId,category]);
     if(!rowCount)fail(404,'DRAW_NOT_PUBLIC','No se encontró una Copa pública.');
-    const state=await positionCompetitionState(pool,organizationId,category,true);
+    const state=await positionCompetitionState(pool,organizationId,category,true,true,!summary);
     if(!state?.rulesPublished||!state.preparedMatches)return {available:false};
+    const matches=state.matches.filter(match=>match.day_status==='published');
+    if (summary) return {
+      available:true,
+      competition:{participants:state.competition.participants},
+      results:state.results.map(({code,homeGoals,awayGoals,homePenalties,awayPenalties})=>({code,homeGoals,awayGoals,homePenalties,awayPenalties})),
+      matches:matches.map(({code,match_id})=>({code,match_id})),
+    };
     const names=await playerStatNames(pool,organizationId,state.playerTotals.map(player=>player.registrationId));
-    return {available:true,competition:state.competition,results:state.results,matches:state.matches.filter(match=>match.day_status==='published'),players:state.playerTotals.filter(player=>names.get(player.registrationId)?.publicName).map(player=>({...player,name:names.get(player.registrationId)!.name})),defense:state.defense,titleTie:state.titleTie,titleExtra:state.titleExtra&&state.titleExtra.dayStatus==='published'?state.titleExtra:state.titleExtra?.decision==='no_extra'?state.titleExtra:null};
+    return {available:true,competition:state.competition,results:state.results,matches,players:state.playerTotals.filter(player=>names.get(player.registrationId)?.publicName).map(player=>({...player,name:names.get(player.registrationId)!.name})),defense:state.defense,titleTie:state.titleTie,titleExtra:state.titleExtra&&state.titleExtra.dayStatus==='published'?state.titleExtra:state.titleExtra?.decision==='no_extra'?state.titleExtra:null};
   });
   app.get('/api/v1/public/organizations/:id/draws/:categoryId/teams/:entryId/players',async request=>{
     const {id,categoryId,entryId}=request.params as {id:string;categoryId:string;entryId:string};
@@ -2438,7 +2454,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
   });
   app.get('/api/v1/public/organizations/:id/fixture', async (request) => {
     const organizationId = uuid((request.params as { id: string }).id);
-    const query = request.query as { partido?: string; torneo?: string };
+    const query = request.query as { partido?: string; torneo?: string; resumen?: string };
     const matchId = query.partido === undefined ? null : uuid(query.partido);
     const tournamentId = query.torneo === undefined ? null : uuid(query.torneo);
     type PublishedMatch = { id: string; category_id:string; home_entry_id: string; away_entry_id: string; category_name: string; home_name: string; away_name: string; venue_name: string; court_label: string; match_date: string; match_time: string };
@@ -2461,25 +2477,55 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       .filter(day => day.matches.length);
     const ids = [...new Set(days.flatMap(day => day.matches.map(match => match.id)))];
     if (!ids.length) return [];
-    const [{rows:tieRows},{rows:results}] = await Promise.all([
-      pool.query(`SELECT match_id,return_match_id,decider_match_id FROM fixture_bracket_slots WHERE organization_id=$1
-        AND (match_id=ANY($2::uuid[]) OR return_match_id=ANY($2::uuid[]) OR decider_match_id=ANY($2::uuid[]))`, [organizationId,ids]),
-      pool.query(`SELECT r.match_id,r.status,r.roster_snapshot,approved.snapshot approved_snapshot,submitted.snapshot submitted_snapshot,rv.rules
+    const legs = async () => {
+      const {rows} = await pool.query(`SELECT match_id,return_match_id,decider_match_id FROM fixture_bracket_slots WHERE organization_id=$1
+        AND (match_id=ANY($2::uuid[]) OR return_match_id=ANY($2::uuid[]) OR decider_match_id=ANY($2::uuid[]))`, [organizationId,ids]);
+      const byMatch = new Map<string,string>();
+      for (const tie of rows) {
+        if (tie.return_match_id) {
+          byMatch.set(tie.match_id,'Ida');
+          byMatch.set(tie.return_match_id,'Vuelta');
+        }
+        if (tie.decider_match_id) byMatch.set(tie.decider_match_id,'Desempate');
+      }
+      return byMatch;
+    };
+    const listFields = (match: PublishedMatch, tieLeg: Map<string,string>) => ({
+      id:match.id, category_id:match.category_id, home_name:match.home_name, away_name:match.away_name,
+      home_team_id:teamByEntry.get(match.home_entry_id), away_team_id:teamByEntry.get(match.away_entry_id),
+      match_date:match.match_date, match_time:match.match_time, tie_leg:tieLeg.get(match.id)||null,
+    });
+    if (query.resumen === '1' && !matchId) {
+      const [tieLeg,{rows:scores}] = await Promise.all([
+        legs(),
+        pool.query(`SELECT r.match_id, CASE WHEN approved.id IS NOT NULL THEN 'official' ELSE 'provisional' END status,
+          coalesce(approved.snapshot->'score',submitted.snapshot->'score') score,
+          coalesce(approved.snapshot->'shootout',submitted.snapshot->'shootout') shootout
+          FROM match_records r
+          LEFT JOIN match_acta_snapshots approved ON approved.organization_id=r.organization_id AND approved.id=r.approval_id
+          LEFT JOIN match_acta_snapshots submitted ON submitted.organization_id=r.organization_id AND submitted.id=r.submission_id AND r.status='submitted'
+          WHERE r.organization_id=$1 AND r.match_id=ANY($2::uuid[]) AND (approved.id IS NOT NULL OR submitted.id IS NOT NULL)`,[organizationId,ids]),
+      ]);
+      const resultByMatch=new Map(scores.map(({match_id,status,score,shootout})=>[match_id,{status,score,shootout}]));
+      return days.map(day=>({id:day.id,ordinal:day.ordinal,tournament_id:day.tournament_id,
+        matches:day.matches.map(match=>({...listFields(match,tieLeg),result:resultByMatch.get(match.id)||null})),
+      }));
+    }
+    const [tieLeg,{rows:results}] = await Promise.all([
+      legs(),pool.query(`SELECT r.match_id,r.status,r.roster_snapshot,approved.snapshot approved_snapshot,submitted.snapshot submitted_snapshot,rv.rules
       FROM match_records r LEFT JOIN match_acta_snapshots approved ON approved.organization_id=r.organization_id AND approved.id=r.approval_id
       LEFT JOIN match_acta_snapshots submitted ON submitted.organization_id=r.organization_id AND submitted.id=r.submission_id
       LEFT JOIN draft_matches m ON m.organization_id=r.organization_id AND m.id=r.match_id
       LEFT JOIN rule_versions rv ON rv.organization_id=r.organization_id AND rv.category_id=m.category_id AND rv.version=r.rule_version
       WHERE r.organization_id=$1 AND r.match_id=ANY($2::uuid[])`,[organizationId,ids]),
     ]);
-    const tieLeg=new Map<string,string>();
-    for(const tie of tieRows){if(tie.return_match_id){tieLeg.set(tie.match_id,'Ida');tieLeg.set(tie.return_match_id,'Vuelta');}if(tie.decider_match_id)tieLeg.set(tie.decider_match_id,'Desempate');}
     type RosterPlayer = { registrationId: string; shirtNumber?: number | null };
     type PublicRoster = { home?: RosterPlayer[]; away?: RosterPlayer[] };
     const snapshots=results.map(row=>({matchId:row.match_id,status:row.approved_snapshot?'official':'provisional',snapshot:row.approved_snapshot || (row.status==='submitted'?row.submitted_snapshot:null),rules:row.rules,roster:row.roster_snapshot as PublicRoster|null})).filter(row=>row.snapshot);
     const publicNames=await playerStatNames(pool,organizationId,[...new Set(snapshots.flatMap(row=>[...(row.snapshot.events as MatchJournalEvent[]).flatMap(event=>[event.registrationId,event.relatedRegistrationId]),...(row.roster?.home||[]).map(player=>player.registrationId),...(row.roster?.away||[]).map(player=>player.registrationId)].filter((id):id is string=>!!id)))]);
     const resultByMatch=new Map(snapshots.map(row=>{const snapshot=row.snapshot;const events=snapshot.events as MatchJournalEvent[];const voided=new Set(events.filter(event=>event.kind==='void').map(event=>event.voidsEventId));const parsedRules=ruleSchema.safeParse(row.rules);const cards=parsedRules.success?parsedRules.data.advanced?.discipline.customCards||[]:[];const players=(['home','away'] as const).flatMap(side=>(row.roster?.[side]||[]).flatMap(player=>{const published=publicNames.get(player.registrationId);return published?.publicName?[{side,name:published.name,shirtNumber:player.shirtNumber??null}]:[];}));return [row.matchId,{status:row.status,score:snapshot.score,shootout:snapshot.shootout,players,events:events.filter(event=>event.kind!=='void'&&!voided.has(event.id)).map(event=>{const card=event.kind==='custom_card'?cards.find(item=>item.code===event.cardCode):null;return {id:event.id,kind:event.kind,teamEntryId:event.teamEntryId,period:event.period,minute:event.minute,cardLabel:card?.label||null,cardColor:card?.color||null,name:event.registrationId&&publicNames.get(event.registrationId)?.publicName?publicNames.get(event.registrationId)!.name:'Jugador',relatedName:event.relatedRegistrationId&&publicNames.get(event.relatedRegistrationId)?.publicName?publicNames.get(event.relatedRegistrationId)!.name:null};})}];}));
     return days.map((day) => ({ id: day.id, ordinal: day.ordinal, edition_id: day.edition_id, edition_name: day.edition_name, tournament_id: day.tournament_id, tournament_name: day.tournament_name,
-      matches: day.matches.map((match) => {const result=resultByMatch.get(match.id);return { id: match.id, category_id:match.category_id, category_name: match.category_name, home_name: match.home_name, away_name: match.away_name,home_team_id:teamByEntry.get(match.home_entry_id),away_team_id:teamByEntry.get(match.away_entry_id), venue_name: match.venue_name, court_label: match.court_label, match_date: match.match_date, match_time: match.match_time, tie_leg:tieLeg.get(match.id)||null, result:result?{...result,events:result.events.map(event=>({id:event.id,kind:event.kind,side:event.teamEntryId===match.home_entry_id?'home':event.teamEntryId===match.away_entry_id?'away':'unknown',period:event.period,minute:event.minute,cardLabel:event.cardLabel,cardColor:event.cardColor,name:event.name,relatedName:event.relatedName}))}:null };} ) }));
+      matches: day.matches.map((match) => {const result=resultByMatch.get(match.id);return { ...listFields(match,tieLeg), category_name: match.category_name, venue_name: match.venue_name, court_label: match.court_label, result:result?{...result,events:result.events.map(event=>({id:event.id,kind:event.kind,side:event.teamEntryId===match.home_entry_id?'home':event.teamEntryId===match.away_entry_id?'away':'unknown',period:event.period,minute:event.minute,cardLabel:event.cardLabel,cardColor:event.cardColor,name:event.name,relatedName:event.relatedName}))}:null };} ) }));
   });
   const publicResultFeeds = new Map<string, ReturnType<typeof createPublicResultFeed>>();
   async function createPublicResultFeed(organizationId: string) {

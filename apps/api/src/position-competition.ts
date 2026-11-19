@@ -5,7 +5,7 @@ import { derivePositionCompetition, projectMatchJournal, ruleSchema, type MatchJ
 
 type Queryable=PoolClient|DatabasePool;
 
-export async function positionCompetitionState(db:Queryable, organizationId:string, categoryId:string, publicOnly=false, withManual=true){
+export async function positionCompetitionState(db:Queryable, organizationId:string, categoryId:string, publicOnly=false, withManual=true, withPlayerTotals=true){
   const {rows:[blueprint]}=await db.query('SELECT id,revision,group_size FROM fixture_position_blueprints WHERE organization_id=$1 AND category_id=$2',[organizationId,categoryId]);
   if(!blueprint)return null;
   const {rows:assignments}=await db.query('SELECT slot_code,entry_id FROM fixture_position_assignments WHERE organization_id=$1 AND blueprint_id=$2 ORDER BY slot_code',[organizationId,blueprint.id]);
@@ -30,7 +30,7 @@ export async function positionCompetitionState(db:Queryable, organizationId:stri
   const results:PositionResult[]=approved.map(row=>{
     const snapshot=row.snapshot as {score:{home:number;away:number};shootout:{home:number;away:number};events:MatchJournalEvent[]};
     const active=projectMatchJournal(snapshot.events,row.home_entry_id,row.away_entry_id).active;
-    for(const event of active){
+    for(const event of withPlayerTotals?active:[]){
       if(!event.registrationId||!event.teamEntryId||!['goal','penalty'].includes(event.kind))continue;
       const key=`${event.teamEntryId}:${event.registrationId}`;
       const player=playerTotals.get(key)||{registrationId:event.registrationId,entryId:event.teamEntryId,goals:0};
@@ -67,7 +67,7 @@ export async function positionCompetitionState(db:Queryable, organizationId:stri
     LEFT JOIN match_acta_snapshots a ON a.organization_id=r.organization_id AND a.id=r.approval_id AND a.kind='approved'
     WHERE d.organization_id=$1 AND d.category_id=$2`,[organizationId,categoryId]);
   const extraScore=extra?.snapshot&&(!publicOnly||extra.day_status==='published')?{home:extra.snapshot.score.home,away:extra.snapshot.score.away,homePenalties:extra.snapshot.shootout.home,awayPenalties:extra.snapshot.shootout.away}:null;
-  if(extraScore&&extra.home_entry_id&&extra.away_entry_id){
+  if(withPlayerTotals&&extraScore&&extra.home_entry_id&&extra.away_entry_id){
     const active=projectMatchJournal(extra.snapshot.events,extra.home_entry_id,extra.away_entry_id).active;
     for(const event of active){
       if(!event.registrationId||!event.teamEntryId||!['goal','penalty'].includes(event.kind))continue;

@@ -34,22 +34,30 @@ let epoch=0;
 let pendingMatchCode='';
 const competitionRevision = computed(() => `${props.organization?.id}:${current.value?.category_id}:${current.value?.revision}:${props.resultsRevision}`);
 const needsCompetition = computed(() => !!selectedGame.value || (!selectorOpen.value && tab.value !== 'teams'));
+const needsStatistics = computed(() => ['classification','scorers','defense'].includes(tab.value));
 let displayedRevision = '';
+let showsStatistics = false;
 async function loadCompetition() {
   const category = current.value?.category_id, organization = props.organization?.id;
   const revision = competitionRevision.value, request = ++epoch;
-  if (displayedRevision !== revision) competition.value = null;
+  const full = needsStatistics.value;
+  if (displayedRevision !== revision || (full && !showsStatistics)) competition.value = null;
   error.value = '';
   if (!category || !organization || !needsCompetition.value) {
     competitionLoading.value = false;
     return;
   }
+  if (competition.value) {
+    competitionLoading.value = false;
+    return;
+  }
   competitionLoading.value = !competition.value;
   try {
-    const data = await readPublic<Competition>(`/organizations/${organization}/draws/${category}/competition`, revision);
+    const data = await readPublic<Competition>(`/organizations/${organization}/draws/${category}/competition${full?'':'?resumen=1'}`, revision);
     if (request === epoch) {
       competition.value = data;
       displayedRevision = revision;
+      showsStatistics = full;
     }
   } catch {
     if (request === epoch) error.value = 'No se pudieron cargar los resultados.';
@@ -57,7 +65,7 @@ async function loadCompetition() {
     if (request === epoch) competitionLoading.value = false;
   }
 }
-watch([competitionRevision, needsCompetition], loadCompetition, { immediate: true });
+watch([competitionRevision, needsCompetition, needsStatistics], loadCompetition, { immediate: true });
 watch(()=>current.value?.tournament_id,()=>{selectedRound.value='F1';selectedDay.value=days.value[0]??0;selectedMatch.value=null;selectedGame.value=null;selectedTeam.value=null;pendingMatchCode='';restorePublicLocation();});
 const slots=computed(()=>new Map((current.value?.snapshot.slots||[]).map(slot=>[slot.slot_code,slot])));
 const teams=computed<Team[]>(()=>current.value?.snapshot.teams||current.value?.snapshot.slots.filter(slot=>slot.entry_id&&slot.team_id&&slot.team_name).map(slot=>({entry_id:slot.entry_id!,team_id:slot.team_id!,team_name:slot.team_name!,color:slot.color,has_shield:slot.has_shield}))||[]);
