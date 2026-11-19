@@ -1,16 +1,15 @@
-import { createApp,type App as VueApp } from 'vue';
 import { isPublicRoute,routeFromUrl } from './client-route.ts';
 import '../../../packages/ui/src/styles.css';
 
 const root = document.getElementById('app')!;
 // Distinct import sites keep Vite's preload list scoped to each area.
 const loadArea = {
-  public: () => import('./PublicApp.vue'),
-  panel: () => import('./App.vue'),
+  public: () => import('./public-entry.ts'),
+  panel: () => import('./panel-entry.ts'),
 };
 let currentArea: 'public'|'panel'|undefined;
 let areaEpoch=0;
-let application: VueApp<Element>|undefined;
+let unmount: (() => void)|undefined;
 
 const worker = import.meta.env.PROD && 'serviceWorker' in navigator
   ? new Promise<ServiceWorkerRegistration|null>(resolve => {
@@ -42,8 +41,8 @@ function showCurrentArea() {
   if (area === currentArea) return;
   currentArea = area;
   const epoch=++areaEpoch;
-  application?.unmount();
-  application = undefined;
+  unmount?.();
+  unmount = undefined;
 
   const wait = document.createElement('p');
   wait.className = 'small muted pad';
@@ -51,10 +50,9 @@ function showCurrentArea() {
   wait.textContent = 'Cargando…';
   root.replaceChildren(wait);
 
-  void loadArea[area]().then(({default:View}) => {
+  void loadArea[area]().then(({mount}) => {
     if (epoch !== areaEpoch) return;
-    application = createApp(View);
-    application.mount(root);
+    unmount = mount(root);
     cacheVisitedAssets();
   }).catch(() => {
     if (epoch !== areaEpoch) return;
