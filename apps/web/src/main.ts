@@ -3,6 +3,11 @@ import { isPublicRoute,routeFromUrl } from './client-route.ts';
 import '../../../packages/ui/src/styles.css';
 
 const root = document.getElementById('app')!;
+// Distinct import sites keep Vite's preload list scoped to each area.
+const loadArea = {
+  public: () => import('./PublicApp.vue'),
+  panel: () => import('./App.vue'),
+};
 let currentArea: 'public'|'panel'|undefined;
 let areaEpoch=0;
 let application: VueApp<Element>|undefined;
@@ -46,8 +51,7 @@ function showCurrentArea() {
   wait.textContent = 'Cargando…';
   root.replaceChildren(wait);
 
-  const load = area === 'public' ? import('./PublicApp.vue') : import('./App.vue');
-  void load.then(({default:View}) => {
+  void loadArea[area]().then(({default:View}) => {
     if (epoch !== areaEpoch) return;
     application = createApp(View);
     application.mount(root);

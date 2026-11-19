@@ -1,5 +1,5 @@
 /* Solo se guardan archivos estáticos. Nunca respuestas de /api ni datos de sesión. */
-const CACHE = 'torneos-static-v2';
+const CACHE = 'torneos-static-v3';
 const SHELL = ['/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(async cache => {
