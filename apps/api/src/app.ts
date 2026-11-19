@@ -513,7 +513,9 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     LEFT JOIN LATERAL (SELECT version,revision,status,rules FROM rule_versions rv WHERE rv.organization_id=c.organization_id AND rv.category_id=c.id AND ($3::boolean=false OR rv.status='published') ORDER BY version DESC LIMIT 1) r ON true
     WHERE t.organization_id=$1 AND ($2::uuid IS NULL OR t.id=$2) AND ($3::boolean=false OR (t.status='published' AND e.status='published' AND c.status='published' AND r.status='published') OR t.public_preview_at IS NOT NULL)
     ORDER BY t.created_at DESC,c.created_at,c.id LIMIT 200`;
-  const tournamentRows = `SELECT ${tournamentListFields},t.timezone,e.id edition_id,e.name edition_name,c.preset,c.team_limit,r.version rule_version,r.revision rule_revision,r.status rule_status,CASE WHEN r.rules IS NULL THEN NULL ELSE r.rules || jsonb_build_object('maxBenchStaff',COALESCE(r.rules->'maxBenchStaff','0'::jsonb),'substitutions',COALESCE(r.rules->'substitutions','null'::jsonb),'eligibility',COALESCE(r.rules->'eligibility','null'::jsonb),'advanced',COALESCE(r.rules->'advanced','null'::jsonb),'initialPhase',COALESCE(r.rules->'initialPhase','null'::jsonb)) END rules ${tournamentListSource}`;
+  const tournamentRows = `SELECT ${tournamentListFields},t.timezone,e.id edition_id,e.name edition_name,c.preset,c.team_limit,r.version rule_version,r.revision rule_revision,r.status rule_status,
+    EXISTS(SELECT 1 FROM fixture_position_blueprints b WHERE b.organization_id=c.organization_id AND b.category_id=c.id) has_position_blueprint,
+    CASE WHEN r.rules IS NULL THEN NULL ELSE r.rules || jsonb_build_object('maxBenchStaff',COALESCE(r.rules->'maxBenchStaff','0'::jsonb),'substitutions',COALESCE(r.rules->'substitutions','null'::jsonb),'eligibility',COALESCE(r.rules->'eligibility','null'::jsonb),'advanced',COALESCE(r.rules->'advanced','null'::jsonb),'initialPhase',COALESCE(r.rules->'initialPhase','null'::jsonb)) END rules ${tournamentListSource}`;
   const publicBracketAvailable = `EXISTS (SELECT 1 FROM fixture_bracket_slots bs WHERE bs.organization_id=p.organization_id AND bs.phase_id=p.id AND bs.stage=1 AND bs.match_id IS NOT NULL)
     AND NOT EXISTS (SELECT 1 FROM fixture_bracket_slots bs LEFT JOIN draft_matches m ON m.organization_id=bs.organization_id AND m.id=bs.match_id
       LEFT JOIN matchdays md ON md.organization_id=m.organization_id AND md.id=m.matchday_id
@@ -1767,34 +1769,45 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       WHERE s.organization_id=$1 AND s.phase_id=$2 ORDER BY s.stage,s.slot`, [organizationId, phase.id]);
     return { phase, rounds: rounds.map((round) => ({ ...round, matches: matches.filter((match) => match.fixture_round_id === round.id), byes: byes.filter((bye) => bye.round_id === round.id) })), groups, bracket };
   });
-  app.get('/api/v1/organizations/:id/categories/:categoryId/fixture/blueprint', async (request) => {
-    const { id, categoryId } = request.params as { id: string; categoryId: string };
-    const organizationId = uuid(id), category = uuid(categoryId);
-    await organizationAccess(request, organizationId);
-    const { rows: [found] } = await pool.query('SELECT 1 FROM categories WHERE organization_id=$1 AND id=$2', [organizationId, category]);
+  async function readPositionBlueprint(db: PoolClient | DatabasePool, organizationId: string, category: string) {
+    const { rows: [found] } = await db.query('SELECT 1 FROM categories WHERE organization_id=$1 AND id=$2', [organizationId, category]);
     if (!found) fail(404, 'CATEGORY_NOT_FOUND', 'No se encontró la categoría.');
-    const { rows: [blueprint] } = await pool.query(`SELECT b.id,b.name,b.revision,b.group_size,b.opening_first_jornada,b.opening_second_jornada,to_char(b.opening_first_date,'YYYY-MM-DD') opening_first_date,to_char(b.opening_second_date,'YYYY-MM-DD') opening_second_date,to_char(b.extra_reserved_date,'YYYY-MM-DD') extra_reserved_date,
+    const { rows: [blueprint] } = await db.query(`SELECT b.id,b.name,b.revision,b.group_size,b.opening_first_jornada,b.opening_second_jornada,to_char(b.opening_first_date,'YYYY-MM-DD') opening_first_date,to_char(b.opening_second_date,'YYYY-MM-DD') opening_second_date,to_char(b.extra_reserved_date,'YYYY-MM-DD') extra_reserved_date,
       (SELECT max(p.revision) FROM fixture_position_publications p WHERE p.organization_id=b.organization_id AND p.blueprint_id=b.id) published_revision
       FROM fixture_position_blueprints b WHERE b.organization_id=$1 AND b.category_id=$2`, [organizationId, category]);
     if (!blueprint) return { blueprint: null, slots: [], games: [] };
-    const { rows: slots } = await pool.query(`SELECT s.slot_code,s.entry_id,t.name team_name,t.color FROM fixture_position_assignments s
+    const { rows: slots } = await db.query(`SELECT s.slot_code,s.entry_id,t.name team_name,t.color FROM fixture_position_assignments s
       LEFT JOIN team_entries e ON e.organization_id=s.organization_id AND e.id=s.entry_id
       LEFT JOIN teams t ON t.organization_id=e.organization_id AND t.id=e.team_id
       WHERE s.organization_id=$1 AND s.blueprint_id=$2 ORDER BY s.slot_code`, [organizationId, blueprint.id]);
-    const { rows: games } = await pool.query(`SELECT code,stage,sporting_round,jornada_no,to_char(planned_date,'YYYY-MM-DD') planned_date,home_ref,away_ref
+    const { rows: games } = await db.query(`SELECT code,stage,sporting_round,jornada_no,to_char(planned_date,'YYYY-MM-DD') planned_date,home_ref,away_ref
       FROM fixture_position_games WHERE organization_id=$1 AND blueprint_id=$2 ORDER BY ordinal`, [organizationId, blueprint.id]);
     return { blueprint, slots, games };
+  }
+  async function readPositionCompetition(db: PoolClient | DatabasePool, organizationId: string, category: string, summary: boolean) {
+    const state=await positionCompetitionState(db,organizationId,category,false,true,!summary);
+    if(!state)return fail(404,'BLUEPRINT_NOT_FOUND','No se encontró el formato de esta Copa.');
+    const stats=state.rulesPublished&&!summary?await categoryStatistics(pool,organizationId,category):null;
+    const names=stats?await playerStatNames(pool,organizationId,stats.players.map(player=>player.registrationId)):new Map();
+    return {competition:state.competition,results:state.results,matches:state.matches,preparedMatches:state.preparedMatches,rulesPublished:state.rulesPublished,players:stats?.players.map(player=>({...player,name:names.get(player.registrationId)?.name||'Jugador',publicName:names.get(player.registrationId)?.publicName||false}))||[],defense:stats?.defense||[],titleTie:state.titleTie,titleExtra:state.titleExtra};
+  }
+  app.get('/api/v1/organizations/:id/categories/:categoryId/fixture/blueprint', async request => {
+    const { id, categoryId } = request.params as { id: string; categoryId: string };
+    const organizationId = uuid(id), category = uuid(categoryId);
+    await organizationAccess(request, organizationId);
+    if ((request.query as { vista?: string }).vista !== 'fixture') return readPositionBlueprint(pool,organizationId,category);
+    return transaction(pool, async client => {
+      await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      const plan = await readPositionBlueprint(client,organizationId,category);
+      const competition = plan.blueprint ? await readPositionCompetition(client,organizationId,category,true) : null;
+      return { ...plan, competition };
+    });
   });
   app.get('/api/v1/organizations/:id/categories/:categoryId/fixture/blueprint/competition', async request => {
     const {id,categoryId}=request.params as {id:string;categoryId:string};
     const organizationId=uuid(id),category=uuid(categoryId);
     await organizationAccess(request,organizationId);
-    const state=await positionCompetitionState(pool,organizationId,category);
-    if(!state)return fail(404,'BLUEPRINT_NOT_FOUND','No se encontró el formato de esta Copa.');
-    const summary = (request.query as { resumen?: string }).resumen === '1';
-    const stats=state.rulesPublished&&!summary?await categoryStatistics(pool,organizationId,category):null;
-    const names=stats?await playerStatNames(pool,organizationId,stats.players.map(player=>player.registrationId)):new Map();
-    return {competition:state.competition,results:state.results,matches:state.matches,preparedMatches:state.preparedMatches,rulesPublished:state.rulesPublished,players:stats?.players.map(player=>({...player,name:names.get(player.registrationId)?.name||'Jugador',publicName:names.get(player.registrationId)?.publicName||false}))||[],defense:stats?.defense||[],titleTie:state.titleTie,titleExtra:state.titleExtra};
+    return readPositionCompetition(pool,organizationId,category,(request.query as { resumen?: string }).resumen === '1');
   });
   app.post('/api/v1/organizations/:id/categories/:categoryId/fixture/blueprint/title-extra',async request=>{
     const {id,categoryId}=request.params as {id:string;categoryId:string};

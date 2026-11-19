@@ -908,8 +908,11 @@ test('T02: el organizador puede corregir el nombre de un equipo sin abrir acceso
 
 test('T04: plan privado por posiciones conserva Fechas/Jornadas y resuelve el sorteo sin crear partidos', async () => {
   const tournament = await newTournament(); assert.equal(tournament.response.statusCode, 201, tournament.response.body);
-  const categoryId = tournament.response.json().categoryId;
+  const {categoryId,tournamentId} = tournament.response.json();
   const base = `/organizations/${ids.a}/categories/${categoryId}/fixture/blueprint`;
+  const catalogPath = `/organizations/${ids.a}/tournaments/${tournamentId}`;
+  assert.equal((await request(adminA,'GET',catalogPath)).json()[0].has_position_blueprint,false);
+  assert.deepEqual((await request(adminA,'GET',`${base}?vista=fixture`)).json(),{blueprint:null,slots:[],games:[],competition:null});
   const first = await request(adminA,'POST',`/organizations/${ids.a}/teams`,{requestId:randomUUID(),name:`Fariña ${randomUUID().slice(0,6)}`,color:'#123456',categoryId});
   const second = await request(adminA,'POST',`/organizations/${ids.a}/teams`,{requestId:randomUUID(),name:`Barrio ${randomUUID().slice(0,6)}`,color:'#654321',categoryId});
   assert.equal(first.statusCode,201,first.body); assert.equal(second.statusCode,201,second.body);
@@ -918,6 +921,13 @@ test('T04: plan privado por posiciones conserva Fechas/Jornadas y resuelve el so
   const created=await request(adminA,'POST',base,fcfsPositionPlan);assert.equal(created.statusCode,201,created.body);
   assert.equal((await request(adminA,'POST',base,fcfsPositionPlan)).statusCode,200);
   let plan=(await request(adminA,'GET',base)).json();
+  const overview = await request(adminA,'GET',`${base}?vista=fixture`);
+  const summary = await request(adminA,'GET',`${base}/competition?resumen=1`);
+  assert.equal(overview.statusCode,200,overview.body);
+  assert.equal(summary.statusCode,200,summary.body);
+  assert.deepEqual(overview.json(),{...plan,competition:summary.json()});
+  assert.equal((await request(adminA,'GET',catalogPath)).json()[0].has_position_blueprint,true);
+  assert.equal((await request(adminB,'GET',`${base}?vista=fixture`)).statusCode,403);
   assert.equal(plan.games.length,35);assert.equal(plan.slots.length,10);
   assert.deepEqual(plan.games.filter((game:{sporting_round:string;jornada_no:number|null})=>game.sporting_round==='F1').map((game:{jornada_no:number|null})=>game.jornada_no),[null,null,null,null,null]);
   assert.deepEqual(plan.games.filter((game:{jornada_no:number;sporting_round:string})=>game.jornada_no===4).map((game:{sporting_round:string})=>game.sporting_round),['F2','F2','F3']);

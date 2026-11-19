@@ -7,6 +7,7 @@ import BracketView from './BracketView.vue';
 import SportTabs from './SportTabs.vue';
 import AnnouncedFixtureMatches from './AnnouncedFixtureMatches.vue';
 import { organizerReads } from './view-reads.ts';
+import { readAnnouncedFixture, type AnnouncedFixture } from './organizer-announced-fixture.ts';
 
 interface CaseRow { id: string; entry_id: string; team_name: string; summary: string; fine_amount_guaranies: number | null }
 interface StatsRow {
@@ -16,7 +17,6 @@ interface StatsRow {
   defense: Array<{ entryId: string; played: number; goalsAgainst: number }>;
   tables: Array<{ groupNo: number | null; groups: Array<{ position: number; teamIds: string[]; unresolved: boolean }>; totals: Array<{ teamId: string; points: number; played: number; goalsFor: number; goalsAgainst: number }> }>;
 }
-type AnnouncedFixture={revision:number;rounds:Array<{ordinal:number;matches:Array<{homeEntryId:string;awayEntryId:string}>}>;teams:Array<{entry_id:string;team_id:string;name:string;color:string;has_shield:boolean}>};
 const props = defineProps<{ tournament: TournamentSummary; categories: TournamentSummary[]; entries: TournamentEntry[]; days: MatchdaySummary[]; officialMatchIds: string[]; scores:Record<string,{home:number;away:number}>; cases: Record<string, CaseRow[]>; stats: Record<string, StatsRow>; brackets: Record<string, FixtureOverview>; positionBlueprint?:PositionBlueprintView & {categoryId?:string}; positionCompetition?:PositionCompetitionView|null; section: string; dayId?: string; canManage: boolean; organizationId: string; csrfToken:string }>();
 const emit=defineEmits<{refresh:[]}>();
 const announcedFixtures=ref<Record<string,AnnouncedFixture>>({});
@@ -44,12 +44,7 @@ watch([()=>props.organizationId,()=>props.csrfToken,()=>props.tournament.id,anno
   let active=true;onCleanup(()=>{active=false;});
   try{
     const plans=await Promise.all(ids.split(',').map(async categoryId=>{
-      const plan=await organizerReads.read<AnnouncedFixture|null>('schedule',`${csrfToken}:${organizationId}:announced:${categoryId}`,async()=>{
-        const response=await fetch(`/api/v1/public/organizations/${organizationId}/categories/${categoryId}/fixture/announced`,{signal:AbortSignal.timeout(12000),credentials:'omit'});
-        if(response.status===404)return null;
-        if(!response.ok)throw new Error('No se pudo cargar el calendario anunciado.');
-        return response.json();
-      });
+      const plan=await readAnnouncedFixture(organizationId,categoryId,csrfToken);
       return plan ? [categoryId,plan] as const : null;
     }));
     if(active){announcedFixtures.value=Object.fromEntries(plans.filter((plan):plan is NonNullable<typeof plan>=>plan!==null));announcedState.value='ready';}

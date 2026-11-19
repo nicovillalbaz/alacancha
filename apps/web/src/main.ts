@@ -1,4 +1,4 @@
-import { isPublicRoute,routeFromUrl } from './client-route.ts';
+import { isFixtureOverview,isPublicRoute,routeFromUrl } from './client-route.ts';
 import '../../../packages/ui/src/styles.css';
 
 const root = document.getElementById('app')!;
@@ -50,9 +50,13 @@ function showCurrentArea() {
   wait.textContent = 'Cargando…';
   root.replaceChildren(wait);
 
+  // A direct fixture can validate its session while the organizer entry downloads.
+  const session = isFixtureOverview(route)
+    ? fetch('/api/v1/auth/me', { credentials:'same-origin', signal:AbortSignal.timeout(12_000) }).catch(() => undefined)
+    : undefined;
   void loadArea[area]().then(({mount}) => {
     if (epoch !== areaEpoch) return;
-    unmount = mount(root);
+    unmount = mount(root, session);
     cacheVisitedAssets();
   }).catch(() => {
     if (epoch !== areaEpoch) return;

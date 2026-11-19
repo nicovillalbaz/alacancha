@@ -26,3 +26,7 @@ export function isPublicRoute(route: string) {
   const area = route.split('/',1)[0];
   return area === 'publico' || area === 'portal';
 }
+
+export function isFixtureOverview(route: string) {
+  return /^torneo\/[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}\/fixture$/i.test(route);
+}

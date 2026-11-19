@@ -6,8 +6,9 @@ import Icon from './Icon.vue';
 import SportTabs from './SportTabs.vue';
 import SportEventMark from './SportEventMark.vue';
 import InstallButton from './InstallButton.vue';
-import {cleanLegacyHash,routeFromUrl} from './client-route.ts';
+import {cleanLegacyHash,isFixtureOverview,routeFromUrl} from './client-route.ts';
 import {organizerReads} from './view-reads.ts';
+import {readAnnouncedFixture} from './organizer-announced-fixture.ts';
 import {createOrganizerImages, organizerImagesKey} from './organizer-images.ts';
 import {lazyScreen} from './lazy-screen.ts';
 import type {PublicVisitReport} from '@torneos/shared';
@@ -15,14 +16,19 @@ import { queueMatchEvent,queuedMatchEvents,removeQueuedMatchEvent,type QueuedMat
 
 const RulesEditor = lazyScreen(() => import('./RulesEditor.vue'));
 const BracketView = lazyScreen(() => import('./BracketView.vue'));
-const TournamentWorkspace = lazyScreen(() => import('./TournamentWorkspace.vue'));
-const PositionBlueprint = lazyScreen(() => import('./PositionBlueprint.vue'));
+const loadTournamentWorkspace = () => import('./TournamentWorkspace.vue');
+const loadPositionBlueprint = () => import('./PositionBlueprint.vue');
+const TournamentWorkspace = lazyScreen(loadTournamentWorkspace);
+const PositionBlueprint = lazyScreen(loadPositionBlueprint);
 const PositionMatches = lazyScreen(() => import('./PositionMatches.vue'));
 const PositionStatistics = lazyScreen(() => import('./PositionStatistics.vue'));
 const FlyerSettings = lazyScreen(() => import('./FlyerSettings.vue'));
 const FixtureDayEditor = lazyScreen(() => import('./FixtureDayEditor.vue'));
 const PaymentsWorkspace = lazyScreen(() => import('./PaymentsWorkspace.vue'));
 const VisitActivity = lazyScreen(() => import('./VisitActivity.vue'));
+
+const props = defineProps<{ initialSession?: Promise<Response | undefined> }>();
+let initialSession = props.initialSession;
 
 interface Administrator { id: string; user_id: string; name: string; username: string; organization_id: string; organization_name: string; organization_status: AccessState; status: AccessState; role: keyof typeof roleLabels; version: number }
 interface Audit { id: string; action: string; reason: string; actor: string; organization_name: string | null; created_at: string; before_data: { status?: AccessState } | null; after_data: { status?: AccessState } | null }
@@ -367,7 +373,13 @@ async function api<T = any>(path: string, method = 'GET', body?: unknown): Promi
     const headers: Record<string, string> = {};
     if (body && !(body instanceof FormData)) headers['Content-Type'] = 'application/json';
     if (!anonymous && csrfToken && !['GET', 'HEAD'].includes(method)) headers['X-CSRF-Token'] = csrfToken;
-    const response = await fetch(`/api/v1${path}`, { method, credentials: anonymous ? 'omit' : 'same-origin', headers, signal: controller.signal, body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined });
+    let response: Response | undefined;
+    if (path === '/auth/me' && method === 'GET' && initialSession) {
+      const pending = initialSession;
+      initialSession = undefined;
+      response = await pending;
+    }
+    response ??= await fetch(`/api/v1${path}`, { method, credentials: anonymous ? 'omit' : 'same-origin', headers, signal: controller.signal, body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined });
     if (response.status === 204) return undefined as T;
     const result = await response.json();
     if (!response.ok) {
@@ -520,19 +532,40 @@ async function loadTournamentSection() {
   const dayTarget=parts.value[3];
   const editing=section==='fixture' && !!dayTarget && canManageTournaments();
   const needsBlueprint=!editing&&['fixture','partidos','estadisticas'].includes(section);
+  const fixtureOverview = isFixtureOverview(route.value);
+  const ordinaryFixture = fixtureOverview && tournament.has_position_blueprint === false;
+  if (fixtureOverview && tournament.has_position_blueprint === true) {
+    void loadPositionBlueprint().catch(() => undefined);
+  }
+  if (ordinaryFixture) {
+    workspaceBlueprint.value = { blueprint:null, slots:[], games:[], categoryId:tournament.category_id };
+    workspaceCompetition.value = null;
+    void loadTournamentWorkspace().catch(() => undefined);
+    for (const category of categories.filter(category => category.has_announced_fixture)) {
+      void readAnnouncedFixture(organizationId,category.category_id,scope.csrfToken).catch(() => undefined);
+    }
+  }
   const needsTeams=['equipos','pagos','estadisticas','fixture','partidos'].includes(section)&&!(editing&&dayTarget==='new');
   async function loadWorkspaceTeams(){
     const entries=await panelRead<TournamentEntry[]>('teams',`/organizations/${organizationId}/teams?torneo=${tournament!.id}`);
     if(active())workspaceTeams.value=entries;
   }
-  await Promise.all([needsBlueprint ? (async()=>{
-    const categoryId = tournament.category_id;
-    if (workspaceBlueprint.value.categoryId !== categoryId) {workspaceBlueprint.value = { blueprint:null, slots:[], games:[] };workspaceCompetition.value=null;}
-    const blueprint=await panelRead<PositionBlueprintView>('schedule',`/organizations/${organizationId}/categories/${categoryId}/fixture/blueprint`);
-    const competition=blueprint.blueprint?await panelRead<PositionCompetitionView>('schedule',`/organizations/${organizationId}/categories/${categoryId}/fixture/blueprint/competition${section==='estadisticas'?'':'?resumen=1'}`):null;
-    if(!active()||selectedTournament.value?.category_id!==categoryId)return;
-    workspaceBlueprint.value={...blueprint,categoryId};workspaceCompetition.value=competition;
-  })():Promise.resolve(),needsTeams?loadWorkspaceTeams():Promise.resolve()]);
+  const teams = needsTeams ? loadWorkspaceTeams() : Promise.resolve();
+  if (needsBlueprint && !ordinaryFixture) {
+    await Promise.all([teams,(async()=>{
+      const categoryId = tournament.category_id;
+      if (workspaceBlueprint.value.categoryId !== categoryId) {workspaceBlueprint.value = { blueprint:null, slots:[], games:[] };workspaceCompetition.value=null;}
+      const path = `/organizations/${organizationId}/categories/${categoryId}/fixture/blueprint`;
+      const { competition: snapshot, ...blueprint } = await panelRead<PositionBlueprintView & { competition?: PositionCompetitionView | null }>(
+        'schedule', fixtureOverview ? `${path}?vista=fixture` : path,
+      );
+      const competition = snapshot ?? (blueprint.blueprint
+        ? await panelRead<PositionCompetitionView>('schedule',`${path}/competition${section==='estadisticas'?'':'?resumen=1'}`)
+        : null);
+      if(!active()||selectedTournament.value?.category_id!==categoryId)return;
+      workspaceBlueprint.value={...blueprint,categoryId};workspaceCompetition.value=competition;
+    })()]);
+  }
   if(!active())return;
   if (needsBlueprint && workspaceBlueprint.value.blueprint) return;
   if (section === 'multas' && canManageTournaments()) {
@@ -547,6 +580,7 @@ async function loadTournamentSection() {
       section==='estadisticas'?Promise.resolve(null):readDays(),
       editing?Promise.resolve(null):Promise.all(categories.map(async category=>[category.category_id,await panelRead<FixtureOverview>('schedule',`/organizations/${organizationId}/categories/${category.category_id}/fixture`).catch(cause=>{if(cause instanceof RequestError&&[404,409].includes(cause.status))return{phase:null,rounds:[],groups:[],bracket:[]};throw cause;})] as const)),
       section==='estadisticas'&&canManageTournaments()?Promise.all(categories.map(async category=>[category.category_id,await panelRead<PrivateStats>('schedule',`/organizations/${organizationId}/categories/${category.category_id}/statistics`).catch(cause=>{if(cause instanceof RequestError&&[404,409].includes(cause.status))return{officialMatches:0,entries:[],players:[],defense:[],tables:[]};throw cause;})] as const)):Promise.resolve(null),
+      teams,
     ]);
     if(!active())return;
     const days=sectionDays??(brackets?.some(([,overview])=>overview.bracket.length)?await readDays():null);
@@ -559,7 +593,7 @@ async function loadTournamentSection() {
     }
     if(brackets)workspaceBrackets.value=Object.fromEntries(brackets);
     if(stats)workspaceStats.value=Object.fromEntries(stats);
-  }
+  } else await teams;
 }
 async function loadReferees(){if(user.value?.organizationId)referees.value=await api(`/organizations/${user.value.organizationId}/fixture/referees`);}
 async function addReferee(){if(!user.value?.organizationId||newRefereeName.value.trim().length<2)return;await perform(async()=>{const row=await api<{id:string;name:string}>(`/organizations/${user.value!.organizationId}/fixture/referees`,'POST',{name:newRefereeName.value.trim()});await loadReferees();scheduleDraft.refereeId=row.id;scheduleDraft.refereeName=row.name;newRefereeName.value='';schedulePreview.value=null;notify('Árbitro guardado para esta organización.');});}
@@ -1373,11 +1407,14 @@ async function loadView(force = false) {
     } else {
       const active = user.value.memberships.filter((item) => item.status === 'active' && item.organization_status === 'active');
       if (!user.value.organizationId && active.length === 1) user.value = await api<CurrentUser>('/auth/context', 'POST', { organizationId: active[0].organization_id });
-      if (user.value.organizationId && (!organization.value || force)) await loadOrganization(user.value.organizationId);
+      const fixtureOverview = isFixtureOverview(route.value);
+      const organizationId = user.value.organizationId;
+      const needsOrganization = organizationId && (!organization.value || force);
+      if (needsOrganization && !fixtureOverview) await loadOrganization(organizationId);
       if (user.value.organizationId && parts.value[0] === 'bandeja') await loadReviewTasks(true);
       if (user.value.organizationId && parts.value[0]==='mis-partidos') await loadMatchAssignments();
       if (user.value.organizationId && ['torneos', 'nuevo-torneo', 'torneo', 'nueva-categoria', 'categoria', 'fixture', 'programar', 'partido','flyers','flyer-settings','equipos','nuevo-equipo','equipo','cuenta'].includes(parts.value[0])) {
-        await loadTournaments(true);
+        await Promise.all([loadTournaments(true), needsOrganization && fixtureOverview ? loadOrganization(organizationId) : null]);
         if(epoch!==routeEpoch)return;
         if(parts.value[0]==='categoria'&&selectedTournament.value){const categoryId=selectedTournament.value.category_id;workspaceBlueprint.value={...(await api<PositionBlueprintView>(`/organizations/${user.value.organizationId}/categories/${categoryId}/fixture/blueprint`)),categoryId};}
         if (parts.value[0] === 'torneo' && selectedTournament.value) {
