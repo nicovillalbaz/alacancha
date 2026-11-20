@@ -88,9 +88,9 @@ export async function loadFlyerSource(pool:DatabasePool,org:string,kind:FlyerKin
     const goals=(record.snapshot.events as Array<{kind:string;registrationId?:string;registration_id?:string;teamEntryId?:string;team_entry_id?:string;period?:string|null;voidsEventId?:string;voids_event_id?:string;id:string}>).filter(event=>['goal','penalty','own_goal'].includes(event.kind));
     const voided=new Set((record.snapshot.events as Array<{kind:string;voidsEventId?:string;voids_event_id?:string}>).filter(event=>event.kind==='void').map(event=>event.voidsEventId||event.voids_event_id));
     const active=goals.filter(event=>!voided.has(event.id));const ids=active.map(event=>event.registrationId||event.registration_id).filter((id):id is string=>Boolean(id));
-    const {rows:names}=await pool.query(`SELECT pr.id,p.given_names,p.family_names FROM player_registrations pr JOIN player_publications pub ON pub.organization_id=pr.organization_id AND pub.registration_id=pr.id AND pub.visible
-      JOIN players p ON p.organization_id=pr.organization_id AND p.id=pr.player_id WHERE pr.organization_id=$1 AND pr.id=ANY($2::uuid[])`,[org,ids]);
-    const byId=new Map(names.map(row=>[row.id,`${row.given_names} ${row.family_names}`]));snapshot.scorerRegistrationIds=names.map(row=>row.id);
+    const visibleNames=[...(await playerStatNames(pool,org,ids))].filter(([,player])=>player.publicName);
+    const byId=new Map(visibleNames.map(([id,player])=>[id,player.name]));
+    snapshot.scorerRegistrationIds=[...new Set(visibleNames.flatMap(([id,player])=>[id,player.registrationId]))];
     const pages=Math.max(1,Math.ceil(active.length/4));if(pageNo>pages)return missing();snapshot.totalPages=pages;
     snapshot.lines=active.slice((pageNo-1)*4,pageNo*4).map(event=>({left:`${byId.get(event.registrationId||event.registration_id)||'Gol sin autor'}${event.kind==='penalty'?' (pen.)':event.kind==='own_goal'?' (aut.)':''}`,right:event.period||'',side:(event.kind==='own_goal'?(event.teamEntryId||event.team_entry_id)===match.home_entry_id?'away':'home':(event.teamEntryId||event.team_entry_id)===match.home_entry_id?'home':'away') as 'home'|'away'}));
    }else{
