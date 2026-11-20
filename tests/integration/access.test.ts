@@ -1365,6 +1365,24 @@ test('T04/T05: una jornada de Copa con fecha prevista se publica y abre el acta 
   const history=(await request(adminA,'GET',`${root}/entries/${teamEntryId}/good-faith`)).json();
   assert.ok(history[0].snapshot.every((row:any)=>row.registrationId!==registrationId));
   assert.ok(history.find((row:any)=>row.version===automaticList.version).snapshot.some((row:any)=>row.registrationId===registrationId));
+  const canonicalPlayerId=randomUUID(),canonicalId=randomUUID();
+  await pool.query('INSERT INTO players(id,organization_id,given_names,family_names,created_by) VALUES($1,$2,$3,$4,$5)',[canonicalPlayerId,ids.a,'Lucía','Benítez',ids.adminA]);
+  await pool.query("INSERT INTO player_registrations(id,organization_id,entry_id,player_id,origin_kind,created_by,shirt_number,status) VALUES($1,$2,$3,$4,'unknown',$5,7,'approved')",[canonicalId,ids.a,teamEntryId,canonicalPlayerId,ids.adminA]);
+  await pool.query("INSERT INTO player_publications(organization_id,registration_id,visible,reason,decided_by) VALUES($1,$2,true,'Publicación sintética',$3)",[ids.a,canonicalId,ids.adminA]);
+  await assert.rejects(pool.query('UPDATE player_registrations SET merged_into_registration_id=$2 WHERE organization_id=$1 AND id=$3',[ids.a,nameOnly.json().id,registrationId]),{code:'23503'});
+  await pool.query('UPDATE player_registrations SET merged_into_registration_id=$2 WHERE organization_id=$1 AND id=$3',[ids.a,canonicalId,registrationId]);
+  const mergedRoster=(await app.inject(rosterPath)).json().filter((player:any)=>player.name==='Lucía Benítez');
+  assert.deepEqual(mergedRoster,[{name:'Lucía Benítez',shirtNumber:7,goals:1,yellowCards:1,redCards:0,customCards:[]}]);
+  const mergedScorers=(await app.inject(`${publicDraws}/${categoryId}/competition?vista=goleadores`)).json().players;
+  assert.equal(mergedScorers.find((player:any)=>player.registrationId===canonicalId)?.goals,1);
+  const mergedCapture=(await request(adminA,'GET',`${root}/matches/${match.id}/record`)).json();
+  assert.equal(mergedCapture.home.players.filter((player:any)=>player.registrationId===canonicalId).length,1);
+  assert.ok(mergedCapture.events.some((event:any)=>event.registrationId===canonicalId&&event.kind==='goal'));
+  const mergedGoodFaith=(await request(adminA,'GET',`${root}/entries/${teamEntryId}/players`)).json();
+  assert.equal(mergedGoodFaith.find((player:any)=>player.id===canonicalId)?.match_event_count,2);
+  assert.ok(!mergedGoodFaith.some((player:any)=>player.id===registrationId));
+  const originalEvent=(await pool.query("SELECT registration_id FROM match_record_events WHERE organization_id=$1 AND match_id=$2 AND registration_id=$3 AND kind='goal'",[ids.a,match.id,registrationId])).rows[0];
+  assert.equal(originalEvent?.registration_id,registrationId);
 });
 
 test('T04: orden manual de grupos y general avanza solo con actas vigentes y permiso propio',async()=>{

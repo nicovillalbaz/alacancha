@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import type { DatabasePool } from '@torneos/db';
 import { derivePositionCompetition, projectMatchJournal, ruleSchema, type MatchJournalEvent, type PositionGame, type PositionManualOrders, type PositionResult } from '@torneos/shared';
+import { canonicalRegistrationId, registrationMerges } from './player-registration-merges.ts';
 
 type Queryable=PoolClient|DatabasePool;
 
@@ -27,16 +28,21 @@ export async function positionCompetitionState(db:Queryable, organizationId:stri
     LEFT JOIN matchdays md ON md.organization_id=m.organization_id AND md.id=m.matchday_id
     WHERE g.organization_id=$1 AND g.blueprint_id=$2 AND m.archived_at IS NULL`,[organizationId,blueprint.id]);
   const playerTotals=new Map<string,{registrationId:string;entryId:string;goals:number}>();
-  const results:PositionResult[]=approved.map(row=>{
-    const snapshot=row.snapshot as {score:{home:number;away:number};shootout:{home:number;away:number};events:MatchJournalEvent[]};
-    const active=projectMatchJournal(snapshot.events,row.home_entry_id,row.away_entry_id).active;
-    for(const event of withPlayerTotals?active:[]){
+  const merges=withPlayerTotals?await registrationMerges(db,organizationId,{categoryId}):new Map<string,string>();
+  function countPlayerGoals(events: MatchJournalEvent[]) {
+    for(const event of events){
       if(!event.registrationId||!event.teamEntryId||!['goal','penalty'].includes(event.kind))continue;
-      const key=`${event.teamEntryId}:${event.registrationId}`;
-      const player=playerTotals.get(key)||{registrationId:event.registrationId,entryId:event.teamEntryId,goals:0};
+      const registrationId=canonicalRegistrationId(merges,event.registrationId);
+      const key=`${event.teamEntryId}:${registrationId}`;
+      const player=playerTotals.get(key)||{registrationId,entryId:event.teamEntryId,goals:0};
       player.goals++;
       playerTotals.set(key,player);
     }
+  }
+  const results:PositionResult[]=approved.map(row=>{
+    const snapshot=row.snapshot as {score:{home:number;away:number};shootout:{home:number;away:number};events:MatchJournalEvent[]};
+    const active=projectMatchJournal(snapshot.events,row.home_entry_id,row.away_entry_id).active;
+    if(withPlayerTotals)countPlayerGoals(active);
     const count=(team:string,kind:'yellow'|'red')=>active.filter(event=>event.teamEntryId===team&&(kind==='yellow'?event.kind==='yellow'||event.kind==='second_yellow':event.kind==='red'||event.kind==='second_yellow')).length;
     return {code:row.code,homeEntryId:row.home_entry_id,awayEntryId:row.away_entry_id,homeGoals:snapshot.score.home,awayGoals:snapshot.score.away,homePenalties:snapshot.shootout.home,awayPenalties:snapshot.shootout.away,homeYellowCards:count(row.home_entry_id,'yellow'),awayYellowCards:count(row.away_entry_id,'yellow'),homeRedCards:count(row.home_entry_id,'red'),awayRedCards:count(row.away_entry_id,'red')};
   });
@@ -69,13 +75,7 @@ export async function positionCompetitionState(db:Queryable, organizationId:stri
   const extraScore=extra?.snapshot&&(!publicOnly||extra.day_status==='published')?{home:extra.snapshot.score.home,away:extra.snapshot.score.away,homePenalties:extra.snapshot.shootout.home,awayPenalties:extra.snapshot.shootout.away}:null;
   if(withPlayerTotals&&extraScore&&extra.home_entry_id&&extra.away_entry_id){
     const active=projectMatchJournal(extra.snapshot.events,extra.home_entry_id,extra.away_entry_id).active;
-    for(const event of active){
-      if(!event.registrationId||!event.teamEntryId||!['goal','penalty'].includes(event.kind))continue;
-      const key=`${event.teamEntryId}:${event.registrationId}`;
-      const player=playerTotals.get(key)||{registrationId:event.registrationId,entryId:event.teamEntryId,goals:0};
-      player.goals++;
-      playerTotals.set(key,player);
-    }
+    countPlayerGoals(active);
   }
   const titleExtra=extra?{decision:extra.decision as 'no_extra'|'extra',matchId:extra.match_id as string|null,homeEntryId:extra.home_entry_id as string|null,awayEntryId:extra.away_entry_id as string|null,date:extra.match_date as string|null,dayStatus:extra.day_status as string|null,score:extraScore,winnerEntryId:!extraScore?null:extraScore.home>extraScore.away?extra.home_entry_id:extraScore.away>extraScore.home?extra.away_entry_id:extraScore.homePenalties>extraScore.awayPenalties?extra.home_entry_id:extraScore.awayPenalties>extraScore.homePenalties?extra.away_entry_id:null}:null;
   const defense=new Map([...slots.values()].filter((id):id is string=>!!id).map(id=>[id,{entryId:id,played:0,goalsAgainst:0}]));

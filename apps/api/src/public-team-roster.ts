@@ -1,5 +1,6 @@
 import type { DatabasePool } from '@torneos/db';
 import { projectMatchJournal, type MatchJournalEvent, type PublicRosterPlayer } from '@torneos/shared';
+import { canonicalRegistrationId, registrationMerges } from './player-registration-merges.ts';
 
 export async function publicTeamRoster(pool: DatabasePool, organizationId: string, categoryId: string, entryId: string) {
   const {rows} = await pool.query(`SELECT pr.id,p.given_names,p.family_names,pr.shirt_number
@@ -24,11 +25,12 @@ export async function publicTeamRoster(pool: DatabasePool, organizationId: strin
     WHERE m.organization_id=$1 AND m.category_id=$2 AND m.archived_at IS NULL
       AND (m.home_entry_id=$3 OR m.away_entry_id=$3)
     ORDER BY a.created_at DESC,a.id`,[organizationId,categoryId,entryId]);
+  const merges=matches.length?await registrationMerges(pool,organizationId,{entryIds:[entryId]}):new Map<string,string>();
   for(const match of matches){
     const events=projectMatchJournal(match.events as MatchJournalEvent[],match.home_entry_id,match.away_entry_id).active;
     for(const event of events){
       if(event.teamEntryId!==entryId||!event.registrationId)continue;
-      const player=players.get(event.registrationId);
+      const player=players.get(canonicalRegistrationId(merges,event.registrationId));
       if(!player)continue;
       if(event.kind==='goal'||event.kind==='penalty')player.goals++;
       if(event.kind==='yellow'||event.kind==='second_yellow')player.yellowCards++;

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { DatabasePool } from '@torneos/db';
 import { deriveOfficialStatistics, ruleSchema, type OfficialStatMatch, type StatEntry } from '@torneos/shared';
+import { attributeMatchEvents, canonicalRegistrationId, registrationMerges } from './player-registration-merges.ts';
 
 export interface CategoryStatistics {
   categoryId: string;
@@ -40,20 +41,24 @@ export async function categoryStatistics(pool: DatabasePool, organizationId: str
     LEFT JOIN lineup_versions al ON al.organization_id=r.organization_id AND al.id=r.away_lineup_id
     LEFT JOIN fixture_rounds fr ON fr.organization_id=m.organization_id AND fr.id=m.fixture_round_id
     WHERE m.organization_id=$1 AND m.category_id=$2 ORDER BY m.id`, [organizationId, categoryId]);
+  const merges = matchRows.length ? await registrationMerges(pool,organizationId,{categoryId}) : new Map<string,string>();
+  const rosterIds = (players: Array<{registrationId:string}>) =>
+    [...new Set(players.map(player => canonicalRegistrationId(merges,player.registrationId)))];
   const matches: OfficialStatMatch[] = matchRows.map(row => ({
     id: row.id, homeEntryId: row.home_entry_id, awayEntryId: row.away_entry_id,
     groupNo: phase?.mode === 'groups' && row.fixture_phase_id === phase.id ? row.group_no : null,
     tableEligible: row.competition_stage === 'initial' && (!phase ? row.fixture_phase_id === null : phase.status === 'generated' && phase.mode !== 'knockout' && row.fixture_phase_id === phase.id),
-    score: row.snapshot.score, events: row.snapshot.events,
-    homeRoster: (row.roster_snapshot?.home?.length ? row.roster_snapshot.home : row.home_lineup?.players || []).map((player: { registrationId: string }) => player.registrationId),
-    awayRoster: (row.roster_snapshot?.away?.length ? row.roster_snapshot.away : row.away_lineup?.players || []).map((player: { registrationId: string }) => player.registrationId),
+    score: row.snapshot.score, events: attributeMatchEvents(row.snapshot.events,merges),
+    homeRoster: rosterIds(row.roster_snapshot?.home?.length ? row.roster_snapshot.home : row.home_lineup?.players || []),
+    awayRoster: rosterIds(row.roster_snapshot?.away?.length ? row.roster_snapshot.away : row.away_lineup?.players || []),
   }));
   const { rows: adjustments } = await pool.query('SELECT id,entry_id,points_delta FROM standing_adjustments WHERE organization_id=$1 AND category_id=$2 ORDER BY decided_at,id', [organizationId, categoryId]);
   const pointAdjustments = new Map<string,number>();
   for (const item of adjustments) pointAdjustments.set(item.entry_id, (pointAdjustments.get(item.entry_id) || 0) + item.points_delta);
   const sourceKey = createHash('sha256').update(JSON.stringify({ projectionVersion: 8, phase: phase?.id ?? null, version: rule.version, entries: entries.map(entry => [entry.id, entry.name, entry.groupNo]), approvals: matchRows.map(row => [row.id, row.approval_id]), adjustments: adjustments.map(item => [item.id,item.entry_id,item.points_delta]) })).digest('hex');
   const { rows: [cached] } = await pool.query('SELECT source_key,projection FROM category_statistics WHERE organization_id=$1 AND category_id=$2', [organizationId, categoryId]);
-  if (!force && cached?.source_key === sourceKey) return cached.projection as CategoryStatistics;
+  const cacheKey = merges.size ? createHash('sha256').update(JSON.stringify([sourceKey,[...merges]])).digest('hex') : sourceKey;
+  if (!force && cached?.source_key === cacheKey) return cached.projection as CategoryStatistics;
   const derived = deriveOfficialStatistics(entries, matches, rules, pointAdjustments);
   const defenseByEntry=new Map(entries.map(entry=>[entry.id,{entryId:entry.id,played:0,goalsAgainst:0}]));
   for(const match of matches){
@@ -64,17 +69,29 @@ export async function categoryStatistics(pool: DatabasePool, organizationId: str
   const tableMatches = matches.filter(match => match.tableEligible).length;
   const projection: CategoryStatistics = { categoryId, phaseMode: phase?.mode ?? null, ruleVersion: rule.version, entries, officialMatches: matches.length, tableMatches, tables: derived.tables, defense:[...defenseByEntry.values()], players: derived.players, sourceKey };
   await pool.query(`INSERT INTO category_statistics(organization_id,category_id,source_key,projection) VALUES($1,$2,$3,$4)
-    ON CONFLICT(organization_id,category_id) DO UPDATE SET source_key=excluded.source_key,projection=excluded.projection,calculated_at=now()`, [organizationId, categoryId, sourceKey, JSON.stringify(projection)]);
+    ON CONFLICT(organization_id,category_id) DO UPDATE SET source_key=excluded.source_key,projection=excluded.projection,calculated_at=now()`, [organizationId, categoryId, cacheKey, JSON.stringify(projection)]);
   return projection;
 }
 
 export async function playerStatNames(pool: DatabasePool, organizationId: string, registrationIds: string[]) {
-  if (!registrationIds.length) return new Map<string, { name: string; publicName: boolean }>();
-  const { rows } = await pool.query(`SELECT pr.id,p.given_names,p.family_names,coalesce(pub.visible,false) public_name
-    FROM player_registrations pr JOIN players p ON p.organization_id=pr.organization_id AND p.id=pr.player_id
-    LEFT JOIN player_publications pub ON pub.organization_id=pr.organization_id AND pub.registration_id=pr.id
-    WHERE pr.organization_id=$1 AND pr.id=ANY($2::uuid[])`, [organizationId, registrationIds]);
-  return new Map(rows.map(row => [row.id, { name: `${row.given_names} ${row.family_names}`, publicName: row.public_name }]));
+  type Name = { registrationId: string; name: string; publicName: boolean; shirtNumber:number|null };
+  if (!registrationIds.length) return new Map<string,Name>();
+  const { rows } = await pool.query(`WITH RECURSIVE resolved AS (
+    SELECT pr.id AS source_id,pr.id,pr.merged_into_registration_id,ARRAY[pr.id] AS path
+    FROM player_registrations pr WHERE pr.organization_id=$1 AND pr.id=ANY($2::uuid[])
+    UNION ALL
+    SELECT resolved.source_id,pr.id,pr.merged_into_registration_id,resolved.path||pr.id
+    FROM resolved JOIN player_registrations pr ON pr.organization_id=$1 AND pr.id=resolved.merged_into_registration_id
+    WHERE NOT pr.id=ANY(resolved.path)
+  )
+  SELECT resolved.source_id,pr.id,pr.shirt_number,p.given_names,p.family_names,coalesce(pub.visible,false) public_name
+  FROM resolved JOIN player_registrations pr ON pr.organization_id=$1 AND pr.id=resolved.id
+  JOIN players p ON p.organization_id=pr.organization_id AND p.id=pr.player_id
+  LEFT JOIN player_publications pub ON pub.organization_id=pr.organization_id AND pub.registration_id=pr.id
+  WHERE resolved.merged_into_registration_id IS NULL`, [organizationId, registrationIds]);
+  return new Map<string,Name>(rows.map(row => [row.source_id, {
+    registrationId:row.id, name:`${row.given_names} ${row.family_names}`, publicName:row.public_name, shirtNumber:row.shirt_number,
+  }]));
 }
 
 export async function withDocumentedTiebreaks(pool: DatabasePool, organizationId: string, projection: CategoryStatistics): Promise<CategoryStatistics> {

@@ -27,6 +27,7 @@ import { positionCompetitionState, syncPositionMatches } from './position-compet
 import { registerPublicWebRoutes } from './public-web.ts';
 import { publicVisitReport, recordPublicVisit } from './public-visits.ts';
 import { publicTeamRoster } from './public-team-roster.ts';
+import { attributeMatchEvents, canonicalRegistrationId, registrationMerges } from './player-registration-merges.ts';
 import { tournamentImageDelivery } from './tournament-images.ts';
 
 interface Auth { session_id: string; user_id: string; organization_id: string | null; display_name: string; username: string; platform_admin: boolean; rawToken: string }
@@ -1337,8 +1338,18 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     await teamAccess(request, organizationId, entry);
     const { rowCount } = await pool.query('SELECT 1 FROM team_entries WHERE organization_id=$1 AND id=$2', [organizationId, entry]);
     if (!rowCount) fail(404, 'NOT_FOUND', 'No se encontró la participación del equipo.');
-    const { rows } = await pool.query(`SELECT pr.id,pr.player_id,pr.entry_id,p.given_names,p.family_names,p.document_kind,p.document_last_four,to_char(p.birth_date,'YYYY-MM-DD') birth_date,p.revision identity_revision,pr.registration_number,pr.shirt_number,
-      (SELECT count(*)::int FROM match_record_events ev WHERE ev.organization_id=pr.organization_id AND ev.registration_id=pr.id) match_event_count,pr.details,pr.origin_kind,CASE WHEN pr.origin_kind='internal' THEN origin.name ELSE pr.origin_team_name END origin_team_name,pr.origin_city,pr.origin_league,pr.status,pr.revision
+    const { rows } = await pool.query(`WITH RECURSIVE merged AS (
+        SELECT id,merged_into_registration_id target,ARRAY[id] path FROM player_registrations
+        WHERE organization_id=$1 AND entry_id=$2 AND merged_into_registration_id IS NOT NULL
+        UNION ALL
+        SELECT merged.id,next.merged_into_registration_id,merged.path||next.id FROM merged
+        JOIN player_registrations next ON next.organization_id=$1 AND next.entry_id=$2 AND next.id=merged.target
+        WHERE next.merged_into_registration_id IS NOT NULL AND NOT next.id=ANY(merged.path)
+      )
+      SELECT pr.id,pr.player_id,pr.entry_id,p.given_names,p.family_names,p.document_kind,p.document_last_four,to_char(p.birth_date,'YYYY-MM-DD') birth_date,p.revision identity_revision,pr.registration_number,pr.shirt_number,
+      (SELECT count(*)::int FROM match_record_events ev WHERE ev.organization_id=pr.organization_id
+        AND ev.registration_id IN (SELECT pr.id UNION ALL SELECT id FROM merged WHERE target=pr.id)) match_event_count,
+      pr.details,pr.origin_kind,CASE WHEN pr.origin_kind='internal' THEN origin.name ELSE pr.origin_team_name END origin_team_name,pr.origin_city,pr.origin_league,pr.status,pr.revision
       FROM player_registrations pr JOIN players p ON p.organization_id=pr.organization_id AND p.id=pr.player_id
       LEFT JOIN teams origin ON origin.organization_id=pr.organization_id AND origin.id=pr.origin_team_id
       WHERE pr.organization_id=$1 AND pr.entry_id=$2 AND pr.reverted_at IS NULL ORDER BY p.family_names,p.given_names,pr.id LIMIT 500`, [organizationId, entry]);
@@ -2651,7 +2662,15 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     type PublicRoster = { home?: RosterPlayer[]; away?: RosterPlayer[] };
     const snapshots=results.map(row=>({matchId:row.match_id,status:row.approved_snapshot?'official':'provisional',snapshot:row.approved_snapshot || (row.status==='submitted'?row.submitted_snapshot:null),rules:row.rules,roster:row.roster_snapshot as PublicRoster|null})).filter(row=>row.snapshot);
     const publicNames=await playerStatNames(pool,organizationId,[...new Set(snapshots.flatMap(row=>[...(row.snapshot.events as MatchJournalEvent[]).flatMap(event=>[event.registrationId,event.relatedRegistrationId]),...(row.roster?.home||[]).map(player=>player.registrationId),...(row.roster?.away||[]).map(player=>player.registrationId)].filter((id):id is string=>!!id)))]);
-    const resultByMatch=new Map(snapshots.map(row=>{const snapshot=row.snapshot;const events=snapshot.events as MatchJournalEvent[];const voided=new Set(events.filter(event=>event.kind==='void').map(event=>event.voidsEventId));const parsedRules=ruleSchema.safeParse(row.rules);const cards=parsedRules.success?parsedRules.data.advanced?.discipline.customCards||[]:[];const players=(['home','away'] as const).flatMap(side=>(row.roster?.[side]||[]).flatMap(player=>{const published=publicNames.get(player.registrationId);return published?.publicName?[{side,name:published.name,shirtNumber:player.shirtNumber??null}]:[];}));return [row.matchId,{status:row.status,score:snapshot.score,shootout:snapshot.shootout,players,events:events.filter(event=>event.kind!=='void'&&!voided.has(event.id)).map(event=>{const card=event.kind==='custom_card'?cards.find(item=>item.code===event.cardCode):null;return {id:event.id,kind:event.kind,teamEntryId:event.teamEntryId,period:event.period,minute:event.minute,cardLabel:card?.label||null,cardColor:card?.color||null,name:event.registrationId&&publicNames.get(event.registrationId)?.publicName?publicNames.get(event.registrationId)!.name:'Jugador',relatedName:event.relatedRegistrationId&&publicNames.get(event.relatedRegistrationId)?.publicName?publicNames.get(event.relatedRegistrationId)!.name:null};})}];}));
+    const resultByMatch=new Map(snapshots.map(row=>{const snapshot=row.snapshot;const events=snapshot.events as MatchJournalEvent[];const voided=new Set(events.filter(event=>event.kind==='void').map(event=>event.voidsEventId));const parsedRules=ruleSchema.safeParse(row.rules);const cards=parsedRules.success?parsedRules.data.advanced?.discipline.customCards||[]:[];const players=(['home','away'] as const).flatMap(side=>{
+        const seen=new Set<string>();
+        return (row.roster?.[side]||[]).flatMap(player=>{
+          const published=publicNames.get(player.registrationId);
+          if(!published?.publicName||seen.has(published.registrationId))return [];
+          seen.add(published.registrationId);
+          return [{side,name:published.name,shirtNumber:player.shirtNumber??published.shirtNumber}];
+        });
+      });return [row.matchId,{status:row.status,score:snapshot.score,shootout:snapshot.shootout,players,events:events.filter(event=>event.kind!=='void'&&!voided.has(event.id)).map(event=>{const card=event.kind==='custom_card'?cards.find(item=>item.code===event.cardCode):null;return {id:event.id,kind:event.kind,teamEntryId:event.teamEntryId,period:event.period,minute:event.minute,cardLabel:card?.label||null,cardColor:card?.color||null,name:event.registrationId&&publicNames.get(event.registrationId)?.publicName?publicNames.get(event.registrationId)!.name:'Jugador',relatedName:event.relatedRegistrationId&&publicNames.get(event.relatedRegistrationId)?.publicName?publicNames.get(event.relatedRegistrationId)!.name:null};})}];}));
     return days.map((day) => ({ id: day.id, ordinal: day.ordinal, edition_id: day.edition_id, edition_name: day.edition_name, tournament_id: day.tournament_id, tournament_name: day.tournament_name,
       matches: day.matches.map((match) => {const result=resultByMatch.get(match.id);return { ...listFields(match,bracket), category_name: match.category_name, venue_name: match.venue_name, court_label: match.court_label, result:result?{...result,events:result.events.map(event=>({id:event.id,kind:event.kind,side:event.teamEntryId===match.home_entry_id?'home':event.teamEntryId===match.away_entry_id?'away':'unknown',period:event.period,minute:event.minute,cardLabel:event.cardLabel,cardColor:event.cardColor,name:event.name,relatedName:event.relatedName}))}:null };} ) }));
   });
@@ -3046,6 +3065,16 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       WHERE r.organization_id=$1 AND r.match_id=$2`, [organizationId, matchId]);
     if (!record) fail(404, 'RECORD_NOT_FOUND', 'Todavía no se abrió la carga de este partido.');
     const roster=await frozenCaptureRoster(pool,organizationId,record);
+    const merges=await registrationMerges(pool,organizationId,{entryIds:[record.home_entry_id,record.away_entry_id]});
+    for(const side of ['home','away'] as const){
+      const originals=roster[side];
+      const mapped=new Map<string,FrozenPlayer>();
+      for(const player of originals){
+        const id=canonicalRegistrationId(merges,player.registrationId);
+        if(!mapped.has(id)||id===player.registrationId) mapped.set(id,{...player,registrationId:id});
+      }
+      roster[side]=[...mapped.values()];
+    }
     const selected=[...roster.home,...roster.away].map(player=>player.registrationId);
     const captureOpen=record.status==='capturing';
     const {rows:names}=await pool.query(`SELECT pr.id,pr.entry_id,pr.shirt_number,p.given_names,p.family_names,
@@ -3063,13 +3092,14 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
         .map(row=>({registrationId:row.id as string,shirtNumber:row.shirt_number as number|null})):[];
       return [...roster[side],...additions].map(player=>{
         const row=namesById.get(player.registrationId);
-        return {registrationId:player.registrationId,name:row?`${row.given_names} ${row.family_names}`:'Jugador',shirtNumber:player.shirtNumber??null,
+        return {registrationId:player.registrationId,name:row?`${row.given_names} ${row.family_names}`:'Jugador',
+          shirtNumber:player.shirtNumber??(captureOpen&&row?.selectable?row.shirt_number:null)??null,
           ...(captureOpen?{selectable:!!row?.selectable&&row.entry_id===entryId}:{})};
       });
     }
     const { rows: rawEvents } = await pool.query(`SELECT id,sequence,kind,team_entry_id,registration_id,related_registration_id,incident_note,card_code,window_no,period,minute,voids_event_id,reason,recorded_at
       FROM match_record_events WHERE organization_id=$1 AND match_id=$2 ORDER BY sequence`, [organizationId, matchId]);
-    const events: MatchJournalEvent[] = rawEvents.map((event) => ({ id:event.id,sequence:event.sequence,kind:event.kind,teamEntryId:event.team_entry_id,registrationId:event.registration_id,relatedRegistrationId:event.related_registration_id,incidentNote:event.incident_note,cardCode:event.card_code,windowNo:event.window_no,period:event.period,minute:event.minute,voidsEventId:event.voids_event_id,reason:event.reason,recordedAt:event.recorded_at.toISOString() }));
+    const events=attributeMatchEvents(rawEvents.map((event) => ({ id:event.id,sequence:event.sequence,kind:event.kind,teamEntryId:event.team_entry_id,registrationId:event.registration_id,relatedRegistrationId:event.related_registration_id,incidentNote:event.incident_note,cardCode:event.card_code,windowNo:event.window_no,period:event.period,minute:event.minute,voidsEventId:event.voids_event_id,reason:event.reason,recordedAt:event.recorded_at.toISOString() })),merges);
     const {score,shootout,unattributedGoals}=projectMatchJournal(events,record.home_entry_id,record.away_entry_id);
     const { rows: [rule] } = await pool.query('SELECT rules FROM rule_versions WHERE organization_id=$1 AND category_id=(SELECT category_id FROM draft_matches WHERE organization_id=$1 AND id=$2) AND version=$3', [organizationId, matchId, record.rule_version]);
     const periods = ruleSchema.safeParse(rule?.rules);
