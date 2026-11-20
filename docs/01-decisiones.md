@@ -330,3 +330,5 @@ La planilla de partido se arma eligiendo jugadores con toques rápidos y guardan
 20/11/2026 — Al unificar fichas repetidas del mismo equipo se retiran las duplicadas y se vinculan a la ficha vigente. Las actas y eventos conservan las referencias originales. La captura, la ficha pública y los goleadores resuelven la ficha vigente sin modificar el marcador ni los criterios de publicación.
 
 20/11/2026 — Abrir un partido conserva en el historial la jornada, la sección y la posición del listado. Al regresar se recupera la misma entrada. El nombre deportivo de una ficha aprobada aparece en los torneos publicados. Una ficha puede quedar explícitamente privada y los nombres de menores identificados se mantienen privados. Una autorización explícita para mostrar un nombre no cambia la elegibilidad deportiva.
+
+20/11/2026 — El icono de pestaña y los iconos modernos de instalación usan WebP sin pérdida. El manifiesto mantiene el identificador y las alternativas PNG. El icono táctil de Safari sigue en PNG. El editor de flyers solicita miniaturas WebP privadas de 128 px y el renderizador usa los archivos fuente.
