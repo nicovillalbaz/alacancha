@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { DatabasePool } from '@torneos/db';
 import { deriveOfficialStatistics, ruleSchema, type OfficialStatMatch, type StatEntry } from '@torneos/shared';
 import { attributeMatchEvents, canonicalRegistrationId, registrationMerges } from './player-registration-merges.ts';
+import { publicPlayerName } from './public-team-roster.ts';
 
 export interface CategoryStatistics {
   categoryId: string;
@@ -84,7 +85,7 @@ export async function playerStatNames(pool: DatabasePool, organizationId: string
     FROM resolved JOIN player_registrations pr ON pr.organization_id=$1 AND pr.id=resolved.merged_into_registration_id
     WHERE NOT pr.id=ANY(resolved.path)
   )
-  SELECT resolved.source_id,pr.id,pr.shirt_number,p.given_names,p.family_names,coalesce(pub.visible,false) public_name
+  SELECT resolved.source_id,pr.id,pr.shirt_number,p.given_names,p.family_names,(${publicPlayerName}) public_name
   FROM resolved JOIN player_registrations pr ON pr.organization_id=$1 AND pr.id=resolved.id
   JOIN players p ON p.organization_id=pr.organization_id AND p.id=pr.player_id
   LEFT JOIN player_publications pub ON pub.organization_id=pr.organization_id AND pub.registration_id=pr.id

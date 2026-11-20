@@ -2,10 +2,10 @@
 import { computed, inject, shallowRef, type Component } from 'vue';
 import PublicImage from './PublicImage.vue';
 
-const props=withDefaults(defineProps<{name:string;teamId?:string;organizationId?:string;color?:string;hasShield?:boolean;size?:'sm'|'md'|'lg'}>(),{size:'md'});
+const props=withDefaults(defineProps<{name:string;teamId?:string;organizationId?:string;color?:string;hasShield?:boolean;size?:'sm'|'md'|'lg';publicDraw?:boolean}>(),{size:'md'});
 const organizerImage = inject<Component | null>('organizer-crest-image', null);
 const shield = computed(() => props.hasShield && props.teamId && props.organizationId
-  ? `/api/v1/${organizerImage ? '' : 'public/'}organizations/${props.organizationId}/teams/${props.teamId}/shield` : '');
+  ? `/api/v1/${organizerImage ? '' : 'public/'}organizations/${props.organizationId}${!organizerImage&&props.publicDraw?'/draws':''}/teams/${props.teamId}/shield` : '');
 const failed = shallowRef('');
 function initials(name:string){return name.trim().split(/\s+/).slice(0,2).map(part=>part[0]||'').join('').toUpperCase()||'•';}
 </script>

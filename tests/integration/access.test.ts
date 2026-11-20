@@ -1319,6 +1319,20 @@ test('T04/T05: una jornada de Copa con fecha prevista se publica y abre el acta 
   assert.ok(publicResult?.events.some((event:any)=>event.name==='Lucía Benítez'&&event.kind==='yellow'&&event.period===null));
   const rosterPath=`${publicDraws}/${categoryId}/teams/${teamEntryId}/players`;
   assert.deepEqual((await app.inject(rosterPath)).json(),[{name:'Lucía Benítez',shirtNumber:7,goals:1,yellowCards:1,redCards:0,customCards:[]}]);
+  const rosterCases = [
+    { given:'Aprobado', family:'Visible', status:'approved', birthday:'1990-01-01', visibility:null },
+    { given:'Aprobado', family:'Oculto', status:'approved', birthday:'1990-01-01', visibility:false },
+    { given:'Jugador', family:'Menor', status:'approved', birthday:'2020-01-01', visibility:true },
+    { given:'Jugador', family:'Borrador', status:'draft', birthday:'1990-01-01', visibility:null },
+  ];
+  for (const player of rosterCases) {
+    const playerId=randomUUID(),id=randomUUID();
+    await pool.query('INSERT INTO players(id,organization_id,given_names,family_names,birth_date,created_by) VALUES($1,$2,$3,$4,$5,$6)',[playerId,ids.a,player.given,player.family,player.birthday,ids.adminA]);
+    await pool.query("INSERT INTO player_registrations(id,organization_id,entry_id,player_id,origin_kind,created_by,status) VALUES($1,$2,$3,$4,'unknown',$5,$6)",[id,ids.a,teamEntryId,playerId,ids.adminA,player.status]);
+    if(player.visibility!==null)await pool.query("INSERT INTO player_publications(organization_id,registration_id,visible,reason,decided_by) VALUES($1,$2,$3,'Prueba de privacidad',$4)",[ids.a,id,player.visibility,ids.adminA]);
+    if(player.family==='Menor')assert.equal((await request(adminA,'POST',`${root}/registrations/${id}/publication`,{visible:true,reason:'Prueba de menor'})).statusCode,422);
+  }
+  assert.deepEqual((await app.inject(rosterPath)).json().map((player:any)=>player.name).sort(),['Aprobado Visible','Lucía Benítez']);
   assert.equal((await app.inject(rosterPath.replace(ids.a,ids.b))).statusCode,404);
   const publicStatistics=(await app.inject(`/api/v1/public/organizations/${ids.a}/categories/${categoryId}/statistics`)).json();
   assert.ok(publicStatistics.scorers.some((player:any)=>player.name==='Lucía Benítez'&&player.goals===1));

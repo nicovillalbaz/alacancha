@@ -26,7 +26,7 @@ import { tieWinner, type ApprovedScore } from './fixture-progress.ts';
 import { positionCompetitionState, syncPositionMatches } from './position-competition.ts';
 import { registerPublicWebRoutes } from './public-web.ts';
 import { publicVisitReport, recordPublicVisit } from './public-visits.ts';
-import { publicTeamRoster } from './public-team-roster.ts';
+import { publicPlayerName, publicTeamRoster } from './public-team-roster.ts';
 import { attributeMatchEvents, canonicalRegistrationId, registrationMerges } from './player-registration-merges.ts';
 import { tournamentImageDelivery } from './tournament-images.ts';
 
@@ -2547,8 +2547,12 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const organizationId = uuid(id), registration = uuid(registrationId), actor = await organizationAccess(request, organizationId, true);
     const input = z.object({ visible: z.boolean(), reason: z.string().trim().min(3).max(300) }).strict().parse(request.body);
     return transaction(pool, async client => {
-      const { rows: [player] } = await client.query('SELECT pr.entry_id FROM player_registrations pr WHERE pr.organization_id=$1 AND pr.id=$2', [organizationId, registration]);
+      const { rows: [player] } = await client.query(`SELECT pr.entry_id,
+        p.birth_date>(CURRENT_DATE-INTERVAL '18 years')::date AS minor
+        FROM player_registrations pr JOIN players p ON p.organization_id=pr.organization_id AND p.id=pr.player_id
+        WHERE pr.organization_id=$1 AND pr.id=$2`, [organizationId, registration]);
       if (!player) fail(404, 'REGISTRATION_NOT_FOUND', 'No se encontró la inscripción.');
+      if(input.visible&&player.minor)fail(422,'PLAYER_NAME_PRIVATE','El nombre de un jugador menor de edad permanece privado.');
       const { rows: [before] } = await client.query('SELECT visible,reason FROM player_publications WHERE organization_id=$1 AND registration_id=$2', [organizationId, registration]);
       await client.query(`INSERT INTO player_publications(organization_id,registration_id,visible,reason,decided_by) VALUES($1,$2,$3,$4,$5)
         ON CONFLICT(organization_id,registration_id) DO UPDATE SET visible=excluded.visible,reason=excluded.reason,decided_by=excluded.decided_by,decided_at=now()`, [organizationId, registration, input.visible, input.reason, actor.user_id]);
@@ -2574,9 +2578,9 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const {rows:publicRoster}=await pool.query(`SELECT pr.id registration_id,e.id entry_id,p.given_names,p.family_names FROM player_registrations pr
       JOIN team_entries e ON e.organization_id=pr.organization_id AND e.id=pr.entry_id
       JOIN players p ON p.organization_id=pr.organization_id AND p.id=pr.player_id
-      JOIN player_publications pub ON pub.organization_id=pr.organization_id AND pub.registration_id=pr.id AND pub.visible
+      LEFT JOIN player_publications pub ON pub.organization_id=pr.organization_id AND pub.registration_id=pr.id
       WHERE pr.organization_id=$1 AND e.category_id=$2 AND e.status='active' AND e.public_visible
-        AND pr.status<>'rejected' AND pr.reverted_at IS NULL
+        AND (${publicPlayerName}) AND pr.reverted_at IS NULL
       ORDER BY p.given_names,p.family_names,pr.id LIMIT 500`,[organizationId,category]);
     const playerStats=new Map(projection.players.map(player=>[player.registrationId,player]));
     const rosters=[...new Set(publicRoster.map(row=>row.entry_id as string))].map(entryId=>({entryId,players:publicRoster.filter(row=>row.entry_id===entryId).map(row=>{const stats=playerStats.get(row.registration_id);return {name:`${row.given_names} ${row.family_names}`,goals:stats?.goals||0,yellowCards:stats?.yellowCards||0,redCards:stats?.redCards||0};})}));

@@ -2,14 +2,18 @@ import type { DatabasePool } from '@torneos/db';
 import { projectMatchJournal, type MatchJournalEvent, type PublicRosterPlayer } from '@torneos/shared';
 import { canonicalRegistrationId, registrationMerges } from './player-registration-merges.ts';
 
+export const publicPlayerName = `pr.status<>'rejected'
+  AND coalesce(pub.visible,pr.status='approved')
+  AND (p.birth_date IS NULL OR p.birth_date<=(CURRENT_DATE-INTERVAL '18 years')::date)`;
+
 export async function publicTeamRoster(pool: DatabasePool, organizationId: string, categoryId: string, entryId: string) {
   const {rows} = await pool.query(`SELECT pr.id,p.given_names,p.family_names,pr.shirt_number
     FROM player_registrations pr
     JOIN team_entries e ON e.organization_id=pr.organization_id AND e.id=pr.entry_id
     JOIN players p ON p.organization_id=pr.organization_id AND p.id=pr.player_id
-    JOIN player_publications pub ON pub.organization_id=pr.organization_id AND pub.registration_id=pr.id AND pub.visible
+    LEFT JOIN player_publications pub ON pub.organization_id=pr.organization_id AND pub.registration_id=pr.id
     WHERE pr.organization_id=$1 AND pr.entry_id=$3 AND e.category_id=$2 AND e.status='active'
-      AND pr.status<>'rejected' AND pr.reverted_at IS NULL
+      AND (${publicPlayerName}) AND pr.reverted_at IS NULL
     ORDER BY p.family_names,p.given_names,pr.id LIMIT 500`,[organizationId,categoryId,entryId]);
   const players = new Map<string,PublicRosterPlayer>(rows.map(row=>[row.id,{
     name:`${row.given_names} ${row.family_names}`,shirtNumber:row.shirt_number,goals:0,yellowCards:0,redCards:0,customCards:[],

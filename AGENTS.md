@@ -19,6 +19,8 @@ Leer `README.md`, `docs/README.md`, `docs/01-decisiones.md`, `docs/avances.md` y
 
 ## Implementación
 
+Las [reglas comunes de implementación](docs/observaciones-generales.md#funciones-compartidas-entre-torneos) describen cómo reutilizar el flujo entre copas, parametrizar sus diferencias y verificar la compatibilidad con los torneos existentes.
+
 Trabajar por `docs/tandas/01` a `09`, en incrementos verticales pequeños. Antes de cada cambio, inspeccionar código y migraciones existentes. Para cada ticket registrar datos/migración, API, UI, permisos, estados de error/vacío, pruebas y evidencia pertinente. Los permisos se validan en servidor con alcance de organización y recurso; no aceptar `organization_id` del cliente como autorización. Probar siempre un caso permitido y uno denegado entre organizaciones.
 
 No ejecutar migraciones destructivas, borrar datos reales ni importar en masa sin respaldo y ensayo de restauración. Usar datos sintéticos en desarrollo y pruebas. Documentar cualquier cambio de arquitectura o regla en `docs/01-decisiones.md`, y actualizar `docs/avances.md` al cerrar un incremento. No avanzar silenciosamente de tanda.

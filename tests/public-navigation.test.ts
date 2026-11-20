@@ -4,6 +4,7 @@ import {closePublicDetail,pushPublicNavigation,publicMeasurementUrl,publicNaviga
 import {claimFanView} from '../apps/web/src/public-visits.ts';
 import {createViewReads} from '../apps/web/src/view-reads.ts';
 import {createPublicReads} from '../apps/web/src/public-reads.ts';
+import {isMatchListRoute,savedListScroll} from '../apps/web/src/match-list-navigation.ts';
 
 test('las lecturas públicas comparten la solicitud en curso y se renuevan con el resultado', async t => {
   let fetched = 0;
@@ -85,6 +86,27 @@ test('cerrar un detalle vuelve por historial o limpia un enlace directo',()=>{
     closePublicDetail('partidos');
     assert.equal(replaced,'/copa-sanber');
   }finally{Object.assign(globalThis,{history:oldHistory,location:oldLocation});}
+});
+
+test('la vuelta conserva el desplazamiento en la entrada de la lista y no lo copia al detalle',()=>{
+  const original={history:globalThis.history,location:globalThis.location,window:globalThis.window};
+  const listing={pathname:'/copa-sanber',search:'?vista=fixture',href:'https://alacancha.top/copa-sanber?vista=fixture'};
+  const previous={matchList:{choices:{round:4}}};
+  const navigation={state:previous as unknown,replaceState(state:unknown){this.state=state;},pushState(state:unknown){this.state=state;}};
+  try{
+    let saved:unknown;
+    Object.assign(globalThis,{history:navigation,location:listing,window:{scrollY:720}});
+    const replace=navigation.replaceState;
+    navigation.replaceState=function(state:unknown){saved=state;replace.call(this,state);};
+    pushPublicNavigation('fixture',{kind:'cruce',id:'4-2'});
+    assert.deepEqual(saved,{matchList:{choices:{round:4},scroll:{top:720,matchId:undefined,offset:undefined}}});
+    assert.equal(savedListScroll(),undefined);
+    navigation.state=saved;
+    assert.equal(savedListScroll()?.top,720);
+    assert.equal(isMatchListRoute('torneo/nueva-copa/partidos/fecha-cuatro'),true);
+    assert.equal(isMatchListRoute('torneo/nueva-copa/fixture/fecha-cuatro'),true);
+    assert.equal(isMatchListRoute('partido/categoria/partido'),false);
+  }finally{Object.assign(globalThis,original);}
 });
 
 test('publicar un cruce abierto conserva si se entró desde la lista o por enlace directo',()=>{

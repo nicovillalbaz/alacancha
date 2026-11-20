@@ -7,6 +7,7 @@ import SportTabs from './SportTabs.vue';
 import SportEventMark from './SportEventMark.vue';
 import InstallButton from './InstallButton.vue';
 import {cleanLegacyHash,isFixtureOverview,routeFromUrl} from './client-route.ts';
+import {isMatchListRoute,rememberListScroll,restoreListScroll,savedListScroll} from './match-list-navigation.ts';
 import {organizerReads} from './view-reads.ts';
 import {readAnnouncedFixture} from './organizer-announced-fixture.ts';
 import type { FixtureStart } from './fixture-start.ts';
@@ -361,9 +362,16 @@ function go(path:string){
   const target=path==='acceso'?'/acceso':path==='panel'?'/panel':
     ['invitacion','recuperacion'].includes(path.split('/')[0])?`/#/${path}`:`/panel/${path}`;
   if(target===location.pathname+location.search+location.hash&&route.value===path){window.scrollTo(0,0);return;}
-  history.pushState(null,'',target);
+  const fromMatchList=path.startsWith('partido/')&&isMatchListRoute(route.value);
+  if(fromMatchList)rememberListScroll(path.split('/')[2]);
+  history.pushState(fromMatchList?{fromMatchList:true}:null,'',target);
   route.value=path;
   window.scrollTo(0,0);
+}
+function returnToMatchList(event: MouseEvent){
+  if(!history.state?.fromMatchList||event.button!==0||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;
+  event.preventDefault();
+  history.back();
 }
 function focusContent() { document.querySelector<HTMLElement>('#contenido')?.focus(); }
 function jumpToSection(id: string) { const target = document.getElementById(id); target?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' }); target?.querySelector<HTMLElement>('input:not([type="hidden"]),button')?.focus({ preventScroll: true }); }
@@ -1603,7 +1611,7 @@ function signInForLink() { returnRoute.value = route.value; login.username = tok
 function dateLabel(value: string) { return new Intl.DateTimeFormat('es-PY', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Asuncion' }).format(new Date(value)); }
 const routeChanged = () => {
   const cleanTarget=cleanLegacyHash(location.hash);
-  if(cleanTarget)history.replaceState(null,'',cleanTarget);
+  if(cleanTarget)history.replaceState(history.state,'',cleanTarget);
   route.value=routeFromLocation();
 };
 const internalLinkClicked = (event:MouseEvent) => {
@@ -1615,7 +1623,24 @@ const internalLinkClicked = (event:MouseEvent) => {
   event.preventDefault();go(destination);
 };
 const connectionChanged = () => { online.value = navigator.onLine; if(online.value && queuedCapture.value.length) void syncCaptureQueue(); };
-watch(route, (next, previous) => { success.value = ''; publishPreviewCategory.value = ''; showRuleEditor.value = next.startsWith('categoria/') && next.endsWith('/tarjetas'); if (next.startsWith('planilla/') && next !== previous) lineupSearch.value = ''; if (next.startsWith('fixture/') && next !== previous) fixtureSeedOrder.value = []; if (next.startsWith('equipo/') && next !== previous) { teamAction.value = null; teamTab.value='players'; } if (next.startsWith('jugador/') && next !== previous) playerTab.value='record'; if (next.startsWith('disciplina/') && next !== previous) {disciplineTab.value='cases';disciplineSettingsTab.value='case';} if (next.startsWith('partido/') && next !== previous) matchTab.value='events'; void loadView().then(async()=>{if(next.endsWith('/tarjetas')){await nextTick(); document.getElementById('rule-cards')?.scrollIntoView({block:'start'});}}); if(!next.endsWith('/tarjetas'))window.scrollTo(0, 0); });
+watch(route, (next, previous) => {
+  success.value = '';
+  publishPreviewCategory.value = '';
+  showRuleEditor.value = next.startsWith('categoria/') && next.endsWith('/tarjetas');
+  if(next.startsWith('planilla/') && next!==previous) lineupSearch.value = '';
+  if(next.startsWith('fixture/') && next!==previous) fixtureSeedOrder.value = [];
+  if(next.startsWith('equipo/') && next!==previous){teamAction.value=null;teamTab.value='players';}
+  if(next.startsWith('jugador/') && next!==previous) playerTab.value='record';
+  if(next.startsWith('disciplina/') && next!==previous){disciplineTab.value='cases';disciplineSettingsTab.value='case';}
+  if(next.startsWith('partido/') && next!==previous) matchTab.value='events';
+  const listPosition=isMatchListRoute(next)?savedListScroll():undefined;
+  if(!next.endsWith('/tarjetas')&&!listPosition)window.scrollTo(0,0);
+  void loadView().then(async()=>{
+    if(route.value!==next)return;
+    if(next.endsWith('/tarjetas')){await nextTick();document.getElementById('rule-cards')?.scrollIntoView({block:'start'});}
+    else await restoreListScroll(listPosition,()=>route.value===next);
+  });
+});
 watch(route, () => { removingPlayer.value=''; removePlayerReason.value=''; passwordDraft.value = ''; ownPasswordOpen.value = false; adminPasswordTarget.value = ''; });
 watch([route, user], async () => { await nextTick(); document.querySelector<HTMLElement>('.bottom-nav a[aria-current="page"]')?.scrollIntoView({ inline: 'center', block: 'nearest' }); }, { flush: 'post' });
 onMounted(() => { window.addEventListener('hashchange', routeChanged); window.addEventListener('popstate', routeChanged); document.addEventListener('click',internalLinkClicked); window.addEventListener('online', connectionChanged); window.addEventListener('offline', connectionChanged); const mountedRoute=route.value; routeChanged(); if(route.value===mountedRoute)void loadView(); });
@@ -1759,9 +1784,9 @@ onUnmounted(() => { cancelFixtureReads(); organizerImages.clear(); routeEpoch++;
         <PaymentsWorkspace v-else-if="parts[0] === 'torneo' && tournamentSection === 'pagos' && canManageTournaments()" :key="selectedTournament.id" :organization-id="user.organizationId!" :tournament-id="selectedTournament.id" :teams="tournamentEntries" :categories="tournamentCategories" :initial-entry-id="parts[3] === 'tarifas' ? '' : parts[3]" :show-rates="parts[3] === 'tarifas'" :csrf-token="user.csrfToken" @refresh="refreshPaymentRules" />
         <FixtureDayEditor v-else-if="parts[0] === 'torneo' && tournamentSection === 'fixture' && parts[3] && canManageTournaments()" :tournament="selectedTournament" :categories="tournamentCategories" :entries="tournamentEntries" :days="tournamentDays" :day-id="parts[3]" :focus-match-id="parts[4]" :venues="tournamentResources.venues" :official-match-ids="workspaceOfficialMatchIds" :organization-id="user.organizationId!" :csrf-token="user.csrfToken" @refresh="refreshWorkspace" />
         <PositionBlueprint v-else-if="parts[0] === 'torneo' && tournamentSection === 'fixture' && workspaceBlueprint.blueprint && workspaceBlueprint.categoryId === selectedTournament.category_id" :view="workspaceBlueprint" :competition="workspaceCompetition" :entries="tournamentEntries" :can-manage="canManageTournaments()" :organization-id="user.organizationId!" :category-id="selectedTournament.category_id" :tournament-id="selectedTournament.id" :csrf-token="user.csrfToken" @refresh="refreshWorkspace" />
-        <PositionMatches v-else-if="parts[0] === 'torneo' && tournamentSection === 'partidos' && workspaceBlueprint.blueprint && workspaceBlueprint.categoryId === selectedTournament.category_id" :view="workspaceBlueprint" :competition="workspaceCompetition" :entries="tournamentEntries" :organization-id="user.organizationId!" :category-id="selectedTournament.category_id" :tournament-id="selectedTournament.id" />
+        <PositionMatches v-else-if="parts[0] === 'torneo' && tournamentSection === 'partidos' && workspaceBlueprint.blueprint && workspaceBlueprint.categoryId === selectedTournament.category_id" :view="workspaceBlueprint" :competition="workspaceCompetition" :entries="tournamentEntries" :organization-id="user.organizationId!" :category-id="selectedTournament.category_id" :tournament-id="selectedTournament.id" @open-match="go" />
         <PositionStatistics v-else-if="parts[0]==='torneo' && tournamentSection==='estadisticas' && workspaceBlueprint.blueprint && workspaceBlueprint.categoryId===selectedTournament.category_id" :view="workspaceBlueprint" :competition="workspaceCompetition" :entries="tournamentEntries" :organization-id="user.organizationId!" :category-id="selectedTournament.category_id" :can-manage="canManageTournaments()" @decide-title-extra="decideTitleExtra" @decide-tiebreak="decidePositionTiebreak" />
-        <TournamentWorkspace v-else-if="parts[0] === 'torneo'" :tournament="selectedTournament" :categories="tournamentCategories" :entries="tournamentEntries" :days="tournamentDays" :official-match-ids="workspaceOfficialMatchIds" :scores="workspaceScores" :cases="workspaceCases" :stats="workspaceStats" :brackets="workspaceBrackets" :position-blueprint="workspaceBlueprint" :position-competition="workspaceCompetition" :section="tournamentSection" :day-id="parts[3]" :can-manage="canManageTournaments()" :organization-id="user.organizationId!" :csrf-token="user.csrfToken" @refresh="refreshWorkspace" />
+        <TournamentWorkspace v-else-if="parts[0] === 'torneo'" :tournament="selectedTournament" :categories="tournamentCategories" :entries="tournamentEntries" :days="tournamentDays" :official-match-ids="workspaceOfficialMatchIds" :scores="workspaceScores" :cases="workspaceCases" :stats="workspaceStats" :brackets="workspaceBrackets" :position-blueprint="workspaceBlueprint" :position-competition="workspaceCompetition" :section="tournamentSection" :day-id="parts[3]" :can-manage="canManageTournaments()" :organization-id="user.organizationId!" :csrf-token="user.csrfToken" @refresh="refreshWorkspace" @open-match="go" />
         <template v-if="parts[0] === 'torneo' && tournamentSection === 'ajustes'">
           <div class="tournament-emblem-editor"><OrganizerImage v-if="selectedTournament.has_emblem" :src="`/api/v1/organizations/${user.organizationId}/tournaments/${selectedTournament.id}/emblem`" :alt="`Emblema de ${selectedTournament.name}`" /><Icon v-else name="trophy" /><div><strong>Emblema del torneo</strong><input id="tournament-emblem" class="file-input" type="file" accept="image/png,image/jpeg,image/webp" :disabled="busy" @change="uploadTournamentEmblem($event,selectedTournament.id)"><label for="tournament-emblem" class="team-shield-action"><Icon name="edit" />{{ selectedTournament.has_emblem ? 'Cambiar' : 'Añadir' }}</label></div></div>
           <details class="optional-section"><summary>Sedes</summary>
@@ -1824,11 +1849,11 @@ onUnmounted(() => { cancelFixtureReads(); organizerImages.clear(); routeEpoch++;
       <div v-else-if="!user.platformAdmin && parts[0] === 'mis-partidos'" class="form-page">
         <div class="heading"><h1 tabindex="-1">Partidos asignados</h1><button type="button" class="btn" :disabled="loading" @click="loadMatchAssignments">Actualizar</button></div>
         <p v-if="!matchAssignments.length" class="notice neutral">Todavía no tenés partidos asignados.</p>
-        <div v-for="item in matchAssignments" :key="item.id" class="panel pad stack mt"><strong>{{ item.home_name }} vs {{ item.away_name }}</strong><p class="small muted">{{ item.day_ordinal===null?'Fecha pendiente':`Fecha ${item.day_ordinal}` }} · {{ item.duty==='capture'?'Captura':'Revisión' }} · {{ item.name }}</p><a class="btn primary full" :href="`#/partido/${item.category_id}/${item.match_id}`">Abrir partido</a></div>
+        <div v-for="item in matchAssignments" :key="item.id" class="panel pad stack mt"><strong>{{ item.home_name }} vs {{ item.away_name }}</strong><p class="small muted">{{ item.day_ordinal===null?'Fecha pendiente':`Fecha ${item.day_ordinal}` }} · {{ item.duty==='capture'?'Captura':'Revisión' }} · {{ item.name }}</p><a class="btn primary full" :data-match-list-id="item.match_id" :href="`#/partido/${item.category_id}/${item.match_id}`">Abrir partido</a></div>
       </div>
 
       <div v-else-if="!user.platformAdmin && parts[0] === 'partido'" class="form-page">
-        <a :href="canManageTournaments() && selectedTournament ? `#/torneo/${selectedTournament.id}/partidos` : '#/mis-partidos'" class="back"><Icon name="back" />Partidos</a>
+        <a :href="canManageTournaments() && selectedTournament ? `#/torneo/${selectedTournament.id}/partidos` : '#/mis-partidos'" class="back" @click="returnToMatchList"><Icon name="back" />Partidos</a>
         <div class="heading match-top-actions"><h1 tabindex="-1" class="sr-only">Partido</h1><a v-if="selectedTournament && canManageTournaments() && capture" class="btn" :href="`#/flyers/${selectedTournament.id}/${capture.status === 'official' ? 'result' : 'match'}/${parts[2]}`"><Icon name="file" />{{ capture.status === 'official' ? 'Flyer del resultado' : 'Flyer del partido' }}</a></div>
         <section v-if="!capture && capturePreview" class="match-preview"><div class="match-hero" aria-label="Partido programado"><div class="match-hero-status">Jornada {{ capturePreview.day.ordinal }} · {{ capturePreview.day.status==='published'?'Publicada':'Sin publicar' }}</div><div class="match-hero-main"><div class="match-hero-team"><OrganizerImage v-if="capturePreview.match.home_has_shield" class="match-hero-shield" :src="`/api/v1/organizations/${user.organizationId}/teams/${capturePreview.match.home_team_id}/shield`" alt="" /><span v-else class="match-hero-shield placeholder">{{ initials(capturePreview.match.home_name) }}</span><strong>{{ capturePreview.match.home_name }}</strong></div><div class="match-hero-score"><b aria-label="Marcador pendiente">–<span>:</span>–</b></div><div class="match-hero-team"><OrganizerImage v-if="capturePreview.match.away_has_shield" class="match-hero-shield" :src="`/api/v1/organizations/${user.organizationId}/teams/${capturePreview.match.away_team_id}/shield`" alt="" /><span v-else class="match-hero-shield placeholder">{{ initials(capturePreview.match.away_name) }}</span><strong>{{ capturePreview.match.away_name }}</strong></div></div><p>{{ capturePreview.match.match_date || 'Día por definir' }}{{ capturePreview.match.match_time ? ` · ${capturePreview.match.match_time}` : '' }}{{ capturePreview.match.venue_name ? ` · ${capturePreview.match.venue_name}` : '' }}</p></div><p v-if="capturePreview.day.status==='draft'" class="small muted">Se publicará toda la jornada: {{ capturePreview.day.matches.length }} {{ capturePreview.day.matches.length === 1 ? 'partido' : 'partidos' }}. Los partidos sin fecha se mostrarán como pendientes.</p><button v-if="!capturePreview.match.acta_status && !captureStartBlocked && canCaptureMatch" type="button" class="btn primary full" :disabled="busy" @click="startCapture">{{ capturePreview.day.status==='draft'?'Publicar jornada y cargar partido':'Cargar partido' }}</button><a v-if="selectedTournament && canManageTournaments()" class="btn match-preview-edit" :href="`#/torneo/${selectedTournament.id}/fixture/${capturePreview.day.id}/${capturePreview.match.id}`"><Icon name="edit" />Editar en Fixture</a></section>
         <section v-else-if="!capture && canCaptureMatch && !captureStartBlocked && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(parts[2]||'')" class="stack"><button type="button" class="btn primary full" :disabled="busy" @click="startCapture">Abrir partido para cargar</button></section>
@@ -1955,7 +1980,7 @@ onUnmounted(() => { cancelFixtureReads(); organizerImages.clear(); routeEpoch++;
   <div class="field"><label for="points-reason">Motivo de la decisión</label><textarea id="points-reason" v-model="pointsDraft.reason" minlength="3" maxlength="1000" required></textarea></div>
   <button class="btn full" :disabled="busy || !pointsDraft.delta">Registrar ajuste</button>
   <div v-for="adjustment in standingAdjustments.filter(item=>item.entry_id===selectedEntry?.entry_id)" :key="adjustment.id" class="team-person"><strong>{{ adjustment.points_delta }} puntos</strong><span>{{ adjustment.reason }}</span></div>
-</form></div></div><section v-if="canManageTournaments() && disciplineTab==='publicity' && privateStats" id="disciplina-publicity-panel" role="tabpanel" aria-labelledby="disciplina-publicity-tab" class="panel pad stack mt"><h2>Nombres públicos</h2><p class="small muted">El nombre queda privado hasta autorización individual del organizador. Nunca se publica la cédula ni el nacimiento.</p><div v-for="player in privateStats.players.filter(item=>item.goals>0)" :key="player.registrationId" class="team-person"><div><strong>{{ player.name }}</strong><p class="small muted">{{ player.goals }} {{ player.goals===1?'gol':'goles' }} · {{ player.publicName?'Nombre autorizado':'Nombre privado' }}</p></div><div class="team-confirm"><input v-model="publicationReasons[player.registrationId]" :aria-label="`Motivo de visibilidad de ${player.name}`" minlength="3" maxlength="300" placeholder="Motivo de publicación"><button type="button" class="btn" :disabled="busy" @click="setPlayerPublicName(player)">{{ player.publicName?'Ocultar':'Publicar nombre' }}</button></div></div><p v-if="!privateStats.players.some(item=>item.goals>0)" class="small muted">Aún no hay goles con autor en actas oficiales.</p></section>
+</form></div></div><section v-if="canManageTournaments() && disciplineTab==='publicity' && privateStats" id="disciplina-publicity-panel" role="tabpanel" aria-labelledby="disciplina-publicity-tab" class="panel pad stack mt"><h2>Nombres públicos</h2><p class="small muted">Los nombres de la lista aprobada aparecen en el portal. Podés ocultarlos aquí. Los datos de menores son privados.</p><div v-for="player in privateStats.players.filter(item=>item.goals>0)" :key="player.registrationId" class="team-person"><div><strong>{{ player.name }}</strong><p class="small muted">{{ player.goals }} {{ player.goals===1?'gol':'goles' }} · {{ player.publicName?'Nombre autorizado':'Nombre privado' }}</p></div><div class="team-confirm"><input v-model="publicationReasons[player.registrationId]" :aria-label="`Motivo de visibilidad de ${player.name}`" minlength="3" maxlength="300" placeholder="Motivo de publicación"><button type="button" class="btn" :disabled="busy" @click="setPlayerPublicName(player)">{{ player.publicName?'Ocultar':'Publicar nombre' }}</button></div></div><p v-if="!privateStats.players.some(item=>item.goals>0)" class="small muted">Aún no hay goles con autor en actas oficiales.</p></section>
       </div>
 
       <div v-else-if="!user.platformAdmin && parts[0] === 'buena-fe' && selectedEntry" class="form-page">

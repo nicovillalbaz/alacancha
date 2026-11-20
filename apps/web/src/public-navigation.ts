@@ -1,4 +1,5 @@
 import { isPublicSection, publicSectionMetadata } from '@torneos/shared/public-sections';
+import { rememberListScroll } from './match-list-navigation.ts';
 
 export type PublicDetail = { kind: 'partido' | 'equipo' | 'cruce'; id: string } | null;
 
@@ -81,14 +82,18 @@ export function pushPublicNavigation(view: string, detail: PublicDetail = null, 
   const target = publicNavigationUrl(location.pathname, location.search, view, detail);
   if (target === `${location.pathname}${location.search}`) return;
   const fromList=!!detail&&(!replace||history.state?.alacanchaPublicDetail===true);
-  history[replace ? 'replaceState' : 'pushState']({alacanchaPublicDetail:fromList}, '', target);
+  if(detail&&!replace)rememberListScroll(detail.kind==='partido'?detail.id:undefined);
+  const state=replace?{...history.state,alacanchaPublicDetail:fromList}:{alacanchaPublicDetail:fromList};
+  history[replace ? 'replaceState' : 'pushState'](state, '', target);
   if (!replace) measurePublicNavigation();
 }
 
 export function closePublicDetail(view: string) {
-  if (history.state?.alacanchaPublicDetail) history.back();
-  else {
-    pushPublicNavigation(view,null,true);
-    measurePublicNavigation();
+  if (history.state?.alacanchaPublicDetail) {
+    history.back();
+    return true;
   }
+  pushPublicNavigation(view,null,true);
+  measurePublicNavigation();
+  return false;
 }
