@@ -9,7 +9,7 @@ const views = [{key:'all',label:'Completo'},{key:'goals',label:'Goles'},{key:'ca
 const goalKinds = new Set(['goal','penalty','penalty_miss','own_goal','shootout_goal','shootout_miss']);
 const cardKinds = new Set(['yellow','second_yellow','red','custom_card']);
 const visibleEvents = computed(() => props.events.filter(event => view.value === 'all' || (view.value === 'goals' ? goalKinds : cardKinds).has(event.kind)));
-const periods = [{code:'PT',label:'PT'},{code:'ST',label:'ST'},{code:'TE',label:'TE'},{code:'P4',label:'P4'},{code:'P5',label:'P5'},{code:'P6',label:'P6'},{code:'',label:'Sin tiempo'}];
+const periods = [{code:'PT',label:'PT'},{code:'ST',label:'ST'},{code:'TE',label:'TE'},{code:'P4',label:'P4'},{code:'P5',label:'P5'},{code:'P6',label:'P6'},{code:'',label:'Detalle del partido'}];
 const groups = computed(() => {
   const known = new Set(periods.map(period => period.code));
   const other = [...new Set(visibleEvents.value.map(event => event.period || '').filter(period => !known.has(period)))].map(code => ({code,label:code}));

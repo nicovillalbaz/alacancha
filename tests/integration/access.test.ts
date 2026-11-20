@@ -1203,12 +1203,42 @@ test('T04/T05: una jornada de Copa con fecha prevista se publica y abre el acta 
   const days=(await request(adminA,'GET',`${root}/editions/${editionId}/matchdays`)).json();
   const firstDay=days.find((day:{ordinal:number})=>day.ordinal===1);assert.ok(firstDay);
   const match=firstDay.matches[0];assert.ok(match.match_date);assert.equal(match.match_time,'');assert.equal(match.venue_id,null);
+  const payments=`${root}/tournaments/${tournamentId}/payments`,collectFee=`${payments}/match-fees/${match.id}/collect`;
+  const fee={entryId:match.home_entry_id,amountGuaranies:20000,occurredOn:'2026-11-20'};
+  assert.deepEqual((await request(adminA,'GET',payments)).json().pendingMatchFees,[]);
+  assert.equal((await request(adminA,'POST',collectFee,fee)).statusCode,404);
+  assert.equal((await request(adminB,'POST',`${payments}/match-fee-rate`,{amountGuaranies:20000})).statusCode,403);
+  assert.equal((await request(adminA,'POST',`${payments}/match-fee-rate`,{amountGuaranies:20000})).statusCode,200);
   assert.equal(match.position_match,true);assert.equal(match.acta_status,null);
   assert.equal((await request(adminA,'POST',`${root}/matches/${match.id}/record/start`,{})).json().code,'FIXTURE_NOT_PUBLISHED');
   const preview=await request(adminA,'GET',`${root}/matchdays/${firstDay.id}/preview`);assert.deepEqual(preview.json().missing,[]);
   assert.equal((await request(adminB,'POST',`${root}/matchdays/${firstDay.id}/publish`,{expectedRevision:preview.json().revision,reason:'Intento externo'})).statusCode,403);
   const published=await request(adminA,'POST',`${root}/matchdays/${firstDay.id}/publish`,{expectedRevision:preview.json().revision,reason:'Jornada sintética confirmada'});
   assert.equal(published.statusCode,201,published.body);
+  const pending=(await request(adminA,'GET',payments)).json();
+  assert.equal(pending.matchFeeGuaranies,20000);
+  assert.deepEqual(pending.pendingMatchFees.filter((row:any)=>row.match_id===match.id).map((row:any)=>row.entry_id).sort(),[match.home_entry_id,match.away_entry_id].sort());
+  assert.equal(pending.summary.incomeGuaranies,0);
+  assert.equal((await request(adminB,'POST',collectFee,fee)).statusCode,403);
+  assert.equal((await request(adminA,'POST',collectFee,{...fee,entryId:randomUUID()})).statusCode,400);
+  const collections=await Promise.all([request(adminA,'POST',collectFee,fee),request(adminA,'POST',collectFee,fee)]);
+  assert.deepEqual(collections.map(item=>item.statusCode).sort(),[201,409]);
+  const paid=(await request(adminA,'GET',payments)).json();
+  assert.equal(paid.summary.incomeGuaranies,20000);
+  assert.equal(paid.pendingMatchFees.filter((row:any)=>row.match_id===match.id).length,1);
+  const collection=collections.find(item=>item.statusCode===201)!.json();
+  assert.equal((await request(adminA,'POST',`${payments}/${collection.id}/void`,{reason:'Anulación sintética'})).statusCode,200);
+  assert.equal((await request(adminA,'GET',payments)).json().pendingMatchFees.filter((row:any)=>row.match_id===match.id).length,2);
+  const oldPayment=await request(adminA,'POST',payments,{kind:'income',category:'match_fee',...fee,description:'Cobro anterior sintético'});
+  assert.equal(oldPayment.statusCode,201,oldPayment.body);
+  const link=`${payments}/match-fees/${match.id}/link`;
+  const prior={entryId:fee.entryId,movementId:oldPayment.json().id};
+  assert.equal((await request(adminB,'POST',link,prior)).statusCode,403);
+  assert.equal((await request(adminA,'POST',link,prior)).statusCode,200);
+  assert.equal((await request(adminA,'POST',link,prior)).statusCode,200);
+  const reconciled=(await request(adminA,'GET',payments)).json();
+  assert.equal(reconciled.summary.incomeGuaranies,20000);
+  assert.equal(reconciled.pendingMatchFees.filter((row:any)=>row.match_id===match.id).length,1);
   const publicDays=(await app.inject({method:'GET',url:`/api/v1/public/organizations/${ids.a}/fixture`})).json();
   const publicMatch=publicDays.flatMap((day:{matches:Array<{id:string;match_time:string;result:unknown}>})=>day.matches).find((item:{id:string})=>item.id===match.id);
   assert.ok(publicMatch);assert.equal(publicMatch.match_time,'');assert.equal(publicMatch.result,null);
@@ -1242,7 +1272,7 @@ test('T04/T05: una jornada de Copa con fecha prevista se publica y abre el acta 
   assert.equal((await request(adminA,'GET',`${root}/matches/${match.id}/record`)).json().status,'capturing');
   assert.equal((await request(adminB,'GET',`${root}/matches/${match.id}/record`)).statusCode,403);
   const registrationId=randomUUID(),teamEntryId=started.json().home.entryId;
-  const quickPlayer={registrationId,teamEntryId,givenNames:'Lucía',familyNames:'Benítez',event:{clientEventId:registrationId,kind:'goal',teamEntryId,registrationId,relatedRegistrationId:null,incidentNote:null,cardCode:null,windowNo:null,period:'PT',minute:null}};
+  const quickPlayer={registrationId,teamEntryId,givenNames:'Lucía',familyNames:'Benítez',shirtNumber:7,event:{clientEventId:registrationId,kind:'goal',teamEntryId,registrationId,relatedRegistrationId:null,incidentNote:null,cardCode:null,windowNo:null,period:'PT',minute:null}};
   assert.equal((await request(adminB,'POST',`${root}/matches/${match.id}/record/players`,quickPlayer)).statusCode,403);
   const otherEntry=randomUUID();
   assert.equal((await request(adminA,'POST',`${root}/matches/${match.id}/record/players`,{...quickPlayer,teamEntryId:otherEntry,event:{...quickPlayer.event,teamEntryId:otherEntry}})).json().code,'TEAM_NOT_IN_MATCH');
@@ -1259,9 +1289,13 @@ test('T04/T05: una jornada de Copa con fecha prevista se publica y abre el acta 
   assert.equal((await pool.query('SELECT 1 FROM player_registrations WHERE organization_id=$1 AND id=$2',[ids.a,failedId])).rowCount,0);
   const {rows:[quickIdentity]}=await pool.query(`SELECT p.birth_date,pr.status FROM player_registrations pr JOIN players p ON p.organization_id=pr.organization_id AND p.id=pr.player_id WHERE pr.organization_id=$1 AND pr.id=$2`,[ids.a,quickPlayer.registrationId]);
   assert.equal(quickIdentity.birth_date,null);assert.equal(quickIdentity.status,'draft');
-  const nameOnly=await request(adminA,'POST',`${root}/entries/${started.json().away.entryId}/players`,{givenNames:'Mario',familyNames:'Gómez'});
+  const nameOnly=await request(adminA,'POST',`${root}/entries/${started.json().away.entryId}/players`,{givenNames:'Mario',familyNames:'Gómez',shirtNumber:0});
   assert.equal(nameOnly.statusCode,201,nameOnly.body);
-  const card=await request(adminA,'POST',`${root}/matches/${match.id}/events`,{clientEventId:randomUUID(),kind:'yellow',teamEntryId:quickPlayer.teamEntryId,registrationId:quickPlayer.registrationId,relatedRegistrationId:null,incidentNote:null,cardCode:null,windowNo:null,period:'PT',minute:null});
+  const reopenedRoster=await request(adminA,'GET',`${root}/matches/${match.id}/record`);
+  assert.deepEqual(reopenedRoster.json().away.players.find((row:any)=>row.registrationId===nameOnly.json().id),{
+    registrationId:nameOnly.json().id,name:'Mario Gómez',shirtNumber:0,selectable:true,
+  });
+  const card=await request(adminA,'POST',`${root}/matches/${match.id}/events`,{clientEventId:randomUUID(),kind:'yellow',teamEntryId:quickPlayer.teamEntryId,registrationId:quickPlayer.registrationId,relatedRegistrationId:null,incidentNote:null,cardCode:null,windowNo:null,period:null,minute:null});
   assert.equal(card.statusCode,201,card.body);assert.equal(card.json().score.home,1);assert.equal(card.json().events.length,2);
   const hiddenId=randomUUID();
   const hiddenPlayer={...quickPlayer,registrationId:hiddenId,givenNames:'Rosa',familyNames:'Duarte',event:{...quickPlayer.event,clientEventId:hiddenId,registrationId:hiddenId,kind:'yellow'}};
@@ -1273,12 +1307,19 @@ test('T04/T05: una jornada de Copa con fecha prevista se publica y abre el acta 
   assert.equal((await request(adminA,'POST',`${root}/matches/${match.id}/acta/submit`,{reason:'Prueba de alta rápida'})).statusCode,201);
   const approved=await request(adminA,'POST',`${root}/matches/${match.id}/acta/approve`,{reason:'Prueba de publicación automática',overrideSignoffs:true});
   assert.equal(approved.statusCode,201,approved.body);
+  const closedRoster=(await request(adminA,'GET',`${root}/matches/${match.id}/record`)).json();
+  assert.equal(closedRoster.away.players.some((player:any)=>player.registrationId===nameOnly.json().id),false);
+  assert.ok(!closedRoster.warnings.some((warning:string)=>warning.includes('datos por completar')));
   const {rows:publication}=await pool.query('SELECT registration_id,visible FROM player_publications WHERE organization_id=$1 AND registration_id=ANY($2::uuid[]) ORDER BY registration_id',[ids.a,[registrationId,hiddenId]]);
   assert.equal(publication.find(row=>row.registration_id===registrationId)?.visible,true);
   assert.equal(publication.find(row=>row.registration_id===hiddenId)?.visible,false);
   const publicResult=(await app.inject(`/api/v1/public/organizations/${ids.a}/fixture`)).json().flatMap((day:any)=>day.matches).find((item:any)=>item.id===match.id)?.result;
   assert.ok(publicResult?.events.some((event:any)=>event.name==='Lucía Benítez'&&event.side==='home'&&event.period==='PT'));
   assert.ok(publicResult?.events.some((event:any)=>event.name==='Jugador'&&event.kind==='yellow'));
+  assert.ok(publicResult?.events.some((event:any)=>event.name==='Lucía Benítez'&&event.kind==='yellow'&&event.period===null));
+  const rosterPath=`${publicDraws}/${categoryId}/teams/${teamEntryId}/players`;
+  assert.deepEqual((await app.inject(rosterPath)).json(),[{name:'Lucía Benítez',shirtNumber:7,goals:1,yellowCards:1,redCards:0,customCards:[]}]);
+  assert.equal((await app.inject(rosterPath.replace(ids.a,ids.b))).statusCode,404);
   const publicStatistics=(await app.inject(`/api/v1/public/organizations/${ids.a}/categories/${categoryId}/statistics`)).json();
   assert.ok(publicStatistics.scorers.some((player:any)=>player.name==='Lucía Benítez'&&player.goals===1));
   const scorers=await app.inject(`${publicDraws}/${categoryId}/competition?vista=goleadores`);
@@ -1301,6 +1342,12 @@ test('T04/T05: una jornada de Copa con fecha prevista se publica y abre el acta 
   assert.equal((await request(adminA,'POST',`${root}/matches/${match.id}/acta/reopen`,{reason:'Agregar otro goleador de prueba'})).statusCode,200);
   const laterId=randomUUID(),laterPlayer={...quickPlayer,registrationId:laterId,givenNames:'Ana',familyNames:'Rojas',event:{...quickPlayer.event,clientEventId:laterId,registrationId:laterId}};
   assert.equal((await request(adminA,'POST',`${root}/matches/${match.id}/record/players`,laterPlayer)).statusCode,201);
+  const lateCard=await request(adminA,'POST',`${root}/matches/${match.id}/events`,{clientEventId:randomUUID(),kind:'yellow',
+    teamEntryId:started.json().away.entryId,registrationId:nameOnly.json().id,period:null,minute:null});
+  assert.equal(lateCard.statusCode,201,lateCard.body);
+  assert.equal(lateCard.json().away.players.find((player:any)=>player.registrationId===nameOnly.json().id).shirtNumber,0);
+  const {rows:[frozenAfterEvent]}=await pool.query('SELECT roster_snapshot FROM match_records WHERE organization_id=$1 AND match_id=$2',[ids.a,match.id]);
+  assert.ok(frozenAfterEvent.roster_snapshot.away.some((player:any)=>player.registrationId===nameOnly.json().id));
   assert.equal((await request(adminA,'POST',`${root}/matches/${match.id}/acta/submit`,{reason:'Agregar goleador'})).statusCode,201);
   assert.equal((await request(adminA,'POST',`${root}/matches/${match.id}/acta/approve`,{reason:'Rectificación de prueba',overrideSignoffs:true})).statusCode,201);
   assert.equal((await pool.query('SELECT status FROM player_registrations WHERE organization_id=$1 AND id=$2',[ids.a,laterId])).rows[0].status,'approved');
@@ -1310,6 +1357,14 @@ test('T04/T05: una jornada de Copa con fecha prevista se publica y abre el acta 
   await pool.query('INSERT INTO draft_matches(id,organization_id,category_id,home_entry_id,away_entry_id,match_date,created_by) VALUES($1,$2,$3,$4,$5,$6,$7)',[nextMatchId,ids.a,categoryId,teamEntryId,started.json().away.entryId,'2026-12-10',ids.adminA]);
   const laterLineup=await request(adminA,'POST',`${root}/draft-matches/${nextMatchId}/entries/${teamEntryId}/lineup`,{players:[{registrationId:laterId,role:'starter',goalkeeper:false,captain:false,shirtNumber:9}],staffIds:[],expectedVersion:0,reason:'Planilla con alta oficial posterior'});
   assert.equal(laterLineup.statusCode,201,laterLineup.body);
+  const remove=`${root}/entries/${teamEntryId}/players/${registrationId}/remove`;
+  assert.equal((await request(adminB,'POST',remove,{reason:'Retiro sintético'})).statusCode,403);
+  assert.equal((await request(adminA,'POST',remove,{reason:'Retiro sintético'})).statusCode,200);
+  assert.equal((await request(adminA,'POST',remove,{reason:'Repetir retiro sintético'})).statusCode,200);
+  assert.equal((await app.inject(rosterPath)).json().some((player:any)=>player.name==='Lucía Benítez'),false);
+  const history=(await request(adminA,'GET',`${root}/entries/${teamEntryId}/good-faith`)).json();
+  assert.ok(history[0].snapshot.every((row:any)=>row.registrationId!==registrationId));
+  assert.ok(history.find((row:any)=>row.version===automaticList.version).snapshot.some((row:any)=>row.registrationId===registrationId));
 });
 
 test('T04: orden manual de grupos y general avanza solo con actas vigentes y permiso propio',async()=>{

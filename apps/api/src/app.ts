@@ -10,7 +10,7 @@ import { resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { createPool, transaction, audit, type DatabasePool } from '@torneos/db';
 import type { ServerResponse } from 'node:http';
-import { accessSchema, organizationSchema, loginSchema, brandSchema, tokenSchema, acceptSchema, passwordSchema, tournamentSetupSchema, categoryAddSchema, ruleSchema, ruleEditSchema, publishSchema, teamCreateSchema, teamRenameSchema, teamEntrySchema, teamAdminSchema, teamPersonSchema, teamPublicationSchema, venueCreateSchema, sponsorCreateSchema, sponsorPublicationSchema, playerDraftSchema, goodFaithSubmitSchema, goodFaithReviewSchema, playerDocumentLabelSchema, playerEvidenceReviewSchema, movementDeclareSchema, restrictionCreateSchema, calendarDateSchema, draftMatchSchema, lineupSaveSchema, lineupTransitionSchema, lineupReviewSchema, playerImportPreviewSchema, playerImportCommitSchema, playerIdentityEditSchema, playerReuseSchema, matchdayCreateSchema, fixtureScheduleSchema, matchdayPublishSchema, positionBlueprintSchema, matchEventSchema, matchEventVoidSchema, matchPeriodCodes, projectMatchJournal, roundRobin, drawGroups, knockoutBracket, knockoutRoundName, previewCompetitionBracket, type PlayerDraftInput, type CurrentUser, type MatchCaptureView, type MatchJournalEvent } from '@torneos/shared';
+import { accessSchema, organizationSchema, loginSchema, brandSchema, tokenSchema, acceptSchema, passwordSchema, tournamentSetupSchema, categoryAddSchema, ruleSchema, ruleEditSchema, publishSchema, teamCreateSchema, teamRenameSchema, teamEntrySchema, teamAdminSchema, teamPersonSchema, teamPublicationSchema, venueCreateSchema, sponsorCreateSchema, sponsorPublicationSchema, shirtNumberSchema, playerDraftSchema, goodFaithSubmitSchema, goodFaithReviewSchema, playerDocumentLabelSchema, playerEvidenceReviewSchema, movementDeclareSchema, restrictionCreateSchema, calendarDateSchema, draftMatchSchema, lineupSaveSchema, lineupTransitionSchema, lineupReviewSchema, playerImportPreviewSchema, playerImportCommitSchema, playerIdentityEditSchema, playerReuseSchema, matchdayCreateSchema, fixtureScheduleSchema, matchdayPublishSchema, positionBlueprintSchema, matchEventSchema, matchEventVoidSchema, matchPeriodCodes, projectMatchJournal, roundRobin, drawGroups, knockoutBracket, knockoutRoundName, previewCompetitionBracket, type PlayerDraftInput, type CurrentUser, type MatchCaptureView, type MatchJournalEvent } from '@torneos/shared';
 import { digest, opaqueToken, csrfFor, safeEquals, hashPassword, verifyPassword, documentFingerprint, encryptDocument, decryptDocument, normalizeDocument } from './security.ts';
 import type { Config } from './config.ts';
 import { approvedGoodFaithPdf } from './private-pdf.ts';
@@ -26,6 +26,7 @@ import { tieWinner, type ApprovedScore } from './fixture-progress.ts';
 import { positionCompetitionState, syncPositionMatches } from './position-competition.ts';
 import { registerPublicWebRoutes } from './public-web.ts';
 import { publicVisitReport, recordPublicVisit } from './public-visits.ts';
+import { publicTeamRoster } from './public-team-roster.ts';
 import { tournamentImageDelivery } from './tournament-images.ts';
 
 interface Auth { session_id: string; user_id: string; organization_id: string | null; display_name: string; username: string; platform_admin: boolean; rawToken: string }
@@ -228,7 +229,9 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const { rows: addedByActa } = await pool.query(`SELECT DISTINCT pr.id registration_id FROM player_registrations pr
       JOIN audit_logs a ON a.organization_id=pr.organization_id AND a.resource_id=pr.id AND a.action='match.quick_player_approved'
       WHERE pr.organization_id=$1 AND pr.entry_id=$2 AND pr.status='approved' AND pr.reverted_at IS NULL`, [organizationId, entry]);
-    const snapshot = goodFaith.snapshot as Array<{ registrationId: string }>;
+    const { rows: removed } = await pool.query('SELECT id FROM player_registrations WHERE organization_id=$1 AND entry_id=$2 AND reverted_at IS NOT NULL',[organizationId,entry]);
+    const removedIds = new Set(removed.map(row=>row.id));
+    const snapshot = (goodFaith.snapshot as Array<{ registrationId: string }>).filter(player=>!removedIds.has(player.registrationId));
     const known = new Set(snapshot.map(player => player.registrationId));
     return { match, rule: { version: rule.version as number, config: parsed.data! }, goodFaith: { version: goodFaith.version as number, snapshot: [...snapshot, ...addedByActa.filter(row => !known.has(row.registration_id)).map(row => ({ registrationId: row.registration_id as string }))] } };
   }
@@ -982,14 +985,21 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       WHERE p.organization_id=$1 AND b.category_id=$2 ORDER BY p.revision DESC LIMIT 1`,[organizationId,category]);
     const publicTeams=publication?.snapshot?.teams as Array<{entry_id:string}>|undefined;
     if(!publicTeams?.some(team=>team.entry_id===entry))fail(404,'TEAM_NOT_PUBLIC','No se encontró el equipo público.');
-    const {rows}=await pool.query(`SELECT p.given_names,p.family_names FROM player_registrations pr
-      JOIN team_entries e ON e.organization_id=pr.organization_id AND e.id=pr.entry_id
-      JOIN players p ON p.organization_id=pr.organization_id AND p.id=pr.player_id
-      JOIN player_publications pub ON pub.organization_id=pr.organization_id AND pub.registration_id=pr.id AND pub.visible
-      WHERE pr.organization_id=$1 AND pr.entry_id=$2 AND e.category_id=$3 AND e.status='active'
-        AND pr.status<>'rejected' AND pr.reverted_at IS NULL
-      ORDER BY p.given_names,p.family_names,pr.id LIMIT 500`,[organizationId,entry,category]);
-    return rows.map(player=>({name:`${player.given_names} ${player.family_names}`}));
+    return publicTeamRoster(pool,organizationId,category,entry);
+  });
+  app.get('/api/v1/public/organizations/:id/categories/:categoryId/teams/:entryId/players',async request=>{
+    const {id,categoryId,entryId}=request.params as {id:string;categoryId:string;entryId:string};
+    const organizationId=uuid(id),category=uuid(categoryId),entry=uuid(entryId);
+    const {rowCount}=await pool.query(`SELECT 1 FROM team_entries te
+      JOIN categories c ON c.organization_id=te.organization_id AND c.id=te.category_id
+      JOIN editions ed ON ed.organization_id=c.organization_id AND ed.id=c.edition_id
+      JOIN tournaments t ON t.organization_id=ed.organization_id AND t.id=ed.tournament_id
+      JOIN organizations o ON o.id=te.organization_id
+      WHERE te.organization_id=$1 AND te.category_id=$2 AND te.id=$3
+        AND te.status='active' AND te.public_visible AND o.status='active'
+        AND ((c.status='published' AND ed.status='published' AND t.status='published') OR t.public_preview_at IS NOT NULL)`,[organizationId,category,entry]);
+    if(!rowCount)fail(404,'TEAM_NOT_PUBLIC','No se encontró el equipo público.');
+    return publicTeamRoster(pool,organizationId,category,entry);
   });
   app.get('/api/v1/public/organizations/:id/draws/teams/:teamId/shield', async (request, reply) => {
     const { id, teamId } = request.params as { id:string; teamId:string };
@@ -1327,7 +1337,8 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     await teamAccess(request, organizationId, entry);
     const { rowCount } = await pool.query('SELECT 1 FROM team_entries WHERE organization_id=$1 AND id=$2', [organizationId, entry]);
     if (!rowCount) fail(404, 'NOT_FOUND', 'No se encontró la participación del equipo.');
-    const { rows } = await pool.query(`SELECT pr.id,pr.player_id,pr.entry_id,p.given_names,p.family_names,p.document_kind,p.document_last_four,to_char(p.birth_date,'YYYY-MM-DD') birth_date,p.revision identity_revision,pr.registration_number,pr.details,pr.origin_kind,CASE WHEN pr.origin_kind='internal' THEN origin.name ELSE pr.origin_team_name END origin_team_name,pr.origin_city,pr.origin_league,pr.status,pr.revision
+    const { rows } = await pool.query(`SELECT pr.id,pr.player_id,pr.entry_id,p.given_names,p.family_names,p.document_kind,p.document_last_four,to_char(p.birth_date,'YYYY-MM-DD') birth_date,p.revision identity_revision,pr.registration_number,pr.shirt_number,
+      (SELECT count(*)::int FROM match_record_events ev WHERE ev.organization_id=pr.organization_id AND ev.registration_id=pr.id) match_event_count,pr.details,pr.origin_kind,CASE WHEN pr.origin_kind='internal' THEN origin.name ELSE pr.origin_team_name END origin_team_name,pr.origin_city,pr.origin_league,pr.status,pr.revision
       FROM player_registrations pr JOIN players p ON p.organization_id=pr.organization_id AND p.id=pr.player_id
       LEFT JOIN teams origin ON origin.organization_id=pr.organization_id AND origin.id=pr.origin_team_id
       WHERE pr.organization_id=$1 AND pr.entry_id=$2 AND pr.reverted_at IS NULL ORDER BY p.family_names,p.given_names,pr.id LIMIT 500`, [organizationId, entry]);
@@ -1338,6 +1349,37 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     await teamScope(request, organizationId);
     const { rows } = await pool.query("SELECT DISTINCT t.id,t.name FROM teams t JOIN team_entries e ON e.organization_id=t.organization_id AND e.team_id=t.id AND e.status='active' WHERE t.organization_id=$1 ORDER BY t.name LIMIT 500", [organizationId]);
     return rows;
+  });
+  app.post('/api/v1/organizations/:id/entries/:entryId/players/:registrationId/remove', async request=>{
+    const {id,entryId,registrationId}=request.params as {id:string;entryId:string;registrationId:string};
+    const organizationId=uuid(id),entry=uuid(entryId),registration=uuid(registrationId);
+    const actor=await organizationAccess(request,organizationId,true);
+    const reason=reasonSchema.parse(request.body).reason;
+    return transaction(pool,async client=>{
+      const {rowCount:team}=await client.query("SELECT 1 FROM team_entries WHERE organization_id=$1 AND id=$2 AND status='active' FOR UPDATE",[organizationId,entry]);
+      if(!team)fail(404,'NOT_FOUND','No se encontró una participación activa del equipo.');
+      const {rows:[player]}=await client.query('SELECT status,reverted_at FROM player_registrations WHERE organization_id=$1 AND entry_id=$2 AND id=$3 FOR UPDATE',[organizationId,entry,registration]);
+      if(!player)fail(404,'NOT_FOUND','No se encontró el jugador en esta lista.');
+      if(player.reverted_at)return {id:registration,removed:true};
+      const {rows:[latest]}=await client.query('SELECT id,status,snapshot,version FROM good_faith_versions WHERE organization_id=$1 AND entry_id=$2 ORDER BY version DESC LIMIT 1 FOR UPDATE',[organizationId,entry]);
+      await client.query('UPDATE player_registrations SET reverted_at=now(),revision=revision+1,updated_at=now() WHERE organization_id=$1 AND entry_id=$2 AND id=$3',[organizationId,entry,registration]);
+      if(latest?.status==='submitted'&&(latest.snapshot as Array<{registrationId:string}>).some(row=>row.registrationId===registration)){
+        await client.query("UPDATE good_faith_versions SET status='observed',review_reason=$2,reviewed_by=$3,reviewed_at=now() WHERE id=$1",[latest.id,'Se retiró un jugador. Presentá la lista actualizada.',actor.user_id]);
+        await audit(client,actor.user_id,organizationId,'good_faith.observed',latest.id,reason,{status:'submitted'},{status:'observed',entryId:entry,version:latest.version});
+      }
+      if(latest?.status==='approved'){
+        const previous=latest.snapshot as Array<{registrationId:string}>;
+        const snapshot=previous.filter(item=>item.registrationId!==registration);
+        if(snapshot.length!==previous.length){
+          const version=latest.version+1,versionId=randomUUID();
+          await client.query(`INSERT INTO good_faith_versions(id,organization_id,entry_id,version,status,snapshot,submit_reason,submitted_by,review_reason,reviewed_by,reviewed_at)
+            VALUES($1,$2,$3,$4,'approved',$5,$6,$7,$6,$7,now())`,[versionId,organizationId,entry,version,JSON.stringify(snapshot),reason,actor.user_id]);
+          await audit(client,actor.user_id,organizationId,'good_faith.approved',versionId,reason,{version:latest.version},{entryId:entry,version,players:snapshot.length,removedRegistrationId:registration});
+        }
+      }
+      await audit(client,actor.user_id,organizationId,'player.removed_from_roster',registration,reason,{status:player.status},{entryId:entry});
+      return {id:registration,removed:true};
+    });
   });
   app.get('/api/v1/organizations/:id/players/search', async (request) => {
     const organizationId = uuid((request.params as { id: string }).id); await organizationAccess(request, organizationId, true);
@@ -1374,7 +1416,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       const normalized = input.documentNumber ? normalizeDocument(input.documentNumber) : null;
       await client.query('INSERT INTO players(id,organization_id,given_names,family_names,document_kind,document_ciphertext,document_fingerprint,document_last_four,birth_date,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', [playerId, organizationId, input.givenNames, input.familyNames, input.documentKind, input.documentNumber ? encryptDocument(config.appSecret, input.documentNumber) : null, fingerprint, normalized?.slice(-4) ?? null, input.birthDate, actor.user_id]);
       const origin = input.origin;
-      await client.query('INSERT INTO player_registrations(id,organization_id,entry_id,player_id,registration_number,origin_kind,origin_team_id,origin_team_name,origin_city,origin_league,created_by,details) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)', [registrationId, organizationId, entry, playerId, input.registrationNumber, origin.kind, origin.kind === 'internal' ? origin.teamId : null, origin.kind === 'external' ? origin.teamName : null, origin.kind === 'external' || origin.kind === 'internal' ? origin.city : null, origin.kind === 'external' || origin.kind === 'internal' ? origin.league : null, actor.user_id, JSON.stringify(input.details)]);
+      await client.query('INSERT INTO player_registrations(id,organization_id,entry_id,player_id,registration_number,origin_kind,origin_team_id,origin_team_name,origin_city,origin_league,created_by,details,shirt_number) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)', [registrationId, organizationId, entry, playerId, input.registrationNumber, origin.kind, origin.kind === 'internal' ? origin.teamId : null, origin.kind === 'external' ? origin.teamName : null, origin.kind === 'external' || origin.kind === 'internal' ? origin.city : null, origin.kind === 'external' || origin.kind === 'internal' ? origin.league : null, actor.user_id, JSON.stringify(input.details),input.shirtNumber]);
       await audit(client, actor.user_id, organizationId, 'player.draft_created', registrationId, 'Jugador agregado como borrador privado', null, { entryId: entry, playerId });
     });
     return reply.code(201).send({ id: registrationId, playerId, status: 'draft' });
@@ -1401,7 +1443,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
         if (!rowCount) fail(400, 'ORIGIN_NOT_FOUND', 'El equipo de origen no pertenece a esta organización.');
       }
       const origin = input.origin;
-      await client.query('INSERT INTO player_registrations(id,organization_id,entry_id,player_id,registration_number,origin_kind,origin_team_id,origin_team_name,origin_city,origin_league,created_by,details) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)', [registrationId, organizationId, entry, input.playerId, input.registrationNumber, origin.kind, origin.kind === 'internal' ? origin.teamId : null, origin.kind === 'external' ? origin.teamName : null, origin.kind === 'external' || origin.kind === 'internal' ? origin.city : null, origin.kind === 'external' || origin.kind === 'internal' ? origin.league : null, actor.user_id, JSON.stringify(input.details)]);
+      await client.query('INSERT INTO player_registrations(id,organization_id,entry_id,player_id,registration_number,origin_kind,origin_team_id,origin_team_name,origin_city,origin_league,created_by,details,shirt_number) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)', [registrationId, organizationId, entry, input.playerId, input.registrationNumber, origin.kind, origin.kind === 'internal' ? origin.teamId : null, origin.kind === 'external' ? origin.teamName : null, origin.kind === 'external' || origin.kind === 'internal' ? origin.city : null, origin.kind === 'external' || origin.kind === 'internal' ? origin.league : null, actor.user_id, JSON.stringify(input.details),input.shirtNumber]);
       await audit(client, actor.user_id, organizationId, 'player.identity_reused', registrationId, input.reason, null, { entryId: entry, playerId: input.playerId });
     });
     return reply.code(201).send({ id: registrationId, playerId: input.playerId, status: 'draft' });
@@ -1467,7 +1509,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       for (const row of input.rows) {
         const playerId = randomUUID(), registrationId = randomUUID(), origin = row.origin, normalized = row.documentNumber ? normalizeDocument(row.documentNumber) : null;
         await client.query('INSERT INTO players(id,organization_id,given_names,family_names,document_kind,document_ciphertext,document_fingerprint,document_last_four,birth_date,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', [playerId, organizationId, row.givenNames, row.familyNames, row.documentKind, row.documentNumber ? encryptDocument(config.appSecret, row.documentNumber) : null, row.documentKind && row.documentNumber ? documentFingerprint(config.appSecret, organizationId, row.documentKind, row.documentNumber) : null, normalized?.slice(-4) ?? null, row.birthDate, actor.user_id]);
-        await client.query('INSERT INTO player_registrations(id,organization_id,entry_id,player_id,registration_number,origin_kind,origin_team_id,origin_team_name,origin_city,origin_league,created_by,import_batch_id,details) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)', [registrationId, organizationId, entry, playerId, row.registrationNumber, origin.kind, origin.kind === 'internal' ? origin.teamId : null, origin.kind === 'external' ? origin.teamName : null, origin.kind === 'external' || origin.kind === 'internal' ? origin.city : null, origin.kind === 'external' || origin.kind === 'internal' ? origin.league : null, actor.user_id, batchId, JSON.stringify(row.details)]);
+        await client.query('INSERT INTO player_registrations(id,organization_id,entry_id,player_id,registration_number,origin_kind,origin_team_id,origin_team_name,origin_city,origin_league,created_by,import_batch_id,details,shirt_number) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)', [registrationId, organizationId, entry, playerId, row.registrationNumber, origin.kind, origin.kind === 'internal' ? origin.teamId : null, origin.kind === 'external' ? origin.teamName : null, origin.kind === 'external' || origin.kind === 'internal' ? origin.city : null, origin.kind === 'external' || origin.kind === 'internal' ? origin.league : null, actor.user_id, batchId, JSON.stringify(row.details),row.shirtNumber]);
       }
       await audit(client, actor.user_id, organizationId, 'player_import.committed', batchId, input.reason, null, { entryId: entry, count: input.rows.length });
     });
@@ -2982,6 +3024,16 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     if (membership?.role!=='operator' || !(await pool.query('SELECT 1 FROM match_capture_assignments WHERE organization_id=$1 AND match_id=$2 AND membership_id=$3 AND ($4=\'read\' OR duty=$4) AND revoked_at IS NULL',[organizationId,matchId,membership.id,duty])).rowCount) fail(403,'MATCH_SCOPE_DENIED','No tenés asignación activa para este partido.');
     return actor;
   }
+  type FrozenPlayer = { registrationId:string; shirtNumber?:number|null };
+  type CaptureRoster = { home:FrozenPlayer[]; away:FrozenPlayer[]; warnings?:string[] };
+  async function frozenCaptureRoster(db:PoolClient|DatabasePool,organizationId:string,record:{roster_snapshot:CaptureRoster;home_lineup_id:string|null;away_lineup_id:string|null}):Promise<CaptureRoster>{
+    const roster=record.roster_snapshot;
+    const ids=[!roster.home.length&&record.home_lineup_id,!roster.away.length&&record.away_lineup_id].filter(Boolean);
+    if(!ids.length)return roster;
+    const {rows}=await db.query('SELECT id,snapshot FROM lineup_versions WHERE organization_id=$1 AND id=ANY($2::uuid[])',[organizationId,ids]);
+    const lineups=new Map(rows.map(row=>[row.id,row.snapshot.players as FrozenPlayer[]]));
+    return {...roster,home:roster.home.length?roster.home:lineups.get(record.home_lineup_id)||[],away:roster.away.length?roster.away:lineups.get(record.away_lineup_id)||[]};
+  }
   async function captureView(organizationId: string, matchId: string): Promise<MatchCaptureView> {
     const { rows: [record] } = await pool.query(`SELECT r.status,r.revision,r.rule_version,r.home_lineup_id,r.away_lineup_id,r.roster_snapshot,r.submission_id,r.approval_id,
       m.home_entry_id,m.away_entry_id,home.id home_team_id,away.id away_team_id,home.name home_name,away.name away_name,
@@ -2993,15 +3045,28 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       JOIN teams away ON away.organization_id=ae.organization_id AND away.id=ae.team_id
       WHERE r.organization_id=$1 AND r.match_id=$2`, [organizationId, matchId]);
     if (!record) fail(404, 'RECORD_NOT_FOUND', 'Todavía no se abrió la carga de este partido.');
-    const { rows: lineups } = await pool.query('SELECT id,snapshot FROM lineup_versions WHERE organization_id=$1 AND id=ANY($2::uuid[])', [organizationId, [record.home_lineup_id, record.away_lineup_id]]);
-    const lineupById = new Map(lineups.map((row) => [row.id, row.snapshot as { players: Array<{ registrationId: string; shirtNumber?: number | null }> }]));
-    const roster = record.roster_snapshot as {home:Array<{registrationId:string;shirtNumber?:number|null}>;away:Array<{registrationId:string;shirtNumber?:number|null}>;warnings?:string[]};
-    const rosterPlayers = (side:'home'|'away',lineupId:string|null) => roster?.[side]?.length ? roster[side] : lineupId ? lineupById.get(lineupId)?.players || [] : [];
-    const selected = [...rosterPlayers('home',record.home_lineup_id),...rosterPlayers('away',record.away_lineup_id)].map(player=>player.registrationId);
-    const { rows: names } = await pool.query(`SELECT pr.id,p.given_names,p.family_names FROM player_registrations pr JOIN players p ON p.organization_id=pr.organization_id AND p.id=pr.player_id
-      WHERE pr.organization_id=$1 AND pr.id=ANY($2::uuid[])`, [organizationId, selected]);
-    const nameById = new Map(names.map((row) => [row.id, `${row.given_names} ${row.family_names}`]));
-    const players = (side:'home'|'away',lineupId:string|null) => rosterPlayers(side,lineupId).map((player) => ({ registrationId: player.registrationId, name: nameById.get(player.registrationId) || 'Jugador', shirtNumber: player.shirtNumber ?? null }));
+    const roster=await frozenCaptureRoster(pool,organizationId,record);
+    const selected=[...roster.home,...roster.away].map(player=>player.registrationId);
+    const captureOpen=record.status==='capturing';
+    const {rows:names}=await pool.query(`SELECT pr.id,pr.entry_id,pr.shirt_number,p.given_names,p.family_names,
+      (te.status='active' AND pr.reverted_at IS NULL AND pr.status<>'rejected') selectable
+      FROM player_registrations pr JOIN players p ON p.organization_id=pr.organization_id AND p.id=pr.player_id
+      JOIN team_entries te ON te.organization_id=pr.organization_id AND te.id=pr.entry_id
+      WHERE pr.organization_id=$1 AND (pr.id=ANY($2::uuid[]) OR
+        ($4::boolean AND pr.entry_id=ANY($3::uuid[]) AND te.status='active' AND pr.reverted_at IS NULL AND pr.status<>'rejected'))
+      ORDER BY p.family_names,p.given_names,pr.id`,[organizationId,selected,[record.home_entry_id,record.away_entry_id],captureOpen]);
+    const namesById=new Map(names.map(row=>[row.id,row]));
+    function players(side:'home'|'away'){
+      const entryId=side==='home'?record.home_entry_id:record.away_entry_id;
+      const listed=new Set(roster[side].map(player=>player.registrationId));
+      const additions=captureOpen?names.filter(row=>row.entry_id===entryId&&row.selectable&&!listed.has(row.id))
+        .map(row=>({registrationId:row.id as string,shirtNumber:row.shirt_number as number|null})):[];
+      return [...roster[side],...additions].map(player=>{
+        const row=namesById.get(player.registrationId);
+        return {registrationId:player.registrationId,name:row?`${row.given_names} ${row.family_names}`:'Jugador',shirtNumber:player.shirtNumber??null,
+          ...(captureOpen?{selectable:!!row?.selectable&&row.entry_id===entryId}:{})};
+      });
+    }
     const { rows: rawEvents } = await pool.query(`SELECT id,sequence,kind,team_entry_id,registration_id,related_registration_id,incident_note,card_code,window_no,period,minute,voids_event_id,reason,recorded_at
       FROM match_record_events WHERE organization_id=$1 AND match_id=$2 ORDER BY sequence`, [organizationId, matchId]);
     const events: MatchJournalEvent[] = rawEvents.map((event) => ({ id:event.id,sequence:event.sequence,kind:event.kind,teamEntryId:event.team_entry_id,registrationId:event.registration_id,relatedRegistrationId:event.related_registration_id,incidentNote:event.incident_note,cardCode:event.card_code,windowNo:event.window_no,period:event.period,minute:event.minute,voidsEventId:event.voids_event_id,reason:event.reason,recordedAt:event.recorded_at.toISOString() }));
@@ -3012,7 +3077,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     allowedKinds.push('yellow','second_yellow','red','substitution');
     const customCards = periods.success ? periods.data.advanced?.discipline.customCards || [] : [];
     if (customCards.length) allowedKinds.push('custom_card');
-    return { matchId, status: record.status, revision: record.revision, submissionId:record.submission_id, approvalId:record.approval_id, warnings:(roster?.warnings||[]).map(warning=>warning==='Hay jugadores cargados solo con nombre y apellido. Completá sus datos y revisá la buena fe.' && record.status==='official'?'Hay jugadores incorporados por acta con datos por completar según el reglamento.':warning), allowedKinds,customCards,substitutionNeedsWindow:false, home: { entryId: record.home_entry_id, teamId: record.home_team_id, name: record.home_name, color: record.home_color, hasShield: record.home_has_shield, canAddPlayer: record.status==='capturing' && !record.home_lineup_id, players: players('home',record.home_lineup_id) }, away: { entryId: record.away_entry_id, teamId: record.away_team_id, name: record.away_name, color: record.away_color, hasShield: record.away_has_shield, canAddPlayer: record.status==='capturing' && !record.away_lineup_id, players: players('away',record.away_lineup_id) }, score,shootout,unattributedGoals,
+    return { matchId, status: record.status, revision: record.revision, submissionId:record.submission_id, approvalId:record.approval_id, warnings:(roster?.warnings||[]).filter(warning=>record.status!=='official'||warning!=='Hay jugadores cargados solo con nombre y apellido. Completá sus datos y revisá la buena fe.'), allowedKinds,customCards,substitutionNeedsWindow:false, home: { entryId: record.home_entry_id, teamId: record.home_team_id, name: record.home_name, color: record.home_color, hasShield: record.home_has_shield, canAddPlayer: record.status==='capturing' && !record.home_lineup_id, players: players('home') }, away: { entryId: record.away_entry_id, teamId: record.away_team_id, name: record.away_name, color: record.away_color, hasShield: record.away_has_shield, canAddPlayer: record.status==='capturing' && !record.away_lineup_id, players: players('away') }, score,shootout,unattributedGoals,
       periods: periods.success ? periods.data.periods.map((period) => period.name) : [],
       events };
   }
@@ -3041,6 +3106,14 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
   app.get('/api/v1/organizations/:id/matches/:matchId/record/stream',async(request,reply)=>{
     const {id,matchId}=request.params as {id:string;matchId:string};const organizationId=uuid(id),match=uuid(matchId);
     await captureAccess(request,organizationId,match,'read');
+    const rosterRevision=async()=>{
+      const {rows:[row]}=await pool.query(`SELECT max(pr.updated_at)::text revision FROM match_records r
+        JOIN draft_matches m ON m.organization_id=r.organization_id AND m.id=r.match_id
+        JOIN player_registrations pr ON pr.organization_id=m.organization_id AND pr.entry_id IN (m.home_entry_id,m.away_entry_id)
+        WHERE r.organization_id=$1 AND r.match_id=$2 AND r.status='capturing'`,[organizationId,match]);
+      return row.revision as string|null;
+    };
+    let knownRoster=await rosterRevision();
     reply.hijack();reply.raw.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache, no-transform','Connection':'keep-alive','X-Accel-Buffering':'no'});
     trackStream(reply.raw);
     reply.raw.write('event: ready\ndata: {}\n\n');
@@ -3049,6 +3122,9 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       await captureAccess(request,organizationId,match,'read');
       const {rows}=await pool.query('SELECT id,kind,revision,created_at::text created_text FROM match_record_outbox WHERE organization_id=$1 AND match_id=$2 AND (created_at,id)>($3::timestamptz,$4::uuid) ORDER BY created_at,id LIMIT 100',[organizationId,match,cursor,lastId]);
       for(const item of rows){reply.raw.write(`event: changed\ndata: ${JSON.stringify({kind:item.kind,revision:item.revision})}\n\n`);cursor=item.created_text;lastId=item.id;}
+      const currentRoster=await rosterRevision();
+      if(!rows.length&&currentRoster!==knownRoster)reply.raw.write('event: changed\ndata: {"kind":"roster"}\n\n');
+      knownRoster=currentRoster;
       reply.raw.write(': keepalive\n\n');
     }catch{closed=true;reply.raw.end();}finally{running=false;}};
     const interval=setInterval(()=>{void poll();},3000);reply.raw.on('close',()=>{closed=true;clearInterval(interval);});return reply;
@@ -3070,7 +3146,11 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       for (const [index,entry] of [fixture.home_entry_id, fixture.away_entry_id].entries()) {
         const { rows: [lineup] } = await client.query('SELECT id,status,rule_version,snapshot FROM lineup_versions WHERE organization_id=$1 AND match_id=$2 AND entry_id=$3 ORDER BY version DESC LIMIT 1', [organizationId, match, entry]);
         const approved=lineup?.status==='approved'&&lineup.rule_version===rule.version;
-        const frozen:Array<{registrationId:string;shirtNumber:number|null}>=approved ? (lineup.snapshot.players as Array<{registrationId:string;shirtNumber?:number|null}>).map(player=>({registrationId:player.registrationId,shirtNumber:player.shirtNumber??null})) : (await client.query("SELECT id registration_id FROM player_registrations WHERE organization_id=$1 AND entry_id=$2 AND status<>'rejected' ORDER BY created_at,id LIMIT 200",[organizationId,entry])).rows.map(player=>({registrationId:player.registration_id,shirtNumber:null}));
+        const {rows:activePlayers}=await client.query("SELECT id,shirt_number FROM player_registrations WHERE organization_id=$1 AND entry_id=$2 AND reverted_at IS NULL AND status<>'rejected' ORDER BY created_at,id",[organizationId,entry]);
+        const activeIds=new Set(activePlayers.map(player=>player.id));
+        const frozen:Array<{registrationId:string;shirtNumber:number|null}>=approved
+          ? (lineup.snapshot.players as Array<{registrationId:string;shirtNumber?:number|null}>).filter(player=>activeIds.has(player.registrationId)).map(player=>({registrationId:player.registrationId,shirtNumber:player.shirtNumber??null}))
+          : activePlayers.slice(0,200).map(player=>({registrationId:player.id,shirtNumber:player.shirt_number}));
         for (const player of frozen) {
           const suspension = await activeSuspensionReasons(pool, organizationId, entry, player.registrationId, fixture.match_date);
           if (suspension.length && !(await client.query('SELECT 1 FROM lineup_exceptions WHERE organization_id=$1 AND match_id=$2 AND entry_id=$3 AND registration_id=$4', [organizationId, match, entry, player.registrationId])).rowCount) roster.warnings.push('Hay jugadores con sanciones vigentes. Revisá antes de aprobar el acta.');
@@ -3108,9 +3188,18 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       if (input.kind==='substitution' && (input.registrationId===input.relatedRegistrationId || !input.registrationId)) fail(400,'SUBSTITUTION_PLAYERS','Elegí al jugador que sale y al que entra.');
       if (input.registrationId) {
         const side=input.teamEntryId===record.home_entry_id?'home':'away';
-        let lineupPlayers=(record.roster_snapshot as {home:Array<{registrationId:string}>;away:Array<{registrationId:string}>})?.[side];
-        if(!lineupPlayers?.length){const lineupId=side==='home'?record.home_lineup_id:record.away_lineup_id;if(lineupId){const {rows:[lineup]}=await client.query('SELECT snapshot FROM lineup_versions WHERE organization_id=$1 AND id=$2',[organizationId,lineupId]);lineupPlayers=lineup?.snapshot?.players;}}
-        if (!lineupPlayers?.some((player) => player.registrationId === input.registrationId) || (input.relatedRegistrationId && !lineupPlayers.some(player=>player.registrationId===input.relatedRegistrationId))) fail(409, 'PLAYER_NOT_IN_LINEUP', 'El jugador no está en la planilla congelada.');
+        const ids=[input.registrationId,...(input.relatedRegistrationId?[input.relatedRegistrationId]:[])];
+        const {rows:eligible}=await client.query(`SELECT pr.id,pr.shirt_number FROM player_registrations pr
+          JOIN team_entries te ON te.organization_id=pr.organization_id AND te.id=pr.entry_id AND te.status='active'
+          WHERE pr.organization_id=$1 AND pr.entry_id=$2 AND pr.id=ANY($3::uuid[]) AND pr.reverted_at IS NULL AND pr.status<>'rejected'
+          ORDER BY pr.id FOR SHARE OF pr`,[organizationId,input.teamEntryId,ids]);
+        if(eligible.length!==ids.length)fail(409,'PLAYER_NOT_IN_LINEUP','El jugador no pertenece a la lista activa de este equipo.');
+        const roster=await frozenCaptureRoster(client,organizationId,record);
+        const additions=eligible.filter(row=>!roster[side].some(player=>player.registrationId===row.id));
+        if(additions.length){
+          roster[side].push(...additions.map(row=>({registrationId:row.id as string,shirtNumber:row.shirt_number as number|null})));
+          await client.query('UPDATE match_records SET roster_snapshot=$3 WHERE organization_id=$1 AND match_id=$2',[organizationId,match,JSON.stringify(roster)]);
+        }
       } else if (['yellow','second_yellow','red','custom_card','substitution'].includes(input.kind)) fail(409, 'PLAYER_REQUIRED', 'Elegí un jugador para este evento.');
       const eventId = randomUUID(), sequence = record.revision + 1;
       await client.query(`INSERT INTO match_record_events(id,organization_id,match_id,sequence,client_event_id,kind,team_entry_id,registration_id,related_registration_id,incident_note,card_code,window_no,period,minute,recorded_by)
@@ -3128,6 +3217,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       teamEntryId: z.uuid(),
       givenNames: z.string().trim().min(2).max(120),
       familyNames: z.string().trim().min(2).max(120),
+      shirtNumber: shirtNumberSchema,
       event: matchEventSchema,
     }).strict().parse(request.body);
     if(input.event.clientEventId!==input.registrationId||input.event.registrationId!==input.registrationId||input.event.teamEntryId!==input.teamEntryId)
@@ -3140,11 +3230,11 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       if (!record) fail(404, 'RECORD_NOT_FOUND', 'Abrí primero la carga del partido.');
       const side: 'home' | 'away' | null = input.teamEntryId === record.home_entry_id ? 'home' : input.teamEntryId === record.away_entry_id ? 'away' : null;
       const rosterSide: 'home' | 'away' = side ?? fail(409, 'TEAM_NOT_IN_MATCH', 'Elegí uno de los dos equipos del partido.');
-      const { rows: [existing] } = await client.query(`SELECT pr.entry_id,p.given_names,p.family_names FROM player_registrations pr
+      const { rows: [existing] } = await client.query(`SELECT pr.entry_id,pr.shirt_number,p.given_names,p.family_names FROM player_registrations pr
         JOIN players p ON p.organization_id=pr.organization_id AND p.id=pr.player_id
         WHERE pr.organization_id=$1 AND pr.id=$2`, [organizationId, input.registrationId]);
       if (existing) {
-        if (existing.entry_id !== input.teamEntryId || existing.given_names !== input.givenNames || existing.family_names !== input.familyNames)
+        if (existing.entry_id !== input.teamEntryId || existing.given_names !== input.givenNames || existing.family_names !== input.familyNames || existing.shirt_number !== input.shirtNumber)
           fail(409, 'PLAYER_ID_REUSED', 'Esta alta ya se usó para otro jugador.');
       } else {
         if (record.status !== 'capturing') fail(409, 'RECORD_LOCKED', 'El acta ya no admite jugadores.');
@@ -3161,9 +3251,9 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
         const playerId = randomUUID();
         await client.query(`INSERT INTO players(id,organization_id,given_names,family_names,birth_date,created_by)
           VALUES($1,$2,$3,$4,NULL,$5)`, [playerId, organizationId, input.givenNames, input.familyNames, actor.user_id]);
-        await client.query(`INSERT INTO player_registrations(id,organization_id,entry_id,player_id,origin_kind,created_by)
-          VALUES($1,$2,$3,$4,'unknown',$5)`, [input.registrationId, organizationId, input.teamEntryId, playerId, actor.user_id]);
-        roster[rosterSide].push({ registrationId: input.registrationId, shirtNumber: null });
+        await client.query(`INSERT INTO player_registrations(id,organization_id,entry_id,player_id,origin_kind,created_by,shirt_number)
+          VALUES($1,$2,$3,$4,'unknown',$5,$6)`, [input.registrationId, organizationId, input.teamEntryId, playerId, actor.user_id,input.shirtNumber]);
+        roster[rosterSide].push({ registrationId: input.registrationId, shirtNumber: input.shirtNumber });
         roster.warnings = [...new Set([...(roster.warnings || []), 'Hay jugadores cargados solo con nombre y apellido. Completá sus datos y revisá la buena fe.'])];
         await client.query('UPDATE match_records SET roster_snapshot=$3 WHERE organization_id=$1 AND match_id=$2', [organizationId, match, JSON.stringify(roster)]);
         await audit(client, actor.user_id, organizationId, 'match.quick_player_created', input.registrationId, 'Jugador agregado durante la carga del partido', null, { matchId: match, entryId: input.teamEntryId, playerId });
