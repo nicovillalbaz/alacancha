@@ -634,7 +634,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     if(!(slot in flyerLogoColumn))fail(400,'INVALID_SLOT','Logo desconocido.');const column=flyerLogoColumn[slot as keyof typeof flyerLogoColumn];
     const {rows:[settings]}=await pool.query(flyerSettingsQuery,[org,tournament]);if(!settings)fail(404,'NOT_FOUND','No se encontró el torneo en tu organización.');const mediaId=settings[column];if(!mediaId)fail(404,'NOT_FOUND','Este logo aún no está cargado.');
     const {rows:[media]}=await pool.query('SELECT filename,content_type FROM media WHERE organization_id=$1 AND id=$2',[org,mediaId]);if(!media||!/^[0-9a-f-]+\.(png|jpg|webp)$/.test(media.filename))fail(404,'NOT_FOUND','Este logo no está disponible.');
-    return reply.type(media.content_type).send(await readFile(resolve(config.mediaDir,media.filename)));
+    return sendImage(request, reply, media, 'private');
   });
   app.get('/api/v1/public/organizations/:id/tournaments/:tournamentId/emblem', async (request, reply) => {
     const { id, tournamentId } = request.params as { id: string; tournamentId: string };

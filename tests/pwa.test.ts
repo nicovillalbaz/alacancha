@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
 import { resolve } from 'node:path';
+import sharp from 'sharp';
 
 test('PWA instala interfaz estática y nunca intercepta datos privados', async () => {
   const handlers=new Map<string,(event:any)=>void>(),saved:string[]=[];
@@ -20,6 +21,9 @@ test('PWA instala interfaz estática y nunca intercepta datos privados', async (
   assert.equal(shellRequests+saved.filter(path=>path==='/index.html').length,2);
   assert.ok(saved.includes('/assets/app-1.js'));
   assert.ok(saved.includes('/assets/app-1.css'));
+  assert.ok(saved.includes('/icons/icon-192.webp'));
+  assert.ok(saved.includes('/icons/icon-512.webp'));
+  assert.ok(saved.includes('/icons/icon-192.png'));
   const visited=['/assets/PublicApp-aB12_cD3.js','/assets/PublicPositionPortal-D3b2CA1Z.css'];
   const rejected=['/api/v1/auth/me','https://other.test/assets/Other-aB12_cD3.js','/assets/../panel.js','/assets/manifest.json'];
   await new Promise<void>((resolveWait,reject)=>handlers.get('message')!({
@@ -37,5 +41,19 @@ test('PWA instala interfaz estática y nunca intercepta datos privados', async (
   assert.equal(await offline,'offline-shell');
   const manifest=JSON.parse(await readFile(resolve('apps/web/public/manifest.webmanifest'),'utf8'));
   assert.equal(manifest.display,'standalone');
-  for(const icon of manifest.icons){const bytes=await readFile(resolve('apps/web/public',icon.src.slice(1)));assert.equal(bytes.subarray(1,4).toString(),'PNG');}
+  assert.equal(manifest.id,'/');
+  assert.equal(manifest.start_url,'/');
+  for(const size of [192,512]){
+    const icons=manifest.icons.filter((icon:{sizes:string})=>icon.sizes===`${size}x${size}`);
+    assert.deepEqual(icons.map((icon:{type:string})=>icon.type),['image/png','image/webp']);
+    const [png,webp]=await Promise.all(icons.map((icon:{src:string})=>readFile(resolve('apps/web/public',icon.src.slice(1)))));
+    const original=sharp(png),next=sharp(webp);
+    const metadata=await next.metadata();
+    assert.deepEqual([metadata.format,metadata.width,metadata.height],['webp',size,size]);
+    assert.ok(webp.length<png.length);
+    assert.deepEqual(await next.ensureAlpha().raw().toBuffer(),await original.ensureAlpha().raw().toBuffer());
+  }
+  const html=await readFile(resolve('apps/web/index.html'),'utf8');
+  assert.match(html,/<link rel="apple-touch-icon" href="\/icons\/icon-192\.png">/);
+  assert.match(html,/<link rel="icon" type="image\/webp" sizes="192x192" href="\/icons\/icon-192\.webp">/);
 });

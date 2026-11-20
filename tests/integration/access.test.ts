@@ -315,12 +315,20 @@ test('T08: diseño del flyer guarda colores y tres logos con alcance de torneo',
   assert.equal((await request(adminB,'PATCH',path,input)).statusCode,403);
   const saved=await request(adminA,'PATCH',path,input);assert.equal(saved.statusCode,200,saved.body);assert.equal(saved.json().revision,1);
   assert.equal((await request(adminA,'PATCH',path,input)).statusCode,409);
-  const image=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6Z8sAAAAASUVORK5CYII=','base64');
+  const image=await sharp({create:{width:384,height:192,channels:4,background:'#33775588'}}).png().toBuffer();
   const boundary='flyer-brand-test';const payload=Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="marca.png"\r\nContent-Type: image/png\r\n\r\n`),image,Buffer.from(`\r\n--${boundary}--\r\n`)]);
   for(const slot of ['cup','organizer','federation']){
     const url=`/api/v1${path}/logos/${slot}`,upload=(session:Session)=>app.inject({method:'POST',url,headers:{...headers(session),'content-type':`multipart/form-data; boundary=${boundary}`},payload});
     assert.equal((await upload(adminB)).statusCode,403);assert.equal((await upload(teamA)).statusCode,403);
     assert.equal((await upload(adminA)).statusCode,201);assert.deepEqual((await request(adminA,'GET',`${path}/logos/${slot}`)).rawPayload,image);
+    const thumbPath=`${path}/logos/${slot}?size=128`;
+    const thumbnail=await request(adminA,'GET',thumbPath);
+    assert.equal(thumbnail.statusCode,200);
+    assert.equal(thumbnail.headers['content-type'],'image/webp');
+    assert.equal(thumbnail.headers['cache-control'],'private, no-store');
+    const {width,height,hasAlpha}=await sharp(thumbnail.rawPayload).metadata();
+    assert.deepEqual([width,height,hasAlpha],[128,64,true]);
+    assert.equal((await request(adminB,'GET',thumbPath)).statusCode,403);
   }
   const current=(await request(adminA,'GET',path)).json();assert.ok(current.cup_logo_id&&current.organizer_logo_id&&current.federation_logo_id);
   assert.equal(current.primary_color,'#122C3A');assert.equal(current.accent_color,'#D9F166');assert.equal(current.revision,4);

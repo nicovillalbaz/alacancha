@@ -26,7 +26,7 @@ export const publicPagesSql = `SELECT DISTINCT o.id organization_id,o.name organ
   WHERE o.status='active' AND t.public_preview_at IS NOT NULL`;
 const escapeHtml = (value: string) => value.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
 const escapeXml = escapeHtml;
-const typeFor = (path: string) => path.endsWith('.js') ? 'text/javascript; charset=utf-8' : path.endsWith('.css') ? 'text/css; charset=utf-8' : path.endsWith('.png') ? 'image/png' : path.endsWith('.svg') ? 'image/svg+xml' : path.endsWith('.webmanifest') ? 'application/manifest+json' : 'application/octet-stream';
+const typeFor = (path: string) => path.endsWith('.js') ? 'text/javascript; charset=utf-8' : path.endsWith('.css') ? 'text/css; charset=utf-8' : path.endsWith('.webp') ? 'image/webp' : path.endsWith('.png') ? 'image/png' : path.endsWith('.svg') ? 'image/svg+xml' : path.endsWith('.webmanifest') ? 'application/manifest+json' : 'application/octet-stream';
 const cupPath = (page: Page) => page.tournament_slug ? `/${page.tournament_slug}` : `/${page.public_slug}/${page.tournament_id}`;
 function sectionsFor(page: Page): PublicSection[] {
   if (page.position || page.announced_categories?.length || (!page.official && !page.preview)) return ['partidos','fixture','clasificacion','goleadores','valla','equipos'];
