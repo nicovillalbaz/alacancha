@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import OrganizerImage from './OrganizerImage.vue';
-import {computed,ref,watch} from 'vue';
+import {computed,onMounted,onUnmounted,ref,watch} from 'vue';
 import type {PositionBlueprintView,PositionCompetitionView,TournamentEntry} from '@torneos/shared';
 import SportTabs from './SportTabs.vue';
 import {rememberListScroll,restoreListScroll,savedListScroll,useListChoice} from './match-list-navigation.ts';
+import {closeOwnDetail,moveWithinApp} from './navigation-entry.ts';
 
 const props=defineProps<{view:PositionBlueprintView;competition:PositionCompetitionView|null;entries:TournamentEntry[];organizationId:string;categoryId:string;tournamentId:string}>();
 const emit=defineEmits<{openMatch:[route:string]}>();
@@ -29,14 +30,36 @@ function title(value:string){return /^F\d+$/.test(value)?`Fecha ${value.slice(1)
 function open(game:Game){
   const id=matches.value.get(game.code);
   if(id){emit('openMatch',`partido/${props.categoryId}/${id}`);return;}
-  rememberListScroll();
-  selectedCode.value=game.code;
-  void restoreListScroll({top:0},()=>selectedCode.value===game.code);
+  const query=new URLSearchParams(location.search);
+  query.set('cruce',game.code);
+  moveWithinApp('panel',`${location.pathname}?${query}`,true,{
+    beforeOpen:()=>rememberListScroll(game.code),
+    afterMove:syncLocation,
+  });
 }
 function close(){
-  selectedCode.value='';
-  void restoreListScroll(savedListScroll(),()=>!selectedCode.value);
+  if(closeOwnDetail('panel'))return;
+  const query=new URLSearchParams(location.search);
+  query.delete('cruce');
+  moveWithinApp('panel',`${location.pathname}${query.size?`?${query}`:''}`,false,{afterMove:syncLocation});
 }
+function syncLocation(){
+  const previous=selectedCode.value;
+  const raw=new URLSearchParams(location.search).get('cruce')||'';
+  selectedCode.value=props.view.games.some(game=>game.code===raw)?raw:'';
+  if(selectedCode.value===previous)return;
+  const current=selectedCode.value;
+  void restoreListScroll(current?{top:0}:savedListScroll(),()=>selectedCode.value===current);
+}
+onMounted(()=>{
+  syncLocation();
+  window.addEventListener('popstate',syncLocation);
+  window.addEventListener('pageshow',syncLocation);
+});
+onUnmounted(()=>{
+  window.removeEventListener('popstate',syncLocation);
+  window.removeEventListener('pageshow',syncLocation);
+});
 </script>
 
 <template>
@@ -44,13 +67,13 @@ function close(){
     <template v-if="selected">
       <button type="button" class="planned-back" @click="close">‹ Partidos</button>
       <div class="planned-hero"><small>{{ title(selected.sporting_round) }} · {{ selected.jornada_no?`J${selected.jornada_no}`:'J1/J2 por definir' }}</small><div class="planned-sides"><span><OrganizerImage v-if="shield(selected,'home')" :src="shield(selected,'home')!" alt="" /><strong>{{ name(selected,'home') }}</strong></span><b>–</b><span><OrganizerImage v-if="shield(selected,'away')" :src="shield(selected,'away')!" alt="" /><strong>{{ name(selected,'away') }}</strong></span></div><small>{{ gameDate(selected) }}</small></div>
-      <div class="planned-foot"><strong>Cruce planificado</strong><a :href="`#/torneo/${tournamentId}/fixture`">Ver fixture ›</a></div>
+      <div class="planned-foot"><strong>Cruce planificado</strong><a v-if="matches.get(selected.code)" :href="`#/partido/${categoryId}/${matches.get(selected.code)}`">Abrir partido ›</a><a v-else :href="`#/torneo/${tournamentId}/fixture`">Ver fixture ›</a></div>
     </template>
     <template v-else>
       <SportTabs v-model="tab" :tabs="[{key:'days',label:'Jornadas',icon:'calendar'},{key:'rounds',label:'Fechas',icon:'ball'}]" id="planned-matches" />
       <div class="planned-pills" role="group" :aria-label="tab==='days'?'Jornadas':'Fechas'"><button v-for="value in tab==='days'?days:rounds" :key="value" type="button" :aria-pressed="tab==='days'?day===value:round===value" @click="tab==='days'?day=Number(value):round=String(value)">{{ tab==='days'?(value===0?'J1/J2':`J${value}`):String(value).replace('Cuadrangular ','Final ') }}</button></div>
       <h2>{{ tab==='days'?(day===0?'J1/J2 por definir':`Jornada ${day}`):title(round) }}</h2>
-      <button v-for="game in visible" :key="game.code" type="button" class="planned-row" :data-match-list-id="matches.get(game.code)" @click="open(game)"><small>{{ title(game.sporting_round) }}<span>{{ gameDate(game) }}</span></small><span class="planned-side"><OrganizerImage v-if="shield(game,'home')" :src="shield(game,'home')!" alt="" loading="lazy" /><strong>{{ name(game,'home') }}</strong></span><b>{{ score(game) }}</b><span class="planned-side away"><OrganizerImage v-if="shield(game,'away')" :src="shield(game,'away')!" alt="" loading="lazy" /><strong>{{ name(game,'away') }}</strong></span></button>
+      <button v-for="game in visible" :key="game.code" type="button" class="planned-row" :data-match-list-id="matches.get(game.code)||game.code" @click="open(game)"><small>{{ title(game.sporting_round) }}<span>{{ gameDate(game) }}</span></small><span class="planned-side"><OrganizerImage v-if="shield(game,'home')" :src="shield(game,'home')!" alt="" loading="lazy" /><strong>{{ name(game,'home') }}</strong></span><b>{{ score(game) }}</b><span class="planned-side away"><OrganizerImage v-if="shield(game,'away')" :src="shield(game,'away')!" alt="" loading="lazy" /><strong>{{ name(game,'away') }}</strong></span></button>
     </template>
   </section>
 </template>
