@@ -2,6 +2,8 @@
 
 **Reglas comunes para implementar y revisar la aplicación.** [Observaciones generales](observaciones-generales.md).
 
+**Navegación y fluidez móvil (25/11/2026).** [Plan de Atrás, carga y lista de buena fe](PLAN_NAVEGACION_Y_FLUIDEZ_MOVIL_2026-11-25.md).
+
 **Primera carga federativa (en preparación):** [fuentes, diez equipos del afiche y separación entre copas de clubes y eliminatorias](fuentes-fcfs-2026.md). Es un inventario, no una carga publicada.
 
 **Copa Caacupé en producción (11/11/2026):** [evidencia del respaldo, ensayo y carga](evidencias/t09-fcfs-produccion-2026-11-11.md). La vista pública contiene el plan parcial y los diez equipos; el sorteo, el reglamento oficial y los resultados siguen pendientes.

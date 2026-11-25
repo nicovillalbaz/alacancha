@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { moveWithinApp, restoreAppEntry, skipDiscardedEntry } from './navigation-entry.ts';
 import {computed,onMounted,onUnmounted,ref,watch} from 'vue';
 import PublicDirectory from './PublicDirectory.vue';
 import InstallButton from './InstallButton.vue';
@@ -62,7 +63,7 @@ function go(path: string, preferredAlias = '') {
   const target=path==='publico'?'/':(()=>{const [,organizationId,tournamentId]=path.split('/');const alias=preferredAlias||publicCatalog.value.find(item=>item.id===tournamentId)?.public_slug||publicOrganizations.value.find(item=>item.id===organizationId&&item.single_tournament_id===tournamentId)?.single_tournament_slug;if(alias)return `/${alias}`;const slug=publicOrganization.value?.id===organizationId?publicOrganization.value.public_slug:publicOrganizations.value.find(item=>item.id===organizationId)?.public_slug||publicCatalog.value.find(item=>item.organization_id===organizationId)?.organization_slug;return slug?`/${slug}${tournamentId?`/${tournamentId}`:''}`:`/#/${path}`;})();
   if(target===location.pathname+location.search+location.hash&&route.value===path){window.scrollTo(0,0);return;}
   if(!target.includes('#/'))cleanRouteCache.set(target,path);
-  history.pushState(null,'',target);route.value=path;window.scrollTo(0,0);
+  moveWithinApp('public', target, false, { afterMove: () => { route.value=path; window.scrollTo(0,0); } });
 }
 function openPublicOrganization(id:string){const item=publicOrganizations.value.find(row=>row.id===id);go(item?.tournament_count===1&&item.single_tournament_id?`publico/${id}/${item.single_tournament_id}`:`publico/${id}`,item?.single_tournament_slug||'');}
 
@@ -270,6 +271,7 @@ async function loadView(){
 }
 
 const routeChanged = () => {
+  restoreAppEntry('public');
   if(location.hash==='#/publico')history.replaceState(null,'','/');
   const nextRoute = location.hash.startsWith('#/')?routeFromLocation():cleanRouteCache.get(location.pathname)||routeFromLocation();
   if(nextRoute===route.value && nextRoute.startsWith('publico'))measurePublicNavigation();
@@ -279,6 +281,8 @@ watch(route,()=>{void loadView();window.scrollTo(0,0);});
 onMounted(()=>{
   window.addEventListener('hashchange',routeChanged);
   window.addEventListener('popstate',routeChanged);
+  window.addEventListener('popstate',skipDiscardedEntry,true);
+  window.addEventListener('pageshow',routeChanged);
   const mountedRoute=route.value;
   routeChanged();
   if(route.value===mountedRoute)void loadView();
@@ -288,6 +292,8 @@ onUnmounted(()=>{
   closePublicResults?.();
   window.removeEventListener('hashchange',routeChanged);
   window.removeEventListener('popstate',routeChanged);
+  window.removeEventListener('popstate',skipDiscardedEntry,true);
+  window.removeEventListener('pageshow',routeChanged);
 });
 </script>
 

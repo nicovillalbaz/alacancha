@@ -59,18 +59,18 @@ function revealForm(){formOpen.value=true;void nextTick(()=>movementForm.value?.
 async function request(path='',method='GET',body?:unknown){
   const controller=new AbortController();
   const timeout=setTimeout(()=>controller.abort(),12000);
-  if(method!=='GET')organizerReads.invalidate('payments');
+  const scope=paymentScope.value;
   try{
     const response=await fetch(`/api/v1/organizations/${props.organizationId}/tournaments/${props.tournamentId}/payments${path}`,{method,signal:controller.signal,credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':props.csrfToken},body:body===undefined?undefined:JSON.stringify(body)});
     const value=await response.json();
     if(!response.ok)throw new Error(value.message||(method==='GET'?'No se pudo cargar Pagos.':'No se pudo guardar.'));
+    if(method!=='GET')organizerReads.invalidateWhere((group,key)=>group==='payments'&&key===scope);
     return value;
   }catch(cause){
     if(controller.signal.aborted)throw new Error(method==='GET'?'Pagos tardó en responder. Podés reintentar.':'El servidor tardó en responder. Revisá el libro de pagos antes de volver a guardar.');
     throw cause;
   }finally{
     clearTimeout(timeout);
-    if(method!=='GET')organizerReads.invalidate('payments');
   }
 }
 async function load(){
@@ -129,7 +129,7 @@ async function saveCard(){busy.value=true;error.value='';try{await request('/car
 async function saveTeamCards(group:CardGroup){const cards=readyCards(group);if(!cards.length||cards.length!==unpricedCards(group).length)return;busy.value=true;error.value='';try{await request('/card-charges','POST',{entryId:group.entryId,items:cards.map(card=>({eventId:card.eventId,amountGuaranies:cardAmount(card)}))});await load();}catch(cause){error.value=cause instanceof Error?cause.message:'No se pudieron guardar los importes de este equipo.';}finally{busy.value=false;}}
 async function voidMovement(item:Movement){if(voidReason.value.trim().length<3)return;busy.value=true;error.value='';try{await request(`/${item.id}/void`,'POST',{reason:voidReason.value.trim()});voidId.value='';voidReason.value='';await load();}catch(cause){error.value=cause instanceof Error?cause.message:'No se pudo anular.';}finally{busy.value=false;}}
 watch(()=>props.initialEntryId,value=>{teamFilter.value=value||'';draft.entryId=value||'';},{immediate:true});
-watch(paymentScope,()=>{book.value=null;expandedTeams.value.clear();voidId.value='';formOpen.value=false;selectedFee.value=null;feeDay.value=null;feesOpen.value=false;void load();},{immediate:true});
+watch(paymentScope,()=>{book.value=organizerReads.peek<Book>('payments',paymentScope.value)??null;expandedTeams.value.clear();voidId.value='';formOpen.value=false;selectedFee.value=null;feeDay.value=null;feesOpen.value=false;void load();},{immediate:true});
 </script>
 
 <template>

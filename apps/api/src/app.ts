@@ -14,6 +14,7 @@ import { accessSchema, organizationSchema, loginSchema, brandSchema, tokenSchema
 import { digest, opaqueToken, csrfFor, safeEquals, hashPassword, verifyPassword, documentFingerprint, encryptDocument, decryptDocument, normalizeDocument } from './security.ts';
 import type { Config } from './config.ts';
 import { approvedGoodFaithPdf } from './private-pdf.ts';
+import { includeQuickPlayers } from './quick-good-faith.ts';
 import { registerPrivateExports } from './private-exports.ts';
 import { categoryStatistics, playerStatNames, withDocumentedTiebreaks } from './statistics.ts';
 import { activeSuspensionReasons, recordSuspensionService, registerDisciplineRoutes } from './discipline.ts';
@@ -1374,18 +1375,21 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       if(player.reverted_at)return {id:registration,removed:true};
       const {rows:[latest]}=await client.query('SELECT id,status,snapshot,version FROM good_faith_versions WHERE organization_id=$1 AND entry_id=$2 ORDER BY version DESC LIMIT 1 FOR UPDATE',[organizationId,entry]);
       await client.query('UPDATE player_registrations SET reverted_at=now(),revision=revision+1,updated_at=now() WHERE organization_id=$1 AND entry_id=$2 AND id=$3',[organizationId,entry,registration]);
-      if(latest?.status==='submitted'&&(latest.snapshot as Array<{registrationId:string}>).some(row=>row.registrationId===registration)){
+      const pendingAffected=latest?.status==='submitted'&&(latest.snapshot as Array<{registrationId:string}>).some(row=>row.registrationId===registration);
+      if(pendingAffected){
         await client.query("UPDATE good_faith_versions SET status='observed',review_reason=$2,reviewed_by=$3,reviewed_at=now() WHERE id=$1",[latest.id,'Se retiró un jugador. Presentá la lista actualizada.',actor.user_id]);
         await audit(client,actor.user_id,organizationId,'good_faith.observed',latest.id,reason,{status:'submitted'},{status:'observed',entryId:entry,version:latest.version});
       }
-      if(latest?.status==='approved'){
-        const previous=latest.snapshot as Array<{registrationId:string}>;
+      const approved=latest?.status==='approved'?latest:(pendingAffected||latest?.status!=='submitted')&&(await client.query(
+        "SELECT id,version,snapshot FROM good_faith_versions WHERE organization_id=$1 AND entry_id=$2 AND status='approved' ORDER BY version DESC LIMIT 1",[organizationId,entry])).rows[0];
+      if(approved){
+        const previous=approved.snapshot as Array<{registrationId:string}>;
         const snapshot=previous.filter(item=>item.registrationId!==registration);
         if(snapshot.length!==previous.length){
           const version=latest.version+1,versionId=randomUUID();
           await client.query(`INSERT INTO good_faith_versions(id,organization_id,entry_id,version,status,snapshot,submit_reason,submitted_by,review_reason,reviewed_by,reviewed_at)
             VALUES($1,$2,$3,$4,'approved',$5,$6,$7,$6,$7,now())`,[versionId,organizationId,entry,version,JSON.stringify(snapshot),reason,actor.user_id]);
-          await audit(client,actor.user_id,organizationId,'good_faith.approved',versionId,reason,{version:latest.version},{entryId:entry,version,players:snapshot.length,removedRegistrationId:registration});
+          await audit(client,actor.user_id,organizationId,'good_faith.approved',versionId,reason,{version:approved.version},{entryId:entry,version,players:snapshot.length,removedRegistrationId:registration});
         }
       }
       await audit(client,actor.user_id,organizationId,'player.removed_from_roster',registration,reason,{status:player.status},{entryId:entry});
@@ -1458,6 +1462,23 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       await audit(client, actor.user_id, organizationId, 'player.identity_reused', registrationId, input.reason, null, { entryId: entry, playerId: input.playerId });
     });
     return reply.code(201).send({ id: registrationId, playerId: input.playerId, status: 'draft' });
+  });
+  app.patch('/api/v1/organizations/:id/entries/:entryId/players/:registrationId/shirt-number', async (request) => {
+    const { id, entryId, registrationId } = request.params as { id: string; entryId: string; registrationId: string };
+    const organizationId = uuid(id), entry = uuid(entryId), registration = uuid(registrationId);
+    const actor = await teamAccess(request, organizationId, entry);
+    const input = z.object({ shirtNumber: z.number().int().min(0).max(99).nullable(), expectedRevision: z.number().int().positive() }).strict().parse(request.body);
+    return transaction(pool, async (client) => {
+      const { rows: [current] } = await client.query<{ shirt_number: number | null; revision: number }>(`SELECT shirt_number,revision FROM player_registrations
+        WHERE organization_id=$1 AND entry_id=$2 AND id=$3 AND reverted_at IS NULL FOR UPDATE`, [organizationId, entry, registration]);
+      if (!current) fail(404, 'NOT_FOUND', 'No se encontró la inscripción.');
+      if (current.revision !== input.expectedRevision) fail(409, 'STALE_VERSION', 'La inscripción cambió. Revisá el dorsal actualizado antes de guardar.');
+      if (current.shirt_number === input.shirtNumber) return { shirtNumber: current.shirt_number, revision: current.revision };
+      const revision = current.revision + 1;
+      await client.query('UPDATE player_registrations SET shirt_number=$4,revision=$5,updated_at=now() WHERE organization_id=$1 AND entry_id=$2 AND id=$3', [organizationId, entry, registration, input.shirtNumber, revision]);
+      await audit(client, actor.user_id, organizationId, 'player.shirt_number_changed', registration, 'Cambio de dorsal de la inscripción', { shirtNumber: current.shirt_number, revision: current.revision }, { entryId: entry, shirtNumber: input.shirtNumber, revision });
+      return { shirtNumber: input.shirtNumber, revision };
+    });
   });
   app.patch('/api/v1/organizations/:id/entries/:entryId/players/:registrationId/identity', async (request) => {
     const { id, entryId, registrationId } = request.params as { id: string; entryId: string; registrationId: string };
@@ -3252,6 +3273,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       givenNames: z.string().trim().min(2).max(120),
       familyNames: z.string().trim().min(2).max(120),
       shirtNumber: shirtNumberSchema,
+      publishName: z.boolean().default(true),
       event: matchEventSchema,
     }).strict().parse(request.body);
     if(input.event.clientEventId!==input.registrationId||input.event.registrationId!==input.registrationId||input.event.teamEntryId!==input.teamEntryId)
@@ -3264,11 +3286,17 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       if (!record) fail(404, 'RECORD_NOT_FOUND', 'Abrí primero la carga del partido.');
       const side: 'home' | 'away' | null = input.teamEntryId === record.home_entry_id ? 'home' : input.teamEntryId === record.away_entry_id ? 'away' : null;
       const rosterSide: 'home' | 'away' = side ?? fail(409, 'TEAM_NOT_IN_MATCH', 'Elegí uno de los dos equipos del partido.');
-      const { rows: [existing] } = await client.query(`SELECT pr.entry_id,pr.shirt_number,p.given_names,p.family_names FROM player_registrations pr
-        JOIN players p ON p.organization_id=pr.organization_id AND p.id=pr.player_id
-        WHERE pr.organization_id=$1 AND pr.id=$2`, [organizationId, input.registrationId]);
+      const { rows: [existing] } = await client.query(`SELECT pr.entry_id,pr.reverted_at,p.given_names,p.family_names,created.after_data original
+        FROM player_registrations pr JOIN players p ON p.organization_id=pr.organization_id AND p.id=pr.player_id
+        LEFT JOIN LATERAL (SELECT a.after_data FROM audit_logs a WHERE a.organization_id=pr.organization_id
+          AND a.resource_id=pr.id AND a.action='match.quick_player_created' LIMIT 1) created ON true
+        WHERE pr.id=$2 AND pr.organization_id=$1`, [organizationId, input.registrationId]);
       if (existing) {
-        if (existing.entry_id !== input.teamEntryId || existing.given_names !== input.givenNames || existing.family_names !== input.familyNames || existing.shirt_number !== input.shirtNumber)
+        const original = existing.original;
+        if (existing.reverted_at || existing.entry_id !== input.teamEntryId || original?.matchId !== match ||
+            (original.givenNames ?? existing.given_names) !== input.givenNames || (original.familyNames ?? existing.family_names) !== input.familyNames ||
+            ('shirtNumber' in original && original.shirtNumber !== input.shirtNumber) ||
+            ('publishName' in original && original.publishName !== input.publishName))
           fail(409, 'PLAYER_ID_REUSED', 'Esta alta ya se usó para otro jugador.');
       } else {
         if (record.status !== 'capturing') fail(409, 'RECORD_LOCKED', 'El acta ya no admite jugadores.');
@@ -3276,6 +3304,11 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
           fail(409, 'LINEUP_FROZEN', 'Este equipo tiene planilla aprobada. Revisá su lista antes de añadir jugadores.');
         const roster = record.roster_snapshot as {home:Array<{registrationId:string;shirtNumber:number|null}>;away:Array<{registrationId:string;shirtNumber:number|null}>;warnings?:string[]};
         if (roster[rosterSide].length >= 200) fail(409, 'ROSTER_FULL', 'El partido alcanzó el límite de jugadores cargados.');
+        const { rowCount: activeTeam } = await client.query("SELECT 1 FROM team_entries WHERE organization_id=$1 AND id=$2 AND status='active' FOR UPDATE", [organizationId, input.teamEntryId]);
+        if (!activeTeam) fail(409, 'TEAM_NOT_IN_MATCH', 'La participación de este equipo ya no está activa.');
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [input.registrationId]);
+        const duplicate = await client.query('SELECT 1 FROM player_registrations WHERE id=$1', [input.registrationId]);
+        if (duplicate.rowCount) fail(409, 'PLAYER_ID_REUSED', 'Esta alta ya se usó para otro jugador.');
         const { rows: [rule] } = await client.query('SELECT rules FROM rule_versions WHERE organization_id=$1 AND category_id=$2 AND version=(SELECT rule_version FROM match_records WHERE organization_id=$1 AND match_id=$3)', [organizationId, record.category_id, match]);
         const maximum = rule?.rules?.maxRegisteredPlayers;
         if (typeof maximum === 'number') {
@@ -3285,12 +3318,17 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
         const playerId = randomUUID();
         await client.query(`INSERT INTO players(id,organization_id,given_names,family_names,birth_date,created_by)
           VALUES($1,$2,$3,$4,NULL,$5)`, [playerId, organizationId, input.givenNames, input.familyNames, actor.user_id]);
-        await client.query(`INSERT INTO player_registrations(id,organization_id,entry_id,player_id,origin_kind,created_by,shirt_number)
-          VALUES($1,$2,$3,$4,'unknown',$5,$6)`, [input.registrationId, organizationId, input.teamEntryId, playerId, actor.user_id,input.shirtNumber]);
+        await client.query(`INSERT INTO player_registrations(id,organization_id,entry_id,player_id,origin_kind,created_by,shirt_number,status)
+          VALUES($1,$2,$3,$4,'unknown',$5,$6,'approved')`, [input.registrationId, organizationId, input.teamEntryId, playerId, actor.user_id,input.shirtNumber]);
+        await client.query(`INSERT INTO player_publications(organization_id,registration_id,visible,reason,decided_by)
+          VALUES($1,$2,$3,$4,$5)`, [organizationId, input.registrationId, input.publishName,
+          input.publishName ? 'Nombre deportivo autorizado en el alta por partido' : 'Nombre deportivo reservado en el alta por partido', actor.user_id]);
         roster[rosterSide].push({ registrationId: input.registrationId, shirtNumber: input.shirtNumber });
-        roster.warnings = [...new Set([...(roster.warnings || []), 'Hay jugadores cargados solo con nombre y apellido. Completá sus datos y revisá la buena fe.'])];
         await client.query('UPDATE match_records SET roster_snapshot=$3 WHERE organization_id=$1 AND match_id=$2', [organizationId, match, JSON.stringify(roster)]);
-        await audit(client, actor.user_id, organizationId, 'match.quick_player_created', input.registrationId, 'Jugador agregado durante la carga del partido', null, { matchId: match, entryId: input.teamEntryId, playerId });
+        await audit(client, actor.user_id, organizationId, 'match.quick_player_created', input.registrationId, 'Jugador agregado durante la carga del partido', null,
+          { matchId: match, entryId: input.teamEntryId, playerId, givenNames: input.givenNames, familyNames: input.familyNames, shirtNumber: input.shirtNumber, publishName: input.publishName });
+        await audit(client, actor.user_id, organizationId, 'match.quick_player_approved', input.registrationId, 'Jugador aprobado en el alta por partido', null, { matchId: match, entryId: input.teamEntryId });
+        await includeQuickPlayers(client, organizationId, input.teamEntryId, [input.registrationId], actor.user_id, 'Alta aprobada durante la carga del partido');
         created = true;
       }
       await appendCaptureEvent(client,organizationId,match,actor,input.event);
@@ -3390,45 +3428,31 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       const {rows:[signs]}=await client.query('SELECT count(*)::int total FROM match_acta_signoffs WHERE organization_id=$1 AND snapshot_id=$2',[organizationId,record.submission_id]);
       if (signs.total<2 && !input.overrideSignoffs) fail(409,'SIGNOFFS_PENDING','Faltan conformidades de los equipos. Marcá la aprobación excepcional y justificá el motivo.');
       const result=await appendActa(client,organizationId,match,record,'approved',input.reason,actor.user_id);
-      // La autorización del nombre nace del alta rápida vinculada a un evento
-      // vigente del acta aprobada. Una decisión manual anterior prevalece.
-      const actaEvents=result.snapshot.events as MatchJournalEvent[];
-      const voidedEventIds=new Set(actaEvents.filter(event=>event.kind==='void').map(event=>event.voidsEventId));
-      const activePlayers=[...new Set(actaEvents.filter(event=>event.kind!=='void'&&!voidedEventIds.has(event.id)).map(event=>event.registrationId).filter((id):id is string=>!!id))];
-      if(activePlayers.length){
-        const {rows:quickPlayers}=await client.query(`SELECT DISTINCT a.resource_id registration_id,pr.entry_id
+      // Las actas iniciadas antes de la aprobación inmediata pueden conservar altas en borrador.
+      const actaEvents = result.snapshot.events as MatchJournalEvent[];
+      const voidedEventIds = new Set(actaEvents.filter(event => event.kind === 'void').map(event => event.voidsEventId));
+      const activePlayers = [...new Set(actaEvents.filter(event => event.kind !== 'void' && !voidedEventIds.has(event.id))
+        .map(event => event.registrationId).filter((id): id is string => !!id))];
+      if (activePlayers.length) {
+        const { rows: legacyQuick } = await client.query<{ registration_id: string; entry_id: string }>(`SELECT DISTINCT a.resource_id registration_id,pr.entry_id
           FROM audit_logs a JOIN player_registrations pr ON pr.organization_id=a.organization_id AND pr.id=a.resource_id
           WHERE a.organization_id=$1 AND a.action='match.quick_player_created' AND a.after_data->>'matchId'=$2
-            AND a.resource_id=ANY($3::uuid[]) AND pr.reverted_at IS NULL AND pr.status NOT IN ('rejected','observed')`,[organizationId,match,activePlayers]);
-        const quickIds=quickPlayers.map(row=>row.registration_id as string);
-        if(quickIds.length){
-        const {rows:publishedNames}=await client.query(`INSERT INTO player_publications(organization_id,registration_id,visible,reason,decided_by)
-          SELECT $1,candidate.id,true,'Nombre publicado con el acta oficial del partido',$3
-          FROM unnest($2::uuid[]) AS candidate(id)
-          ON CONFLICT (organization_id,registration_id) DO NOTHING RETURNING registration_id`,[organizationId,quickIds,actor.user_id]);
-        if(publishedNames.length)await audit(client,actor.user_id,organizationId,'match.quick_players_names_published',match,'Acta oficial aprobada',null,{registrationIds:publishedNames.map(row=>row.registration_id)});
-        const {rows:approvedQuick}=await client.query(`UPDATE player_registrations SET status='approved',revision=revision+1,updated_at=now()
-          WHERE organization_id=$1 AND id=ANY($2::uuid[]) AND status IN ('draft','submitted')
-          RETURNING id,entry_id`,[organizationId,quickIds]);
-        for(const player of approvedQuick)await audit(client,actor.user_id,organizationId,'match.quick_player_approved',player.id,'Jugador incorporado por acta oficial',null,{matchId:match,entryId:player.entry_id});
-        for(const entryId of [...new Set(approvedQuick.map(player=>player.entry_id as string))].sort()){
-          await client.query('SELECT id FROM team_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE',[organizationId,entryId]);
-          const {rowCount:hasApproved}=await client.query("SELECT 1 FROM good_faith_versions WHERE organization_id=$1 AND entry_id=$2 AND status='approved' LIMIT 1",[organizationId,entryId]);
-          if(hasApproved)continue;
-          const {rows:[latest]}=await client.query('SELECT id,version,status FROM good_faith_versions WHERE organization_id=$1 AND entry_id=$2 ORDER BY version DESC LIMIT 1 FOR UPDATE',[organizationId,entryId]);
-          if(latest?.status==='submitted'){
-            await client.query("UPDATE good_faith_versions SET status='observed',review_reason='Lista superada por la incorporación de jugadores mediante acta oficial',reviewed_by=$2,reviewed_at=now() WHERE id=$1",[latest.id,actor.user_id]);
-            await audit(client,actor.user_id,organizationId,'good_faith.observed',latest.id,'Lista superada por acta oficial',{status:'submitted'},{status:'observed',entryId,version:latest.version});
-          }
-          const {rows:approvedRoster}=await client.query(`SELECT pr.id registration_id,pr.player_id,p.given_names,p.family_names,to_char(p.birth_date,'YYYY-MM-DD') birth_date,pr.registration_number,pr.origin_kind
-            FROM player_registrations pr JOIN players p ON p.organization_id=pr.organization_id AND p.id=pr.player_id
-            WHERE pr.organization_id=$1 AND pr.entry_id=$2 AND pr.status='approved' AND pr.reverted_at IS NULL ORDER BY pr.created_at,pr.id`,[organizationId,entryId]);
-          const rosterSnapshot=approvedRoster.map(row=>({registrationId:row.registration_id,playerId:row.player_id,givenNames:row.given_names,familyNames:row.family_names,birthDate:row.birth_date,registrationNumber:row.registration_number,originKind:row.origin_kind}));
-          const versionId=randomUUID(),version=(latest?.version||0)+1;
-          await client.query(`INSERT INTO good_faith_versions(id,organization_id,entry_id,version,status,snapshot,submit_reason,submitted_by,review_reason,reviewed_by,reviewed_at)
-            VALUES($1,$2,$3,$4,'approved',$5,'Alta por acta oficial',$6,'Aprobación del acta oficial',$6,now())`,[versionId,organizationId,entryId,version,JSON.stringify(rosterSnapshot),actor.user_id]);
-          await audit(client,actor.user_id,organizationId,'good_faith.approved_by_match',versionId,'Alta por acta oficial',null,{entryId,version,players:rosterSnapshot.length,matchId:match});
-        }
+            AND a.resource_id=ANY($3::uuid[]) AND pr.reverted_at IS NULL AND pr.status IN ('draft','submitted')
+          ORDER BY pr.entry_id`, [organizationId, match, activePlayers]);
+        for (const entryId of new Set(legacyQuick.map(player => player.entry_id))) {
+          await client.query('SELECT id FROM team_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE', [organizationId, entryId]);
+          const ids = legacyQuick.filter(player => player.entry_id === entryId).map(player => player.registration_id);
+          const { rows: approvedQuick } = await client.query<{ id: string }>(`UPDATE player_registrations SET status='approved',revision=revision+1,updated_at=now()
+            WHERE organization_id=$1 AND entry_id=$2 AND id=ANY($3::uuid[]) AND reverted_at IS NULL AND status IN ('draft','submitted') RETURNING id`,
+            [organizationId, entryId, ids]);
+          const approvedIds = approvedQuick.map(player => player.id);
+          if (!approvedIds.length) continue;
+          await client.query(`INSERT INTO player_publications(organization_id,registration_id,visible,reason,decided_by)
+            SELECT $1,candidate.id,true,'Nombre publicado con el acta oficial del partido',$3
+            FROM unnest($2::uuid[]) AS candidate(id) ON CONFLICT (organization_id,registration_id) DO NOTHING`, [organizationId, approvedIds, actor.user_id]);
+          for (const id of approvedIds) await audit(client, actor.user_id, organizationId, 'match.quick_player_approved', id,
+            'Jugador incorporado por acta oficial', null, { matchId: match, entryId });
+          await includeQuickPlayers(client, organizationId, entryId, approvedIds, actor.user_id, 'Alta aprobada con el acta oficial');
         }
       }
       const {rows:[tie]}=await client.query(`SELECT s.id,s.phase_id,s.stage,s.match_id,s.return_match_id,s.decider_match_id,m.home_entry_id,m.away_entry_id,p.rule_version,p.category_id

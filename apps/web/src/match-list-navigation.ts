@@ -1,7 +1,7 @@
 import { nextTick, ref, watch, type Ref } from 'vue';
 
 type Choice = string | number;
-type Scroll = { top: number; matchId?: string; offset?: number };
+type Scroll = { top: number; matchId?: string; href?: string; offset?: number; focus?: boolean };
 type ListState = { scroll?: Scroll; choices?: Record<string, Choice> };
 
 function listState(): ListState {
@@ -16,9 +16,15 @@ function matchRow(id: string) {
   return document.querySelector<HTMLElement>(`[data-match-list-id="${CSS.escape(id)}"]`);
 }
 
-export function rememberListScroll(matchId?: string) {
-  const offset = matchId ? matchRow(matchId)?.getBoundingClientRect().top : undefined;
-  updateList({ ...listState(), scroll: { top: window.scrollY, matchId, offset } });
+function listAnchor(matchId?: string, href?: string) {
+  return (matchId && matchRow(matchId)) || (href && document.querySelector<HTMLElement>(`a[href="${CSS.escape(href)}"]`)) || null;
+}
+
+export function rememberListScroll(matchId?: string, link?: HTMLAnchorElement) {
+  const href = link?.getAttribute('href') || undefined;
+  const row = listAnchor(matchId, href);
+  const offset = row?.getBoundingClientRect().top;
+  updateList({ ...listState(), scroll: { top: window.scrollY, matchId, href, offset, focus: !!row && row === document.activeElement } });
 }
 
 export function savedListScroll() {
@@ -49,10 +55,11 @@ export async function restoreListScroll(position: Scroll | undefined, stillCurre
     if (!stillCurrent()) return;
     const page = document.scrollingElement;
     const last = (page?.scrollHeight ?? 0) - (page?.clientHeight ?? 0);
-    const row = position.matchId ? matchRow(position.matchId) : null;
+    const row = listAnchor(position.matchId, position.href);
     const top = row ? window.scrollY + row.getBoundingClientRect().top - (position.offset ?? 140) : position.top;
-    if (row || (!position.matchId && last >= top) || performance.now() >= deadline) {
+    if (row || (!position.matchId && !position.href && last >= top) || performance.now() >= deadline) {
       window.scrollTo({ top, behavior: 'instant' });
+      if (position.focus) row?.focus({ preventScroll: true });
     } else {
       window.requestAnimationFrame(restore);
     }

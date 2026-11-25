@@ -41,7 +41,7 @@ const competitionLoading=ref(false),error=ref(''),competitionRetry=ref(0);
 const selectedMatch=ref<MatchDetail|null>(null),selectedGame=ref<Game|null>(null);
 const selectedTeam=ref<Team|null>(null);
 trackPublicListScroll(()=>!!(selectedMatch.value||selectedGame.value||selectedTeam.value));
-type LoadedSection={revision:number;data:Competition};
+type LoadedSection={revision:number;loadedAt:number;data:Competition};
 const sections=shallowRef<Partial<Record<PublicPositionView,LoadedSection>>>({});
 const scope=computed(()=>`${props.organization?.id}:${current.value?.category_id}:${current.value?.revision}`);
 const view=computed(()=>selectorOpen.value||selectedTeam.value?null:publicPositionView(tabToView[tab.value],!!selectedGame.value));
@@ -60,18 +60,19 @@ watch([scope,view,()=>props.resultsRevision,competitionRetry,()=>props.startup],
   error.value='';
   competitionLoading.value=false;
   if(!org||!category||!resource||resource==='equipos')return;
-  if(sections.value[resource]?.revision===revision)return;
-  if(startup&&startup.categoryId===category.category_id&&startup.drawRevision===category.revision&&startup.resultsRevision===revision&&startup.section.view===resource){
-    sections.value={...sections.value,[resource]:{revision,data:startup.section.data}};
+  const previous = sections.value[resource];
+  if(previous?.revision===revision&&Date.now()-previous.loadedAt<15_000)return;
+  if(!previous&&startup&&startup.categoryId===category.category_id&&startup.drawRevision===category.revision&&startup.resultsRevision===revision&&startup.section.view===resource){
+    sections.value={...sections.value,[resource]:{revision,loadedAt:Date.now(),data:startup.section.data}};
     return;
   }
-  competitionLoading.value=true;
+  competitionLoading.value=!previous;
   let active=true;
   onCleanup(()=>{active=false;});
   const query=resource==='resumen'?'resumen=1':`vista=${resource}`;
   try {
     const data=await readPublic<Competition>(`/organizations/${org}/draws/${category.category_id}/competition?${query}`,`${key}:${revision}:${attempt}`);
-    if(active)sections.value={...sections.value,[resource]:{revision,data}};
+    if(active)sections.value={...sections.value,[resource]:{revision,loadedAt:Date.now(),data}};
   }catch{
     if(active)error.value='No se pudo cargar esta sección.';
   }finally{
@@ -207,7 +208,7 @@ onUnmounted(()=>window.removeEventListener('popstate',restorePublicLocation));
             <b>{{ team.goalsAgainst }} GC</b>
           </div>
         </section>
-        <section v-else id="public-position-teams-panel" class="public-team-list" role="tabpanel" aria-labelledby="public-position-teams-tab"><button v-for="team in teams" :key="team.entry_id" type="button" class="public-team" @click="openTeam(team)"><PublicImage loading="lazy" v-if="crest(team)" :src="crest(team)!" /><span v-else class="public-mark">{{ team.team_name.slice(0,2).toUpperCase() }}</span><strong>{{ team.team_name }}</strong><Icon name="arrow" /></button></section>
+        <section v-else id="public-position-teams-panel" class="public-team-list" role="tabpanel" aria-labelledby="public-position-teams-tab"><button v-for="team in teams" :key="team.entry_id" type="button" class="public-team" :data-match-list-id="team.entry_id" @click="openTeam(team)"><PublicImage loading="lazy" v-if="crest(team)" :src="crest(team)!" /><span v-else class="public-mark">{{ team.team_name.slice(0,2).toUpperCase() }}</span><strong>{{ team.team_name }}</strong><Icon name="arrow" /></button></section>
       </main>
     </template>
     <section v-if="selectedMatch" class="public-detail"><button type="button" class="public-detail-close" @click="closeMatch">‹ Partidos</button><div class="public-score with-logos"><small>{{ selectedMatch.result?.status==='official'?'RESULTADO OFICIAL':selectedMatch.result?'PROVISIONAL':'PARTIDO' }}</small><div><strong><PublicImage v-if="selectedGame && crest(gameTeam(selectedGame,'home'))" :src="crest(gameTeam(selectedGame,'home'))!" /><span>{{ selectedMatch.home_name }}</span></strong><b>{{ selectedMatch.result?.score.home ?? '–' }}<span class="score-separator"> : </span>{{ selectedMatch.result?.score.away ?? '–' }}</b><strong><PublicImage v-if="selectedGame && crest(gameTeam(selectedGame,'away'))" :src="crest(gameTeam(selectedGame,'away'))!" /><span>{{ selectedMatch.away_name }}</span></strong></div><p v-if="selectedMatch.result&&(selectedMatch.result.shootout.home||selectedMatch.result.shootout.away)">Penales {{ selectedMatch.result.shootout.home }} : {{ selectedMatch.result.shootout.away }}</p><PublicScoreGoals v-if="selectedMatch.result" :events="selectedMatch.result.events" :home-name="selectedMatch.home_name" :away-name="selectedMatch.away_name" /></div><div class="public-events"><h2>Eventos</h2><p v-if="matchFailed" class="public-error" role="alert">No se pudo actualizar la ficha. <button type="button" @click="matchRetry++">Reintentar</button></p><PublicMatchTimeline :events="selectedMatch.result?.events || []" :home-name="selectedMatch.home_name" :away-name="selectedMatch.away_name" /></div></section>

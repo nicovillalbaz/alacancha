@@ -13,12 +13,11 @@ async function save(){if(!settings.value||busy.value)return;busy.value=true;erro
 function openFile(slot:string){document.getElementById(`flyer-logo-${slot}`)?.click();}
 async function upload(slot:string,event:Event){const input=event.target as HTMLInputElement,file=input.files?.[0];if(!file)return;busy.value=true;error.value='';message.value='';try{const form=new FormData();form.append('file',file);const response=await fetch(`${root()}/logos/${slot}`,{method:'POST',credentials:'same-origin',headers:{'X-CSRF-Token':props.csrfToken},body:form}),data=await response.json();if(!response.ok)throw new Error(data.message||'No se pudo cargar el logo.');await load();message.value='Logo cargado.';}catch(cause){error.value=cause instanceof Error?cause.message:'No se pudo cargar el logo.';}finally{busy.value=false;input.value='';}}
 function logoUrl(slot:string){return `${root()}/logos/${slot}?size=128&v=${settings.value?.revision||0}`;}
-function goBack(){if(window.history.length>1)window.history.back();else window.location.hash=`#/torneo/${props.tournamentId}/fixture`;}
 </script>
 
 <template>
   <section class="flyer-settings">
-    <div class="flyer-settings-heading"><h1>Diseño de flyers</h1><button type="button" aria-label="Volver" @click="goBack"><Icon name="close" /></button></div>
+    <div class="flyer-settings-heading"><h1>Diseño de flyers</h1><a class="back btn" :href="`#/torneo/${tournamentId}/fixture`" aria-label="Volver"><Icon name="close" /></a></div>
     <p v-if="error" role="alert" class="flyer-settings-error">{{ error }}</p><p v-if="message" role="status" class="flyer-settings-ok">{{ message }}</p>
     <template v-if="settings">
       <h2>Logos</h2>

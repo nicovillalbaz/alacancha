@@ -5,7 +5,7 @@ import Icon from './Icon.vue';
 import { organizerReads } from './view-reads.ts';
 
 const props=defineProps<{tournament:TournamentSummary;categories:TournamentSummary[];entries:TournamentEntry[];days:MatchdaySummary[];dayId:string;focusMatchId?:string;venues:TournamentVenue[];officialMatchIds:string[];organizationId:string;csrfToken:string}>();
-const emit=defineEmits<{refresh:[]}>();
+const emit=defineEmits<{refresh:[];navigate:[route:string]}>();
 const day=computed(()=>props.days.find(item=>item.id===props.dayId));
 const categories=computed(()=>props.categories.filter(item=>item.edition_id===(day.value?.edition_id||props.categories[0]?.edition_id)));
 const mode=ref<'new'|'teams'|'schedule'|''>('');
@@ -23,7 +23,7 @@ function beginEdit(match:MatchdaySummary['matches'][number],selected:'teams'|'sc
 watch([()=>props.focusMatchId,day],async([matchId,current])=>{if(!matchId||!current||focusedMatchId===matchId)return;const match=current.matches.find(item=>item.id===matchId);if(!match||props.officialMatchIds.includes(matchId))return;focusedMatchId=matchId;beginEdit(match,'teams');await nextTick();editForm.value?.scrollIntoView({behavior:'smooth',block:'start'});},{immediate:true});
 async function send(path:string,method:string,body:object={}){const response=await fetch(`/api/v1/organizations/${props.organizationId}${path}`,{method,credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':props.csrfToken},...(method==='GET'?{}:{body:JSON.stringify(body)})});const data=await response.json();if(!response.ok)throw new Error(data.message||'No se pudo guardar.');return data;}
 async function run(action:()=>Promise<void>){if(busy.value)return;busy.value=true;error.value='';message.value='';try{await action();}catch(cause){error.value=cause instanceof Error?cause.message:'No se pudo guardar.';}finally{busy.value=false;}}
-async function createDay(){await run(async()=>{const result=await send(`/editions/${props.categories[0].edition_id}/matchdays`,'POST',{ordinal:Math.max(0,...props.days.filter(item=>item.edition_id===props.categories[0].edition_id).map(item=>item.ordinal))+1});organizerReads.invalidate('schedule','payments');location.hash=`#/torneo/${props.tournament.id}/fixture/${result.id}`;});}
+async function createDay(){await run(async()=>{const result=await send(`/editions/${props.categories[0].edition_id}/matchdays`,'POST',{ordinal:Math.max(0,...props.days.filter(item=>item.edition_id===props.categories[0].edition_id).map(item=>item.ordinal))+1});organizerReads.invalidate('schedule','payments');emit('navigate',`torneo/${props.tournament.id}/fixture/${result.id}`);});}
 async function save(){if(!day.value||!form.homeEntryId||!form.awayEntryId||form.homeEntryId===form.awayEntryId)return;await run(async()=>{
   if(mode.value==='new')await send(`/matchdays/${day.value!.id}/matches`,'POST',{categoryId:form.categoryId,homeEntryId:form.homeEntryId,awayEntryId:form.awayEntryId,venueId:form.venueId,courtLabel:form.courtLabel.trim()||'Cancha 1',date:form.date,time:form.time,durationMinutes:Number(form.durationMinutes),refereeName:null});
   if(mode.value==='teams'&&activeMatch.value)await send(`/fixture/matches/${activeMatch.value.id}/participants`,'PATCH',{homeEntryId:form.homeEntryId,awayEntryId:form.awayEntryId,reason:'Corrección de equipos por el organizador'});
@@ -35,7 +35,7 @@ async function scheduleRemaining(style:'same'|'sequential'){if(!day.value||!last
 async function publishDay(){if(!day.value)return;await run(async()=>{const preview=await send(`/matchdays/${day.value!.id}/preview`,'GET',{});if(preview.missing?.length)throw new Error(preview.missing.join(' '));await send(`/matchdays/${day.value!.id}/publish`,'POST',{expectedRevision:preview.revision,reason:'Fecha confirmada por el organizador'});message.value='Fecha publicada.';emit('refresh');});}
 async function archiveMatch(matchId:string){await run(async()=>{await send(`/fixture/matches/${matchId}/archive`,'POST');removeMatchId.value='';message.value='Partido retirado. Podés recuperarlo abajo.';emit('refresh');});}
 async function restoreMatch(matchId:string){await run(async()=>{await send(`/fixture/matches/${matchId}/restore`,'POST');message.value='Partido recuperado.';emit('refresh');});}
-async function archiveDay(){if(!day.value)return;await run(async()=>{await send(`/matchdays/${day.value!.id}/archive`,'POST');organizerReads.invalidate('schedule','payments');location.hash=`#/torneo/${props.tournament.id}/fixture`;});}
+async function archiveDay(){if(!day.value)return;await run(async()=>{await send(`/matchdays/${day.value!.id}/archive`,'POST');organizerReads.invalidate('schedule','payments');emit('navigate',`torneo/${props.tournament.id}/fixture`);});}
 </script>
 
 <template>

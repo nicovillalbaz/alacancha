@@ -19,7 +19,7 @@ interface StatsRow {
   tables: Array<{ groupNo: number | null; groups: Array<{ position: number; teamIds: string[]; unresolved: boolean }>; totals: Array<{ teamId: string; points: number; played: number; goalsFor: number; goalsAgainst: number }> }>;
 }
 const props = defineProps<{ tournament: TournamentSummary; categories: TournamentSummary[]; entries: TournamentEntry[]; days: MatchdaySummary[]; officialMatchIds: string[]; scores:Record<string,{home:number;away:number}>; cases: Record<string, CaseRow[]>; stats: Record<string, StatsRow>; brackets: Record<string, FixtureOverview>; positionBlueprint?:PositionBlueprintView & {categoryId?:string}; positionCompetition?:PositionCompetitionView|null; section: string; dayId?: string; canManage: boolean; organizationId: string; csrfToken:string }>();
-const emit=defineEmits<{refresh:[];openMatch:[route:string]}>();
+const emit=defineEmits<{refresh:[];openMatch:[route:string];openBracket:[categoryId:string];openStats:[categoryId:string]}>();
 const announcedFixtures=ref<Record<string,AnnouncedFixture>>({});
 const announcedState=ref<'loading'|'ready'|'error'>('loading');
 const announcedRound=useListChoice('workspace-announced-round',1);
@@ -65,7 +65,7 @@ function announcedStatuses(categoryId:string,ordinal:number){
 const scheduledPairs=computed(()=>new Set(props.days.filter(day=>!day.archivedAt).flatMap(day=>day.matches.map(match=>`${match.category_id}:${[match.home_entry_id,match.away_entry_id].sort().join(':')}`))));
 const pendingAnnouncedPlans=computed(()=>announcedPlans.value.map(({category,plan})=>({category,plan:{...plan,rounds:plan.rounds.map(round=>({...round,matches:round.matches.filter(match=>!scheduledPairs.value.has(`${category.category_id}:${[match.homeEntryId,match.awayEntryId].sort().join(':')}`))})).filter(round=>round.matches.length)}})).filter(item=>item.plan.rounds.length));
 const statsCategoryId=useListChoice('workspace-category',props.categories[0]?.category_id||'');
-const statsTab=ref('classification');
+const statsTab=useListChoice('workspace-stats-tab','classification');
 const matchesTab=useListChoice('workspace-matches-tab','dates');
 const statsCategory=computed(()=>props.categories.find(item=>item.category_id===statsCategoryId.value)||props.categories[0]);
 const statsTabs=computed(()=>[
@@ -76,6 +76,11 @@ const statsTabs=computed(()=>[
 ]);
 watch(()=>props.tournament.id,()=>{statsCategoryId.value=props.categories[0]?.category_id||'';statsTab.value='classification';matchesTab.value='dates';});
 watch(statsTabs,(tabs)=>{if(!tabs.some(tab=>tab.key===statsTab.value))statsTab.value=tabs[0]?.key||'scorers';},{immediate:true});
+watch([()=>props.section,()=>statsCategory.value?.category_id,statsTab,matchesTab],([section,category,statsMode,matchMode])=>{
+  if(!category)return;
+  if((section==='estadisticas'&&statsMode==='bracket')||(section==='partidos'&&matchMode==='bracket'))emit('openBracket',category);
+  else if(section==='estadisticas')emit('openStats',category);
+},{immediate:true});
 const drawOpen=ref(false),drawCategoryId=ref(''),drawLegs=ref<1|2>(1),drawBusy=ref(false),drawError=ref('');
 const activeDays=computed(()=>props.days.filter(day=>!day.archivedAt));
 const archivedDays=computed(()=>props.days.filter(day=>!!day.archivedAt));
@@ -121,7 +126,7 @@ function bracketRounds(category:TournamentSummary):PlannedRound[]{
   function side(name:string|null,sourceId:string|null){if(name)return name;if(!sourceId)return 'Por definir';const source=slots.find(item=>item.id===sourceId);return source?`Ganador llave ${source.stage}.${source.slot}`:'Por definir';}
   return [...new Set(slots.map(item=>item.stage))].map(stage=>{const ties=slots.filter(item=>item.stage===stage).sort((a,b)=>a.slot-b.slot),size=ties.length*2;return{size,name:stage===1&&category.rules.competitionPlan?.repechage?'Repechaje':knockoutRoundName(size),pairing:'positions' as const,legs:ties.some(item=>item.return_match_id)?2 as const:1 as const,ties:ties.map(item=>({slot:item.slot,home:side(item.home_name,item.home_source_id),away:side(item.away_name,item.away_source_id),matchId:item.decider_match_id||item.return_match_id||item.match_id||null,homeScore:item.return_match_id?null:props.scores[item.match_id||'']?.home??null,awayScore:item.return_match_id?null:props.scores[item.match_id||'']?.away??null,twoLegs:!!item.return_match_id,legs:[item.match_id&&{label:'Ida',matchId:item.match_id},item.return_match_id&&{label:'Vuelta',matchId:item.return_match_id},item.decider_match_id&&{label:'Desempate',matchId:item.decider_match_id}].filter(Boolean)}))};});
 }
-function openBracketMatch(matchId:string){const day=props.days.find(item=>item.matches.some(match=>match.id===matchId));const category=props.categories.find(item=>item.category_id===day?.matches.find(match=>match.id===matchId)?.category_id);if(props.officialMatchIds.includes(matchId)&&category){emit('openMatch',`partido/${category.category_id}/${matchId}`);return;}location.hash=day?`#/torneo/${props.tournament.id}/fixture/${day.id}/${matchId}`:category?`#/programar/${category.category_id}/${matchId}`:`#/torneo/${props.tournament.id}/fixture`;}
+function openBracketMatch(matchId:string){const day=props.days.find(item=>item.matches.some(match=>match.id===matchId));const category=props.categories.find(item=>item.category_id===day?.matches.find(match=>match.id===matchId)?.category_id);if(props.officialMatchIds.includes(matchId)&&category){emit('openMatch',`partido/${category.category_id}/${matchId}`);return;}emit('openMatch',day?`torneo/${props.tournament.id}/fixture/${day.id}/${matchId}`:category?`programar/${category.category_id}/${matchId}`:`torneo/${props.tournament.id}/fixture`);}
 </script>
 
 <template>
