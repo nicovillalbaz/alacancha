@@ -1,14 +1,18 @@
 <script setup lang="ts">
 import OrganizerImage from './OrganizerImage.vue';
-import {computed,ref} from 'vue';
+import {computed,ref,watch} from 'vue';
 import type {PositionBlueprintView,PositionCompetitionView,TournamentEntry} from '@torneos/shared';
 import SportTabs from './SportTabs.vue';
 import PositionTieResolver from './PositionTieResolver.vue';
+import {useListChoice} from './match-list-navigation.ts';
 
-const props=defineProps<{view:PositionBlueprintView;competition:PositionCompetitionView|null;entries:TournamentEntry[];organizationId:string;categoryId:string;canManage:boolean}>();
-const emit=defineEmits<{decideTitleExtra:[input:{decision:'no_extra'|'extra';homeEntryId?:string;awayEntryId?:string}];decideTiebreak:[input:{table:'A'|'B'|'general';position:number;entryOrder:string[]}]}>();
-const tab=ref('groups');
-const groupTab=ref<'A'|'B'>('A');
+const props=defineProps<{view:PositionBlueprintView;competition:PositionCompetitionView|null;entries:TournamentEntry[];organizationId:string;categoryId:string;canManage:boolean;rankings:Pick<PositionCompetitionView,'players'|'defense'>|null;rankingsError:string}>();
+const emit=defineEmits<{openRankings:[];decideTitleExtra:[input:{decision:'no_extra'|'extra';homeEntryId?:string;awayEntryId?:string}];decideTiebreak:[input:{table:'A'|'B'|'general';position:number;entryOrder:string[]}]}>();
+const tab=useListChoice('position-statistics-tab','groups');
+const groupTab=useListChoice('position-statistics-group','A');
+watch([tab,()=>props.categoryId],([active])=>{
+  if(active==='scorers'||active==='defense')emit('openRankings');
+},{immediate:true});
 const chosen=ref<string[]>([]);
 const slots=computed(()=>new Map(props.view.slots.map(slot=>[slot.slot_code,slot])));
 const quarterfinals=computed(()=>props.view.games.filter(game=>game.stage==='quarterfinal'));
@@ -22,8 +26,8 @@ function teamName(id:string|null){return props.entries.find(entry=>entry.entry_i
 function pairName(code:string,side:'home'|'away',fallback:string){const id=props.competition?.competition.participants[code]?.[side==='home'?'homeEntryId':'awayEntryId'];return id?teamName(id):name(fallback);}
 function crestEntry(id:string){const team=props.entries.find(item=>item.entry_id===id);return team?.has_shield?`/api/v1/organizations/${props.organizationId}/teams/${team.id}/shield`:null;}
 function tableRows(table:NonNullable<PositionCompetitionView['competition']['final']>){return table.groups.flatMap(group=>group.teamIds.map(id=>({position:group.position,id,unresolved:group.unresolved,stats:table.totals.find(row=>row.teamId===id)})));}
-const scorers=computed(()=>[...(props.competition?.players||[])].filter(player=>player.goals>0).sort((a,b)=>b.goals-a.goals||a.name.localeCompare(b.name)));
-const defense=computed(()=>[...(props.competition?.defense||[])].filter(item=>item.played>0).sort((a,b)=>a.goalsAgainst-b.goalsAgainst||a.played-b.played));
+const scorers=computed(()=>[...(props.rankings?.players||[])].filter(player=>player.goals>0).sort((a,b)=>b.goals-a.goals||a.name.localeCompare(b.name)));
+const defense=computed(()=>[...(props.rankings?.defense||[])].filter(item=>item.played>0).sort((a,b)=>a.goalsAgainst-b.goalsAgainst||a.played-b.played));
 function toggleTitleTeam(id:string){chosen.value=chosen.value.includes(id)?chosen.value.filter(item=>item!==id):[...chosen.value.slice(-1),id];}
 function chooseExtra(){const tied=props.competition?.titleTie||[];const pair=chosen.value.length===2?chosen.value:tied.length===2?tied:[];if(pair.length===2)emit('decideTitleExtra',{decision:'extra',homeEntryId:pair[0],awayEntryId:pair[1]});}
 </script>
@@ -46,8 +50,8 @@ function chooseExtra(){const tied=props.competition?.titleTie||[];const pair=cho
           <template v-if="canManage"><div v-if="competition.titleTie.length>2" class="position-title-choices"><button v-for="id in competition.titleTie" :key="id" type="button" :aria-pressed="chosen.includes(id)" @click="toggleTitleTeam(id)">{{ teamName(id) }}</button></div><div class="position-title-actions"><button type="button" @click="emit('decideTitleExtra',{decision:'no_extra'})">Sin extra</button><button type="button" :disabled="competition.titleTie.length>2&&chosen.length!==2" @click="chooseExtra">Crear partido extra</button></div></template>
         </div>
       </div>
-      <div v-else-if="tab==='scorers'" id="copa-stats-scorers-panel" role="tabpanel" aria-labelledby="copa-stats-scorers-tab"><h2>Goleadores</h2><div v-if="!scorers.length" class="position-stats-empty">Aún sin goles oficiales atribuidos.</div><div v-for="(player,index) in scorers" :key="player.registrationId" class="position-stats-scorer"><b>{{ index+1 }}</b><strong>{{ player.name }}<small>{{ teamName(player.entryId) }}</small></strong><b>⚽ {{ player.goals }}</b></div></div>
-      <div v-else id="copa-stats-defense-panel" role="tabpanel" aria-labelledby="copa-stats-defense-tab"><h2>Valla menos vencida</h2><div v-if="!defense.length" class="position-stats-empty">Aún sin partidos oficiales.</div><div v-for="(row,index) in defense" :key="row.entryId" class="position-stats-scorer"><b>{{ index+1 }}</b><strong>{{ teamName(row.entryId) }}<small>{{ row.played }} PJ</small></strong><b>{{ row.goalsAgainst }} GC</b></div></div>
+      <div v-else-if="tab==='scorers'" id="copa-stats-scorers-panel" role="tabpanel" aria-labelledby="copa-stats-scorers-tab"><h2>Goleadores</h2><div v-if="rankingsError" role="alert" class="row wrap"><p>{{ rankingsError }}</p><button type="button" class="btn" @click="emit('openRankings')">Reintentar</button></div><p v-else-if="!rankings" role="status">Cargando…</p><div v-else-if="!scorers.length" class="position-stats-empty">Aún sin goles oficiales atribuidos.</div><div v-for="(player,index) in scorers" :key="player.registrationId" class="position-stats-scorer"><b>{{ index+1 }}</b><strong>{{ player.name }}<small>{{ teamName(player.entryId) }}</small></strong><b>⚽ {{ player.goals }}</b></div></div>
+      <div v-else id="copa-stats-defense-panel" role="tabpanel" aria-labelledby="copa-stats-defense-tab"><h2>Valla menos vencida</h2><div v-if="rankingsError" role="alert" class="row wrap"><p>{{ rankingsError }}</p><button type="button" class="btn" @click="emit('openRankings')">Reintentar</button></div><p v-else-if="!rankings" role="status">Cargando…</p><div v-else-if="!defense.length" class="position-stats-empty">Aún sin partidos oficiales.</div><div v-for="(row,index) in defense" :key="row.entryId" class="position-stats-scorer"><b>{{ index+1 }}</b><strong>{{ teamName(row.entryId) }}<small>{{ row.played }} PJ</small></strong><b>{{ row.goalsAgainst }} GC</b></div></div>
     </div>
   </section>
 </template>
