@@ -77,3 +77,21 @@ Probar teclado, nombres largos, anchos de 320/390/768/1280 px y movimiento reduc
 - El panel comparte las lecturas y limita la invalidación al recurso modificado. Partidos muestra la vista conocida al abrir un acta. Equipos pide partidos de un equipo cuando se abre esa pestaña. Las estadísticas de formatos habituales consultan la categoría visible, y el cuadro carga al abrirse. Se conserva el canal en vivo.
 - Buena Fe permite editar o retirar el dorsal desde la inscripción. El alta rápida confirma el jugador, su aparición en la Buena Fe aprobada, la decisión de visibilidad y el evento. Si hay una revisión pendiente, se arrastra íntegra a la siguiente versión con el alta incorporada. Un alta cuya respuesta se perdió admite reintento con los datos originales. El formulario en curso se puede recuperar durante una hora en la misma pestaña, con el mismo usuario, organización y partido.
 - La conciliación de altas anteriores se limita a inscripciones aprobadas y activas, con el evento original vigente en un acta oficial. Se comprueba el conteo antes de escribir, con respaldo y ensayo de restauración.
+
+
+## Verificación en producción
+
+La versión inicial era `75b6596` y el cierre se desplegó en `a33ee8a`. Se ejecutaron cinco aperturas y 25 cambios de sección por recorrido en Chrome sin interfaz, a 390 px y con red normal. La medición de transición parte del despacho de la interacción del navegador y termina cuando el tab queda activo o se detecta el contenido de la sección. Los GET incluyen recursos de la API, entre ellos escudos obtenidos por fetch. En el panel de Caacupé el selector de contenido midió 20 de los 25 cambios, antes y después. Las aperturas iniciales usan un documento nuevo en el mismo perfil de Chrome.
+
+| Recorrido | Entradas agregadas | GET por recorrido, mediana | Apertura inicial (p50/p75/p95 ms) | Cambio visible (p50/p75/p95 ms) | Datos en pantalla (p50/p75/p95 ms) |
+| --- | --- | --- | --- | --- | --- |
+| Portal Sanber | 5 → 0 | 1 → 1 | 380/466/1407 → 453/498/1026 | 65/84/205 → 79/98/174 | 65/84/205 → 79/98/174 |
+| Panel Sanber | 5 → 0 | 16 → 15 | 275/375/461 → 358/464/549 | 101/174/194 → 126/179/252 | 102/182/278 → 149/184/302 |
+| Portal Caacupé | 5 → 0 | 3 → 3 | 390/394/515 → 301/323/403 | 77/102/221 → 66/72/107 | 83/120/175 → 78/84/120 |
+| Panel Caacupé | 5 → 0 | 15 → 12 | 304/359/462 → 347/577/617 | 72/155/228 → 103/152/246 | 114/128/267 → 101/160/364 |
+
+El tiempo del recorrido completo varió entre pasadas. La apertura inicial del panel y algunos percentiles de datos en pantalla aumentaron en esta muestra. La vuelta puntual a Pagos con datos frescos hizo cero GET adicionales. Al vencer la caché, hizo uno. En cinco regresos con datos frescos, el p75 hasta que apareció el resumen fue de 45 ms en Sanber y 30 ms en Caacupé. Fixture, Partidos y Grupos de Caacupé compartieron un GET de resumen. Al abrir Goleadores se hizo un GET adicional, reutilizado al abrir Valla.
+
+Se verificaron Atrás y Adelante, regreso a J4, apertura y recarga directa de la ficha, foco al volver a Buena Fe, teclado para el dorsal y cuatro anchos en Chrome. Se comprobó el último destino luego de cinco cambios rápidos con red lenta y CPU limitada, la recuperación tras interrumpir un fragmento de JavaScript y la instalación, apertura autónoma y arranque sin red de la PWA. Se comprobó que la versión anterior todavía tuviera disponibles su entrada y un fragmento de Pagos. La suite de 126 pruebas y la compilación pasaron. Queda pendiente probar el gesto Atrás con Safari de iPhone y Chrome de Android en dispositivos físicos y en la PWA allí instalada.
+
+Después de restaurar un respaldo de PostgreSQL en una base temporal, el ensayo incorporó tres altas de Caacupé en dos equipos. Se repitió en producción y el cotejo final devolvió cero faltantes. Sanber devolvió cero antes de cualquier escritura. La conciliación solo versionó las listas y registró su auditoría. El reglamento, las fechas, los resultados y las altas ordinarias siguieron su flujo vigente.
