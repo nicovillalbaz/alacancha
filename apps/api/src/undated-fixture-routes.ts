@@ -4,8 +4,9 @@ import { z } from 'zod';
 import { audit, transaction, type DatabasePool } from '@torneos/db';
 
 const matchSchema=z.object({homeEntryId:z.uuid(),awayEntryId:z.uuid()}).strict();
-const roundSchema=z.object({ordinal:z.number().int().min(1).max(128),matches:z.array(matchSchema).min(1).max(128)}).strict();
-const planSchema=z.object({expectedRevision:z.number().int().nonnegative(),rounds:z.array(roundSchema).min(1).max(127),qualificationCount:z.number().int().min(2).max(128),semifinalPairing:z.enum(['pending','in_person_draw','bracket']).default('pending'),reason:z.string().trim().min(3).max(300)}).strict();
+const roundSchema=z.object({ordinal:z.number().int().min(1).max(128),date:z.iso.date().optional(),matches:z.array(matchSchema).min(1).max(128)}).strict();
+const playoffDatesSchema=z.object({quarterfinal:z.iso.date().optional(),semifinal:z.iso.date().optional(),final:z.iso.date().optional()}).strict();
+const planSchema=z.object({expectedRevision:z.number().int().nonnegative(),rounds:z.array(roundSchema).min(1).max(127),playoffDates:playoffDatesSchema.optional(),qualificationCount:z.number().int().min(2).max(128),semifinalPairing:z.enum(['pending','in_person_draw','bracket']).default('pending'),reason:z.string().trim().min(3).max(300)}).strict();
 
 export function validateRoundRobin(rounds:z.infer<typeof roundSchema>[],entryIds:string[],qualificationCount:number,fail:(status:number,code:string,message:string)=>never){
   const count=entryIds.length;
@@ -33,7 +34,7 @@ export function registerUndatedFixtureRoutes(app:FastifyInstance,pool:DatabasePo
   app.get('/api/v1/organizations/:id/categories/:categoryId/fixture/announced',async request=>{
     const {id,categoryId}=request.params as {id:string;categoryId:string};const organizationId=z.uuid().parse(id),category=z.uuid().parse(categoryId);
     await access(request,organizationId);
-    const {rows:[plan]}=await pool.query('SELECT id,revision,rounds,qualification_count,semifinal_pairing FROM undated_fixture_plans WHERE organization_id=$1 AND category_id=$2',[organizationId,category]);
+    const {rows:[plan]}=await pool.query('SELECT id,revision,rounds,playoff_dates,qualification_count,semifinal_pairing FROM undated_fixture_plans WHERE organization_id=$1 AND category_id=$2',[organizationId,category]);
     if(!plan)fail(404,'FIXTURE_NOT_FOUND','No hay calendario anunciado.');
     return plan;
   });
@@ -45,11 +46,19 @@ export function registerUndatedFixtureRoutes(app:FastifyInstance,pool:DatabasePo
       if(!categoryRow)fail(404,'CATEGORY_NOT_FOUND','No se encontró la categoría.');
       const {rows:entries}=await client.query("SELECT id FROM team_entries WHERE organization_id=$1 AND category_id=$2 AND status='active' AND public_visible ORDER BY id",[organizationId,category]);
       validateRoundRobin(input.rounds,entries.map(row=>row.id),input.qualificationCount,fail);
-      const {rows:[existing]}=await client.query('SELECT id,revision FROM undated_fixture_plans WHERE organization_id=$1 AND category_id=$2 FOR UPDATE',[organizationId,category]);
+      const {rows:[existing]}=await client.query<{id:string;revision:number;rounds:Array<z.infer<typeof roundSchema>&{legacyHomeOrder?:string[]}>}>(
+        'SELECT id,revision,rounds FROM undated_fixture_plans WHERE organization_id=$1 AND category_id=$2 FOR UPDATE',[organizationId,category]);
       if((existing?.revision||0)!==input.expectedRevision)fail(409,'REVISION_CONFLICT','El calendario cambió. Actualizá antes de guardar.');
       const planId=existing?.id||randomUUID(),revision=input.expectedRevision+1;
-      if(existing)await client.query('UPDATE undated_fixture_plans SET revision=$3,rounds=$4,qualification_count=$5,semifinal_pairing=$6,updated_at=now() WHERE organization_id=$1 AND id=$2',[organizationId,planId,revision,JSON.stringify(input.rounds),input.qualificationCount,input.semifinalPairing]);
-      else await client.query('INSERT INTO undated_fixture_plans(id,organization_id,category_id,revision,rounds,qualification_count,semifinal_pairing,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[planId,organizationId,category,revision,JSON.stringify(input.rounds),input.qualificationCount,input.semifinalPairing,actor.user_id]);
+      const playoffDates=input.playoffDates?JSON.stringify(input.playoffDates):null;
+      const rounds=input.rounds.map(round=>{
+        const previous=existing?.rounds.find(item=>item.ordinal===round.ordinal);
+        const legacyHomeOrder=previous?.legacyHomeOrder??previous?.matches.map(match=>match.homeEntryId);
+        return legacyHomeOrder&&!round.matches.every((match,index)=>match.homeEntryId===legacyHomeOrder[index])
+          ? {...round,legacyHomeOrder} : round;
+      });
+      if(existing)await client.query('UPDATE undated_fixture_plans SET revision=$3,rounds=$4,qualification_count=$5,semifinal_pairing=$6,playoff_dates=coalesce($7,playoff_dates),updated_at=now() WHERE organization_id=$1 AND id=$2',[organizationId,planId,revision,JSON.stringify(rounds),input.qualificationCount,input.semifinalPairing,playoffDates]);
+      else await client.query("INSERT INTO undated_fixture_plans(id,organization_id,category_id,revision,rounds,qualification_count,semifinal_pairing,created_by,playoff_dates) VALUES($1,$2,$3,$4,$5,$6,$7,$8,coalesce($9,'{}'::jsonb))",[planId,organizationId,category,revision,JSON.stringify(input.rounds),input.qualificationCount,input.semifinalPairing,actor.user_id,playoffDates]);
       await audit(client,actor.user_id,organizationId,'fixture.announced_saved',planId,input.reason,null,{categoryId:category,revision,matches:input.rounds.reduce((sum,round)=>sum+round.matches.length,0)});
       return {id:planId,revision};
     });
@@ -66,7 +75,8 @@ export function registerUndatedFixtureRoutes(app:FastifyInstance,pool:DatabasePo
       validateRoundRobin(plan.rounds,entries.map(row=>row.id),plan.qualification_count,fail);
       const {rows:[prior]}=await client.query('SELECT id FROM undated_fixture_publications WHERE organization_id=$1 AND plan_id=$2 AND revision=$3',[organizationId,plan.id,plan.revision]);
       if(prior)return {id:prior.id,revision:plan.revision,alreadyPublished:true};
-      const snapshot={rounds:plan.rounds,qualificationCount:plan.qualification_count,quarterPairing:plan.quarter_pairing,semifinalPairing:plan.semifinal_pairing,finalPairing:plan.final_pairing};
+      const snapshot={rounds:plan.rounds,qualificationCount:plan.qualification_count,quarterPairing:plan.quarter_pairing,semifinalPairing:plan.semifinal_pairing,finalPairing:plan.final_pairing,
+        ...(Object.keys(plan.playoff_dates).length?{playoffDates:plan.playoff_dates}:{})};
       const publicationId=randomUUID();
       await client.query('INSERT INTO undated_fixture_publications(id,organization_id,plan_id,revision,snapshot,published_by) VALUES($1,$2,$3,$4,$5,$6)',[publicationId,organizationId,plan.id,plan.revision,JSON.stringify(snapshot),actor.user_id]);
       await audit(client,actor.user_id,organizationId,'fixture.announced_published',plan.id,input.reason,null,{categoryId:category,revision:plan.revision,publicationId});
@@ -89,7 +99,7 @@ export function registerUndatedFixtureRoutes(app:FastifyInstance,pool:DatabasePo
       if(!source)fail(404,'FIXTURE_NOT_PUBLIC','No hay calendario publicado para esta categoría.');
       if(source.revision!==input.expectedRevision)fail(409,'REVISION_CONFLICT','El calendario cambió. Actualizá antes de abrir este partido.');
       if(source.tournament_status!=='published'||source.category_status!=='published')fail(409,'RULES_NOT_PUBLISHED','Publicá el torneo y su reglamento antes de abrir partidos.');
-      const round=(source.snapshot.rounds as Array<{ordinal:number;matches:Array<{homeEntryId:string;awayEntryId:string}>}>).find(item=>item.ordinal===roundOrdinal);
+      const round=(source.snapshot.rounds as Array<z.infer<typeof roundSchema>>).find(item=>item.ordinal===roundOrdinal);
       if(!round||!round.matches.some(match=>match.homeEntryId===input.homeEntryId&&match.awayEntryId===input.awayEntryId))fail(404,'MATCH_NOT_IN_PLAN','El partido no está en esa jornada publicada.');
       const {rows:entries}=await client.query("SELECT id FROM team_entries WHERE organization_id=$1 AND category_id=$2 AND status='active' AND public_visible",[organizationId,category]);
       if(round.matches.some(match=>!entries.some(entry=>entry.id===match.homeEntryId)||!entries.some(entry=>entry.id===match.awayEntryId)))fail(409,'TEAMS_CHANGED','Un equipo del calendario ya no está disponible. Revisá el torneo.');
@@ -102,13 +112,13 @@ export function registerUndatedFixtureRoutes(app:FastifyInstance,pool:DatabasePo
       if(existingMatches.some(match=>match.matchday_id===dayId&&!planned.has(`${match.home_entry_id}:${match.away_entry_id}`)))fail(409,'MATCHDAY_CHANGED','La jornada contiene un cruce distinto al calendario anunciado. Revisala antes de continuar.');
       const matches=[];
       let created=0;
-      for(const pair of round.matches){
+      for(const [index,pair] of round.matches.entries()){
         const same=existingMatches.filter(match=>[match.home_entry_id,match.away_entry_id].sort().join(':')===[pair.homeEntryId,pair.awayEntryId].sort().join(':'));
         if(same.length>1||same.length===1&&(same[0].matchday_id!==dayId||same[0].home_entry_id!==pair.homeEntryId))fail(409,'MATCH_ALREADY_EXISTS','Un cruce de esta jornada ya existe con otra asignación. Revisá Fixture.');
         const matchId=same[0]?.id||randomUUID();
         if(!same.length){
           if(existingDay?.status==='published')fail(409,'MATCHDAY_PUBLISHED','La jornada publicada ya no admite partidos nuevos.');
-          await client.query("INSERT INTO draft_matches(id,organization_id,category_id,home_entry_id,away_entry_id,match_date,created_by,matchday_id,competition_stage) VALUES($1,$2,$3,$4,$5,NULL,$6,$7,'initial')",[matchId,organizationId,category,pair.homeEntryId,pair.awayEntryId,actor.user_id,dayId]);
+          await client.query("INSERT INTO draft_matches(id,organization_id,category_id,home_entry_id,away_entry_id,match_date,created_by,matchday_id,competition_stage,announced_order) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'initial',$9)",[matchId,organizationId,category,pair.homeEntryId,pair.awayEntryId,round.date??null,actor.user_id,dayId,index+1]);
           created++;
         }
         matches.push({id:matchId,homeEntryId:pair.homeEntryId,awayEntryId:pair.awayEntryId});

@@ -8,6 +8,7 @@ import SportTabs from './SportTabs.vue';
 import AnnouncedFixtureMatches from './AnnouncedFixtureMatches.vue';
 import { organizerReads } from './view-reads.ts';
 import { readAnnouncedFixture, type AnnouncedFixture } from './organizer-announced-fixture.ts';
+import { announcedDate, playoffStages, playoffDatesBySize } from './announced-fixture.ts';
 import { useListChoice } from './match-list-navigation.ts';
 
 interface CaseRow { id: string; entry_id: string; team_name: string; summary: string; fine_amount_guaranies: number | null }
@@ -151,7 +152,12 @@ function openBracketMatch(matchId:string){const day=props.days.find(item=>item.m
       <p v-else-if="announcedState==='error'" class="notice amber" role="alert">No se pudo cargar el calendario anunciado. Recargá esta pantalla.</p>
       <section v-for="{category,plan} in announcedPlans" :key="category.category_id" class="workspace-announced">
         <h3>Calendario anunciado{{ categories.length>1?` · ${category.category_name}`:'' }}</h3>
-        <p class="small muted">Publicado · {{ plan.rounds.length }} jornadas · {{ plan.rounds.reduce((sum,round)=>sum+round.matches.length,0) }} cruces · fechas pendientes.</p>
+        <p v-if="!plan.rounds.some(round=>round.date)" class="small muted">Publicado · fechas pendientes</p>
+        <div v-if="plan.playoffDates" class="row wrap small" aria-label="Fechas de eliminación">
+          <template v-for="stage in playoffStages" :key="stage.key">
+            <span v-if="plan.playoffDates[stage.key]">{{ stage.label }} · <time :datetime="plan.playoffDates[stage.key]">{{ announcedDate(plan.playoffDates[stage.key]!) }}</time></span>
+          </template>
+        </div>
         <div class="choices" role="group" :aria-label="`Jornadas de ${category.category_name}`"><button v-for="round in plan.rounds" :key="round.ordinal" type="button" class="choice" :aria-pressed="announcedRound===round.ordinal" @click="announcedRound=round.ordinal">J{{ round.ordinal }}</button></div>
         <AnnouncedFixtureMatches :rounds="plan.rounds.filter(round=>round.ordinal===announcedRound)" :teams="plan.teams" :organization-id="organizationId" :interactive="canManage" :busy="preparingMatch" :status-by-pair="announcedStatuses(category.category_id,announcedRound)" @open-match="(ordinal,match)=>openAnnouncedMatch(category.category_id,plan.revision,ordinal,match)" />
       </section>
@@ -164,7 +170,7 @@ function openBracketMatch(matchId:string){const day=props.days.find(item=>item.m
     <div v-else-if="section === 'partidos'">
       <div class="between"><h2>{{ dayId && visibleDays[0] ? dayTitle(visibleDays[0]) : 'Partidos' }}</h2><a v-if="dayId" class="btn" :href="`#/torneo/${tournament.id}/partidos`">Todas las fechas</a></div>
       <SportTabs v-if="!dayId&&categories.some(category=>bracketRounds(category).length)" v-model="matchesTab" :tabs="[{key:'dates',label:'Fechas',icon:'ball'},{key:'bracket',label:'Cuadro',icon:'trophy'}]" id="partidos" />
-      <div v-if="matchesTab==='bracket'&&!dayId" id="partidos-bracket-panel" role="tabpanel" aria-labelledby="partidos-bracket-tab"><div v-if="categories.length>1" class="sport-category-pills" role="group" aria-label="Categoría"><button v-for="category in categories" :key="category.category_id" type="button" :aria-pressed="statsCategory?.category_id===category.category_id" @click="statsCategoryId=category.category_id">{{ category.category_name }}</button></div><BracketView v-if="statsCategory&&bracketRounds(statsCategory).length" :key="statsCategory.category_id" :navigation-key="statsCategory.category_id" :rounds="bracketRounds(statsCategory)" :planned="!brackets[statsCategory.category_id]?.bracket.length" :teams="entries.map(entry=>({id:entry.id,name:entry.name,color:entry.color,has_shield:entry.has_shield}))" :organization-id="organizationId" @open-match="openBracketMatch" /><div v-else class="empty-list">Aún no hay cruces.</div></div>
+      <div v-if="matchesTab==='bracket'&&!dayId" id="partidos-bracket-panel" role="tabpanel" aria-labelledby="partidos-bracket-tab"><div v-if="categories.length>1" class="sport-category-pills" role="group" aria-label="Categoría"><button v-for="category in categories" :key="category.category_id" type="button" :aria-pressed="statsCategory?.category_id===category.category_id" @click="statsCategoryId=category.category_id">{{ category.category_name }}</button></div><BracketView v-if="statsCategory&&bracketRounds(statsCategory).length" :key="statsCategory.category_id" :navigation-key="statsCategory.category_id" :rounds="bracketRounds(statsCategory)" :dates-by-size="playoffDatesBySize(announcedFixtures[statsCategory.category_id]?.playoffDates)" :planned="!brackets[statsCategory.category_id]?.bracket.length" :teams="entries.map(entry=>({id:entry.id,name:entry.name,color:entry.color,has_shield:entry.has_shield}))" :organization-id="organizationId" @open-match="openBracketMatch" /><div v-else class="empty-list">Aún no hay cruces.</div></div>
       <div v-if="matchesTab==='dates'||dayId" id="partidos-dates-panel" role="tabpanel" aria-labelledby="partidos-dates-tab">
       <p v-if="announcedState==='loading'&&!dayId" class="notice neutral" role="status">Cargando partidos anunciados…</p>
       <p v-else-if="announcedState==='error'&&!dayId" class="notice amber" role="alert">No se pudieron cargar los partidos anunciados. Recargá esta pantalla.</p>
@@ -194,7 +200,7 @@ function openBracketMatch(matchId:string){const day=props.days.find(item=>item.m
           <div v-for="team in defenses(stats[category.category_id])" :key="team.id" class="workspace-stat-row defense-row"><OrganizerImage v-if="entryShield(team.id)" :src="entryShield(team.id)!" alt="" class="workspace-stat-shield" loading="lazy" /><span v-else class="workspace-stat-shield placeholder" :style="{background:entryColor(team.id)}">{{ initials(team.name) }}</span><strong>{{ team.name }}</strong><span>{{ team.goalsAgainst }} GC · {{ team.played }} PJ</span></div>
           </template><template v-if="statsTab==='bracket'">
           <div v-if="bracketRounds(category).length" class="stats-flyer-actions"><div v-if="canFlyer(category) && brackets[category.category_id]?.bracket.length && brackets[category.category_id]?.phase" class="workspace-actions"><a v-if="bracketRounds(category).length>1" class="btn" :href="`#/flyers/${tournament.id}/semifinal/${brackets[category.category_id].phase!.id}`">Flyer semis</a><a class="btn" :href="`#/flyers/${tournament.id}/final/${brackets[category.category_id].phase!.id}`">Flyer final</a></div></div>
-          <BracketView v-if="bracketRounds(category).length" :key="category.category_id" :navigation-key="category.category_id" :rounds="bracketRounds(category)" :planned="!brackets[category.category_id]?.bracket.length" :teams="entries.map(entry=>({id:entry.id,name:entry.name,color:entry.color,has_shield:entry.has_shield}))" :organization-id="organizationId" @open-match="openBracketMatch" />
+          <BracketView v-if="bracketRounds(category).length" :key="category.category_id" :navigation-key="category.category_id" :rounds="bracketRounds(category)" :dates-by-size="playoffDatesBySize(announcedFixtures[category.category_id]?.playoffDates)" :planned="!brackets[category.category_id]?.bracket.length" :teams="entries.map(entry=>({id:entry.id,name:entry.name,color:entry.color,has_shield:entry.has_shield}))" :organization-id="organizationId" @open-match="openBracketMatch" />
           </template>
         </div>
       </section>

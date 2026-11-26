@@ -3,10 +3,11 @@ import {onMounted,ref,watch} from 'vue';
 import type {PlannedRound} from '@torneos/shared';
 import TeamCrest from './TeamCrest.vue';
 import {useListChoice} from './match-list-navigation.ts';
+import {announcedDate} from './announced-fixture.ts';
 type Tie=PlannedRound['ties'][number]&{homeScore?:number|null;awayScore?:number|null;scoreLabel?:string|null;winnerSide?:'home'|'away'|null;twoLegs?:boolean;resolution?:'aggregate'|'match_points_penalties'|'match_points_third';matchId?:string|null;legs?:Array<{label:string;home?:number|null;away?:number|null;matchId?:string|null}>;shootout?:{home:number;away:number}|null};
 type Round=Omit<PlannedRound,'ties'>&{ties:Tie[]};
 type Team={id:string;name:string;color:string;has_shield?:boolean};
-const props=defineProps<{rounds:Round[];planned?:boolean;teams?:Team[];organizationId?:string;navigationKey?:string}>();
+const props=defineProps<{rounds:Round[];planned?:boolean;teams?:Team[];organizationId?:string;navigationKey?:string;datesBySize?:Record<number,string>}>();
 const emit=defineEmits<{ 'open-match':[matchId:string] }>();
 const active=props.navigationKey?useListChoice(`bracket-stage-${props.navigationKey}`,0):ref(0);
 const horizontal=props.navigationKey?useListChoice(`bracket-scroll-${props.navigationKey}`,0):ref(0);
@@ -31,7 +32,7 @@ function label(name:string){const source=/^Ganador de llave (\d+)\.(\d+)$/.exec(
     </div>
     <div ref="track" class="bracket-track">
       <section v-for="(round,index) in rounds" :key="`${round.name}-${index}`" class="bracket-stage" :class="{'is-active':active===index}" :aria-label="round.name">
-        <header class="bracket-stage-head"><span class="bracket-stage-index">{{ String(index+1).padStart(2,'0') }}</span><h3>{{ round.name }}</h3><span v-if="round.legs===2" class="bracket-legs">Ida y vuelta</span></header>
+        <header class="bracket-stage-head"><span class="bracket-stage-index">{{ String(index+1).padStart(2,'0') }}</span><h3>{{ round.name }}</h3><time v-if="datesBySize?.[round.size]" class="bracket-legs" :datetime="datesBySize[round.size]">{{ announcedDate(datesBySize[round.size]) }}</time><span v-if="round.legs===2" class="bracket-legs">Ida y vuelta</span></header>
         <div class="bracket-ties">
           <div v-for="tie in round.ties" :key="tie.slot" class="bracket-tie" role="group" :aria-label="`${round.name}, llave ${tie.slot}: ${tie.home} contra ${tie.away}`">
             <component :is="tie.matchId?'button':'div'" class="bracket-tie-main" :type="tie.matchId?'button':undefined" :aria-label="tie.matchId?`Ver partido: ${tie.home} contra ${tie.away}`:undefined" :data-match-list-id="tie.matchId" @click="openMatch(tie.matchId)">

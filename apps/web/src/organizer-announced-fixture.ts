@@ -1,11 +1,8 @@
 import { organizerReads } from './view-reads.ts';
 import { announcedFixturePath } from './fixture-start.ts';
 
-export type AnnouncedFixture = {
-  revision: number;
-  rounds: Array<{ ordinal: number; matches: Array<{ homeEntryId: string; awayEntryId: string }> }>;
-  teams: Array<{ entry_id: string; team_id: string; name: string; color: string; has_shield: boolean }>;
-};
+import type { AnnouncedFixture } from './announced-fixture.ts';
+export type { AnnouncedFixture } from './announced-fixture.ts';
 
 export function readAnnouncedFixture(organizationId: string, categoryId: string, csrfToken: string, take?: (path: string) => Promise<Response | undefined> | undefined) {
   return organizerReads.read<AnnouncedFixture | null>('schedule', `${csrfToken}:${organizationId}:announced:${categoryId}`, async () => {

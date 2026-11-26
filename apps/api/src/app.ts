@@ -1779,7 +1779,7 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       LEFT JOIN venues v ON v.organization_id=m.organization_id AND v.id=m.venue_id
       LEFT JOIN match_records r ON r.organization_id=m.organization_id AND r.match_id=m.id
       ${view==='legacy'?'':"LEFT JOIN match_acta_snapshots approved ON approved.organization_id=r.organization_id AND approved.id=r.approval_id AND approved.kind='approved'"}
-      WHERE m.organization_id=$1 AND md.id=ANY($2::uuid[]) AND ${archived ? 'm.archived_at IS NOT NULL' : 'm.archived_at IS NULL'} ORDER BY m.starts_at,m.court_label,m.id`, [organizationId, matchdayIds]);
+      WHERE m.organization_id=$1 AND md.id=ANY($2::uuid[]) AND ${archived ? 'm.archived_at IS NOT NULL' : 'm.archived_at IS NULL'} ORDER BY m.starts_at,m.court_label,m.announced_order,m.id`, [organizationId, matchdayIds]);
     return rows;
   }
   async function matchdaySnapshot(client: PoolClient, organizationId: string, matchdayId: string, archived = false) {
@@ -2226,12 +2226,12 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
       WHERE f.organization_id=$1 AND c.edition_id=$2`,[organizationId,day.edition_id]);
     const undatedIds=new Set<string>();
     for(const plan of announced){
-      const round=(plan.snapshot.rounds as Array<{ordinal:number;matches:Array<{homeEntryId:string;awayEntryId:string}>}>).find(item=>item.ordinal===day.ordinal);
+      const round=(plan.snapshot.rounds as Array<{ordinal:number;date?:string;matches:Array<{homeEntryId:string;awayEntryId:string}>}>).find(item=>item.ordinal===day.ordinal);
       const actual=snapshot.filter(match=>match.category_id===plan.category_id);
       if(!round||actual.length!==round.matches.length)continue;
       const expected=new Set(round.matches.map(pair=>`${pair.homeEntryId}:${pair.awayEntryId}`));
       if(actual.every(match=>expected.has(`${match.home_entry_id}:${match.away_entry_id}`))&&expected.size===actual.length)
-        for(const match of actual)if(!match.match_date&&!match.match_time&&!match.venue_id)undatedIds.add(match.id);
+        for(const match of actual)if(!match.match_time&&!match.venue_id&&(!match.match_date||match.match_date===round.date))undatedIds.add(match.id);
     }
     if(snapshot.some(match=>match.position_match&&!match.match_date))missing.push('Indicá la fecha de todos los cruces del plan por posiciones.');
     if(snapshot.some(match=>!match.position_match&&!undatedIds.has(match.id)&&(!match.match_date||!match.match_time||!match.venue_id)))missing.push('Programá día, hora y sede de todos los partidos antes de publicar.');

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { announcedDate, playoffDatesBySize, resolveAnnouncedPair, type AnnouncedFixture } from './announced-fixture.ts';
 import {computed,defineAsyncComponent,nextTick,onMounted,onUnmounted,ref,watch} from 'vue';
 import {knockoutRoundName,type PlannedRound} from '@torneos/shared/competition';
 import Icon from './Icon.vue';
@@ -26,7 +27,6 @@ type FanBracket={phase_id:string;category_id:string;repechage?:boolean;slots:Arr
 type FanStats={available:boolean;phaseMode?:string|null;tables?:Array<{groupNo:number|null;rows:Array<{position:number;unresolved:boolean;teamName:string;played:number;wins:number;draws:number;losses:number;points:number;goalsFor:number;goalsAgainst:number;goalDifference:number}>}>;scorers?:Array<{name:string;teamName:string;goals:number}>;defense?:Array<{teamName:string;played:number;goalsAgainst:number}>;rosters?:Array<{entryId:string;players:Array<{name:string;goals:number;yellowCards:number;redCards:number}>}>};
 type CatalogItem={id:string;name:string;organization_id:string;organization_name:string};
 type FanTournament=PublicPortalTournament;
-type AnnouncedFixture={revision:number;rounds:Array<{ordinal:number;matches:Array<{homeEntryId:string;awayEntryId:string}>}>;qualificationCount:number;quarterPairing:'in_person_draw';semifinalPairing:'pending'|'in_person_draw'|'bracket';finalPairing:'winners';teams:Array<{entry_id:string;team_id:string;name:string;color:string;has_shield:boolean}>};
 const props=defineProps<{catalog:CatalogItem[];organization:{id:string;name:string;logo_id?:string|null}|null;selectedTournamentId:string;tournaments:FanTournament[];fixture:FanDay[];announcedFixtures:Record<string,AnnouncedFixture>;teams:FanTeam[];resultsRevision:number;loading:boolean;error:string}>();
 const emit=defineEmits<{navigate:[path:string]}>();
 const tabToView:Record<string,string>={matches:'partidos',announced:'fixture',standings:'clasificacion',scorers:'goleadores',defense:'valla',teams:'equipos'};
@@ -40,6 +40,7 @@ const categories=computed(()=>props.tournaments.filter(item=>item.id===props.sel
 const category=computed(()=>categories.value.find(item=>item.category_id===categoryId.value)||categories.value[0]||null);
 const currentCategoryId=computed(()=>category.value?.category_id||'');
 const announced=computed(()=>props.announcedFixtures[currentCategoryId.value]);
+const selectedAnnouncedDate=computed(()=>announced.value?.rounds.find(round=>round.ordinal===selectedAnnouncedMatch.value?.ordinal)?.date);
 const announcedMode=computed(()=>!!announced.value&&!props.fixture.some(day=>day.matches.some(match=>match.category_id===currentCategoryId.value)));
 const announcedStandings=computed(()=>[...(announced.value?.teams||[])].sort((a,b)=>a.name.localeCompare(b.name,'es')));
 const announcedHome=computed(()=>announced.value?.teams.find(team=>team.entry_id===selectedAnnouncedMatch.value?.homeEntryId));
@@ -135,7 +136,12 @@ const announcedStatuses=computed(()=>Object.fromEntries(Object.entries(published
   return [key,{score,label}];
 })));
 const pendingAnnouncedRounds=computed(()=>announced.value?.rounds.map(round=>({...round,matches:round.matches.filter(pair=>!publishedAnnouncedMatches.value[`${pair.homeEntryId}:${pair.awayEntryId}`])})).filter(round=>round.matches.length)||[]);
-function openAnnouncedMatch(ordinal:number,pair:{homeEntryId:string;awayEntryId:string}){const published=publishedAnnouncedMatches.value[`${pair.homeEntryId}:${pair.awayEntryId}`];if(published)openMatch(published);else{selectedAnnouncedMatch.value={ordinal,...pair};const index=announced.value?.rounds.find(item=>item.ordinal===ordinal)?.matches.findIndex(item=>item.homeEntryId===pair.homeEntryId&&item.awayEntryId===pair.awayEntryId)??-1;if(!restoringNavigation&&index>=0)pushPublicNavigation(tabToView[tab.value]||'partidos',{kind:'cruce',id:`${ordinal}-${index+1}`});}}
+function openAnnouncedMatch(ordinal:number,pair:{homeEntryId:string;awayEntryId:string}){
+  const published=publishedAnnouncedMatches.value[`${pair.homeEntryId}:${pair.awayEntryId}`];
+  if(published){openMatch(published);return;}
+  selectedAnnouncedMatch.value={ordinal,...pair};
+  if(!restoringNavigation)pushPublicNavigation(tabToView[tab.value]||'partidos',{kind:'cruce',id:`${ordinal}.${pair.homeEntryId}`});
+}
 const bracketRows=ref<FanBracket[]>([]);
 const bracketLoading=ref(false),bracketFailed=ref(false),bracketRetry=ref(0);
 const bracket=computed(()=>bracketRows.value.find(item=>item.category_id===currentCategoryId.value));
@@ -220,10 +226,13 @@ function restorePublicLocation(){
     if(epoch!==restoreEpoch)return;
     if(match)openMatch(match);
     else if(team)openTeam(team);
-    else if(state.detail?.kind==='cruce'){const [ordinal,index]=state.detail.id.split('-').map(Number),pair=announced.value?.rounds.find(item=>item.ordinal===ordinal)?.matches[index-1];if(pair)openAnnouncedMatch(ordinal,pair);}
+    else if(state.detail?.kind==='cruce'){const match=resolveAnnouncedPair(announced.value?.rounds??[],state.detail.id);if(match)openAnnouncedMatch(match.ordinal,match.pair);}
     restoringNavigation=false;
   });
 }
+watch([announced,()=>props.loading], ([plan,loading])=>{
+  if(plan&&!loading&&readPublicNavigation(location.search).detail?.kind==='cruce'&&!selectedAnnouncedMatch.value)restorePublicLocation();
+});
 watch(tab,value=>{if(!restoringNavigation&&!props.loading){pushPublicNavigation(tabToView[value]||'partidos');void nextTick(()=>window.scrollTo(0,0));}},{flush:'sync'});
 watch(() => [currentTournament.value?.id, tab.value, props.loading, props.error] as const, ([id, value, loading, error]) => {
   if (id && !loading && !error && tabs.value.some(item => item.key === value)) recordFanView({id, section: tabToView[value]});
@@ -240,7 +249,7 @@ watch(() => [currentTournament.value?.id, tab.value, props.loading, props.error]
       <div class="fan-category" v-if="categories.length>1" role="group" aria-label="Categoría"><button v-for="item in categories" :key="item.category_id" type="button" :aria-pressed="currentCategoryId===item.category_id" @click="categoryId=item.category_id">{{ item.category_name }}</button></div>
       <template v-if="selectedAnnouncedMatch">
         <div class="fan-detail-top"><button type="button" class="fan-close" aria-label="Volver a los partidos" @click="closeDetail"><Icon name="back" /></button><span>Jornada {{ selectedAnnouncedMatch.ordinal }}</span></div>
-        <section class="fan-scoreboard" aria-label="Partido anunciado"><p class="fan-match-state">PENDIENTE DE FECHA</p><div class="fan-score-grid"><div class="fan-score-team"><TeamCrest size="lg" :name="announcedHome?.name||'Equipo'" :team-id="announcedHome?.team_id" :organization-id="organization?.id" :color="announcedHome?.color" :has-shield="announcedHome?.has_shield" /><strong>{{ announcedHome?.name }}</strong></div><div class="fan-score-number">vs</div><div class="fan-score-team"><TeamCrest size="lg" :name="announcedAway?.name||'Equipo'" :team-id="announcedAway?.team_id" :organization-id="organization?.id" :color="announcedAway?.color" :has-shield="announcedAway?.has_shield" /><strong>{{ announcedAway?.name }}</strong></div></div></section>
+        <section class="fan-scoreboard" aria-label="Partido anunciado"><p class="fan-match-state"><time v-if="selectedAnnouncedDate" :datetime="selectedAnnouncedDate">{{ announcedDate(selectedAnnouncedDate) }} · Hora por confirmar</time><template v-else>PENDIENTE DE FECHA</template></p><div class="fan-score-grid"><div class="fan-score-team"><TeamCrest size="lg" :name="announcedHome?.name||'Equipo'" :team-id="announcedHome?.team_id" :organization-id="organization?.id" :color="announcedHome?.color" :has-shield="announcedHome?.has_shield" /><strong>{{ announcedHome?.name }}</strong></div><div class="fan-score-number">vs</div><div class="fan-score-team"><TeamCrest size="lg" :name="announcedAway?.name||'Equipo'" :team-id="announcedAway?.team_id" :organization-id="organization?.id" :color="announcedAway?.color" :has-shield="announcedAway?.has_shield" /><strong>{{ announcedAway?.name }}</strong></div></div></section>
       </template>
       <template v-else-if="selectedMatch">
         <div class="fan-detail-top"><button type="button" class="fan-close" aria-label="Cerrar partido" @click="closeDetail"><Icon name="close" /></button><span>{{ matchTitle(selectedMatch) }}</span></div>
@@ -265,8 +274,8 @@ watch(() => [currentTournament.value?.id, tab.value, props.loading, props.error]
           <AnnouncedFixtureMatches :rounds="announced.rounds.filter(item=>item.ordinal===announcedRound)" :teams="announced.teams" :organization-id="organization?.id" :status-by-pair="announcedStatuses" @open-match="openAnnouncedMatch" />
           </template>
           <template v-else>
-            <BracketView v-if="bracket" :rounds="bracketRounds" :navigation-key="currentCategoryId" :teams="categoryTeams" :organization-id="organization?.id" @open-match="openBracketMatch" />
-            <template v-else-if="!bracketLoading&&!bracketFailed"><p class="fan-plan-note">Cuartos: sorteo presencial · Semifinales: {{ announced.semifinalPairing==='in_person_draw'?'sorteo presencial':'cruces por confirmar' }}</p><BracketView :rounds="announcedFinals" planned /></template>
+            <BracketView v-if="bracket" :rounds="bracketRounds" :dates-by-size="playoffDatesBySize(announced.playoffDates)" :navigation-key="currentCategoryId" :teams="categoryTeams" :organization-id="organization?.id" @open-match="openBracketMatch" />
+            <template v-else-if="!bracketLoading&&!bracketFailed"><p class="fan-plan-note">Cuartos: sorteo presencial · Semifinales: {{ announced.semifinalPairing==='in_person_draw'?'sorteo presencial':'cruces por confirmar' }}</p><BracketView :rounds="announcedFinals" :dates-by-size="playoffDatesBySize(announced.playoffDates)" planned /></template>
           </template>
         </section>
         <section v-if="tab==='matches'" id="fan-sections-matches-panel" role="tabpanel" aria-labelledby="fan-sections-matches-tab" class="fan-content">

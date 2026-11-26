@@ -8,6 +8,16 @@ import {isMatchListRoute,savedListScroll} from '../apps/web/src/match-list-navig
 import {closeOwnDetail,moveWithinApp,skipDiscardedEntry} from '../apps/web/src/navigation-entry.ts';
 import {invalidatePanelMutation} from '../apps/web/src/panel-mutations.ts';
 import {organizerReads} from '../apps/web/src/view-reads.ts';
+import {resolveAnnouncedPair} from '../apps/web/src/announced-fixture.ts';
+
+test('un enlace a un cruce conserva el partido cuando cambia el orden de su jornada',()=>{
+  const first={homeEntryId:'first',awayEntryId:'second'};
+  const other={homeEntryId:'other',awayEntryId:'last'};
+  const rounds=[{ordinal:2,legacyHomeOrder:['first','other'],matches:[other,first]}];
+  assert.deepEqual(resolveAnnouncedPair(rounds,'2-1'),{ordinal:2,pair:first});
+  assert.deepEqual(resolveAnnouncedPair(rounds,'2.first'),{ordinal:2,pair:first});
+  assert.equal(resolveAnnouncedPair(rounds,'2.unknown'),undefined);
+});
 
 test('las lecturas públicas comparten la solicitud en curso y se renuevan con el resultado', async t => {
   let fetched = 0;

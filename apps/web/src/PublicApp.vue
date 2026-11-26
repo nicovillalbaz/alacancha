@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { AnnouncedFixture } from './announced-fixture.ts';
 import { moveWithinApp, restoreAppEntry, skipDiscardedEntry } from './navigation-entry.ts';
 import {computed,onMounted,onUnmounted,ref,watch} from 'vue';
 import PublicDirectory from './PublicDirectory.vue';
@@ -47,7 +48,6 @@ const publicTournaments = ref<PublicPortalTournament[]>([]);
 const publicCatalog=ref<PublicCatalogItem[]>([]);
 const publicOrganizations=ref<PublicOrganizationItem[]>([]);
 const publicDraws=ref<PublicDraw[]>([]);
-type AnnouncedFixture={revision:number;rounds:Array<{ordinal:number;matches:Array<{homeEntryId:string;awayEntryId:string}>}>;qualificationCount:number;quarterPairing:'in_person_draw';semifinalPairing:'pending'|'in_person_draw'|'bracket';finalPairing:'winners';teams:Array<{entry_id:string;team_id:string;name:string;color:string;has_shield:boolean}>};
 const publicAnnouncedFixtures=ref<Record<string,AnnouncedFixture>>({});
 const publicDrawMenu=ref<PublicDrawLink[]>([]);
 const publicPositionStart=ref<PublicPositionStart|null>(null);
