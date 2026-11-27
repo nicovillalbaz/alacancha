@@ -6,6 +6,7 @@ import Icon from './Icon.vue';
 import PublicImage from './PublicImage.vue';
 import PublicTeamRoster from './PublicTeamRoster.vue';
 import PublicTeamTabs from './PublicTeamTabs.vue';
+import PublicTeamStats from './PublicTeamStats.vue';
 import PublicTeamMatches from './PublicTeamMatches.vue';
 import PublicTeamLink from './PublicTeamLink.vue';
 import PublicScoreGoals from './PublicScoreGoals.vue';
@@ -52,7 +53,7 @@ const sections=shallowRef<Partial<Record<PublicPositionView,LoadedSection>>>({})
 const scope=computed(()=>`${props.organization?.id}:${current.value?.category_id}:${current.value?.revision}`);
 const view=computed(()=>{
   if(selectorOpen.value)return null;
-  if(selectedTeam.value)return teamTab.value==='matches'?'resumen':null;
+  if(selectedTeam.value)return teamTab.value==='statistics'?'clasificacion':teamTab.value==='matches'?'resumen':null;
   if(selectedGame.value)return 'resumen';
   return publicPositionView(tabToView[tab.value]);
 });
@@ -61,8 +62,12 @@ const competition=computed(()=>activeSection.value?.data||null);
 const scoreSection=computed(()=>view.value==='clasificacion'?sections.value.clasificacion:sections.value.resumen);
 const scoreData=computed(()=>scoreSection.value?.data);
 const titleExtra=computed(()=>scoreData.value?.titleExtra??sections.value.clasificacion?.data.titleExtra);
+const requestedSections=computed<PublicPositionView[]>(()=>{
+  if(!view.value||view.value==='equipos')return [];
+  return selectedTeam.value&&teamTab.value==='statistics'?[view.value,'goleadores']:[view.value];
+});
 let displayedScope='';
-watch([scope,view,()=>props.resultsRevision,competitionRetry,()=>props.startup],async([key,resource,revision,attempt,startup],_previous,onCleanup)=>{
+watch([scope,requestedSections,()=>props.resultsRevision,competitionRetry,()=>props.startup],async([key,resources,revision,attempt,startup],_previous,onCleanup)=>{
   if(displayedScope!==key){
     displayedScope=key;
     sections.value={};
@@ -71,25 +76,32 @@ watch([scope,view,()=>props.resultsRevision,competitionRetry,()=>props.startup],
   const org=props.organization?.id;
   error.value='';
   competitionLoading.value=false;
-  if(!org||!category||!resource||resource==='equipos')return;
-  const previous = sections.value[resource];
-  if(previous?.revision===revision&&Date.now()-previous.loadedAt<15_000)return;
-  if(!previous&&startup&&startup.categoryId===category.category_id&&startup.drawRevision===category.revision&&startup.resultsRevision===revision&&startup.section.view===resource){
-    sections.value={...sections.value,[resource]:{revision,loadedAt:Date.now(),data:startup.section.data}};
-    return;
+  if(!org||!category||!resources.length)return;
+  if(startup&&resources.includes(startup.section.view)&&!sections.value[startup.section.view]&&
+    startup.categoryId===category.category_id&&startup.drawRevision===category.revision&&startup.resultsRevision===revision){
+    sections.value={...sections.value,[startup.section.view]:{revision,loadedAt:Date.now(),data:startup.section.data}};
   }
-  competitionLoading.value=!previous;
+  const stale=resources.filter(resource=>{
+    const previous=sections.value[resource];
+    return previous?.revision!==revision||Date.now()-previous.loadedAt>=15_000;
+  });
+  competitionLoading.value=stale.some(resource=>!sections.value[resource]);
+  if(!stale.length)return;
   let active=true;
   onCleanup(()=>{active=false;});
-  const query=resource==='resumen'?'resumen=1':`vista=${resource}`;
-  try {
+  const loaded=await Promise.allSettled(stale.map(async resource=>{
+    const query=resource==='resumen'?'resumen=1':`vista=${resource}`;
     const data=await readPublic<Competition>(`/organizations/${org}/draws/${category.category_id}/competition?${query}`,`${key}:${revision}:${attempt}`);
-    if(active)sections.value={...sections.value,[resource]:{revision,loadedAt:Date.now(),data}};
-  }catch{
-    if(active)error.value='No se pudo cargar esta sección.';
-  }finally{
-    if(active)competitionLoading.value=false;
+    return {resource,data};
+  }));
+  if(!active)return;
+  const updated={...sections.value};
+  for(const result of loaded){
+    if(result.status==='rejected')error.value='No se pudo cargar esta sección.';
+    else updated[result.value.resource]={revision,loadedAt:Date.now(),data:result.value.data};
   }
+  sections.value=updated;
+  competitionLoading.value=false;
 },{immediate:true});
 watch(()=>current.value?.tournament_id,()=>{
   selectedRound.value='F1';selectedDay.value=days.value[0]??0;restorePublicLocation();
@@ -120,6 +132,51 @@ const scorers=computed(()=>[...(competition.value?.players||[])].filter(player=>
 const defense=computed(()=>[...(competition.value?.defense||[])].filter(team=>team.played>0).sort((a,b)=>a.goalsAgainst-b.goalsAgainst||b.played-a.played));
 function crest(team:Team|Slot|undefined){return team?.has_shield&&team.team_id?`/api/v1/public/organizations/${props.organization?.id}/draws/teams/${team.team_id}/shield`:null;}
 function refName(code:string){const assigned=slots.value.get(code)?.team_name;if(assigned)return assigned;if(/^[1-4][AB]$/.test(code))return `${code[0]}.º Grupo ${code[1]}`;if(/^S[1-4]$/.test(code))return `${code[1]}.º entre ganadores`;return code;}
+const teamTopScorers=computed(()=>(sections.value.goleadores?.data.players||[])
+  .filter(player=>player.entryId===selectedTeam.value?.entry_id&&player.goals>0)
+  .sort((a,b)=>b.goals-a.goals||a.name.localeCompare(b.name)).slice(0,3));
+const teamStanding=computed(()=>{
+  const competition=sections.value.clasificacion?.data.competition;
+  const id=selectedTeam.value?.entry_id;
+  if(!id||!competition?.official.groups)return undefined;
+  const rank=(table:PositionCompetition['groupA'])=>table.groups.find(row=>row.teamIds.includes(id));
+  const final=competition.official.quadrangular&&competition.final?rank(competition.final):undefined;
+  if(final)return {row:final,phase:'quadrangular',group:undefined,label:'Finales'} as const;
+  const groupA=rank(competition.groupA),groupB=rank(competition.groupB);
+  if(groupA)return {row:groupA,phase:'groups',group:'A',label:'Grupo A'} as const;
+  if(groupB)return {row:groupB,phase:'groups',group:'B',label:'Grupo B'} as const;
+  const general=rank(competition.general);
+  if(general)return {row:general,phase:'general',group:undefined,label:'Tabla general'} as const;
+});
+const teamPosition=computed(()=>{
+  const position=teamStanding.value;
+  if(position)return `${position.row.position}.º${position.row.unresolved?' (empate)':''} · ${position.label}`;
+});
+const teamGoals=computed(()=>{
+  const id=selectedTeam.value?.entry_id, data=sections.value.clasificacion?.data;
+  if(!id||!data)return undefined;
+  const total={goalsFor:0,goalsAgainst:0};
+  function count(homeId:string|null,awayId:string|null,home:number,away:number){
+    if(homeId===id){total.goalsFor+=home;total.goalsAgainst+=away;}
+    if(awayId===id){total.goalsFor+=away;total.goalsAgainst+=home;}
+  }
+  for(const match of data.results||[])count(match.homeEntryId,match.awayEntryId,match.homeGoals,match.awayGoals);
+  const extra=data.titleExtra;
+  if(extra?.score)count(extra.homeEntryId,extra.awayEntryId,extra.score.home,extra.score.away);
+  return total;
+});
+function openStatsSection(section:'clasificacion'|'goleadores'){
+  const target=viewToTab[section];
+  if(section==='clasificacion'){
+    classificationTab.value=teamStanding.value?.phase||'groups';
+    const group=teamStanding.value?.group||current.value?.snapshot.slots.find(slot=>slot.entry_id===selectedTeam.value?.entry_id)?.slot_code[0];
+    if(group==='A'||group==='B')groupTab.value=group;
+  }
+  if(tab.value===target)pushPublicNavigation(section);
+  else tab.value=target;
+  selectedTeam.value=null;
+  void nextTick(()=>window.scrollTo(0,0));
+}
 function gameTeam(game:Game,side:'home'|'away'){
   const field=side==='home'?'homeEntryId':'awayEntryId';
   const participants=game.code===extraCode?titleExtra.value:scoreData.value?.competition?.participants[game.code];
@@ -141,6 +198,7 @@ const teamMatches=computed<TeamMatch[]>(()=>{
     const score=gameScore(game);
     return {
       kind:'partido',id:game.code,home:gameName(game,'home'),away:gameName(game,'away'),
+      homeEntryId:gameTeam(game,'home')?.entry_id,awayEntryId:gameTeam(game,'away')?.entry_id,
       date:game.planned_date,round:game.jornada_no?dayTitle(game.jornada_no):roundTitle(game.sporting_round),
       status:score?'official':undefined,score,
     };
@@ -194,7 +252,7 @@ function openTeam(team:Team) {
   teamTab.value='players';
   if (!restoringNavigation) pushPublicNavigation('equipos',{kind:'equipo',id:team.entry_id});
 }
-function openTeamEntry(entryId:string){const team=byEntry.value.get(entryId);if(team)openTeam(team);}
+function openTeamEntry(entryId:string){const team=byEntry.value.get(entryId);if(team&&selectedTeam.value?.entry_id!==entryId)openTeam(team);}
 function closeDetail(){if(!closePublicDetail(readPublicNavigation(location.search).view))restorePublicLocation();}
 watch(extraGame,game=>{
   const detail=readPublicNavigation(location.search).detail;
@@ -232,32 +290,32 @@ onUnmounted(()=>window.removeEventListener('popstate',restorePublicLocation));
         <section v-else-if="tab==='fixture'" id="public-position-fixture-panel" role="tabpanel" aria-labelledby="public-position-fixture-tab">
           <div class="public-subtabs" role="group" aria-label="Vista de fixture"><button type="button" :aria-pressed="fixtureTab==='dates'" @click="fixtureTab='dates'">Fechas</button><button type="button" :aria-pressed="fixtureTab==='days'" @click="fixtureTab='days'">Jornadas</button></div>
           <template v-if="fixtureTab==='dates'"><div class="public-pills" role="group" aria-label="Fecha deportiva"><button v-for="round in rounds" :key="round" type="button" :aria-pressed="selectedRound===round" @click="selectedRound=round;($event.currentTarget as HTMLElement).scrollIntoView({block:'nearest',inline:'center',behavior:'smooth'})">{{ roundLabel(round) }}</button></div><h2>{{ roundTitle(selectedRound) }}</h2><div v-for="game in roundGames" :key="game.code" class="public-fixture-row is-date" @click="matchRowClicked($event)&&openMatch(game.code)"><small>{{ game.jornada_no?`J${game.jornada_no}`:'J1/J2' }}<span>{{ gameDate(game) }}</span></small><PublicTeamLink class="fixture-team" :name="gameName(game,'home')" :entry-id="gameTeam(game,'home')?.entry_id" @open="openTeamEntry"><strong>{{ gameName(game,'home') }}</strong></PublicTeamLink><button type="button" class="public-match-action" :data-match-list-id="game.code" :aria-label="`Abrir partido: ${gameName(game,'home')} contra ${gameName(game,'away')}`" @click="openMatch(game.code)"><em>{{ result(game) }}</em></button><PublicTeamLink class="fixture-team" :name="gameName(game,'away')" :entry-id="gameTeam(game,'away')?.entry_id" @open="openTeamEntry"><strong>{{ gameName(game,'away') }}</strong></PublicTeamLink></div></template>
-          <template v-else><div class="public-pills" role="group" aria-label="Jornada"><button v-for="day in days" :key="day" type="button" :aria-pressed="selectedDay===day" @click="selectedDay=day;($event.currentTarget as HTMLElement).scrollIntoView({block:'nearest',inline:'center',behavior:'smooth'})">{{ day===0?'J1/J2':`J${day}` }}</button></div><h2>{{ dayTitle(selectedDay) }} <small>{{ dayDate(selectedDay) }}</small></h2><div v-if="!dayGames.length" class="public-hint">Aún sin partidos asignados.</div><div v-for="game in dayGames" :key="game.code" class="public-fixture-row" @click="matchRowClicked($event)&&openMatch(game.code)"><small>{{ roundTitle(game.sporting_round) }}</small><PublicTeamLink class="fixture-team" :name="gameName(game,'home')" :entry-id="gameTeam(game,'home')?.entry_id" @open="openTeamEntry"><strong>{{ gameName(game,'home') }}</strong></PublicTeamLink><button type="button" class="public-match-action" :data-match-list-id="game.code" :aria-label="`Abrir partido: ${gameName(game,'home')} contra ${gameName(game,'away')}`" @click="openMatch(game.code)"><em>{{ result(game) }}</em></button><PublicTeamLink class="fixture-team" :name="gameName(game,'away')" :entry-id="gameTeam(game,'away')?.entry_id" @open="openTeamEntry"><strong>{{ gameName(game,'away') }}</strong></PublicTeamLink></div><div v-for="nearby in nearbyDays" :key="nearby" class="public-adjacent"><button type="button" class="adjacent-day" @click="selectedDay=nearby">J{{ nearby }} · {{ dayDate(nearby) }} <Icon name="arrow" /></button><button v-for="game in allGames.filter(item=>item.jornada_no===nearby)" :key="game.code" type="button" :data-match-list-id="game.code" @click="openMatch(game.code)">{{ gameName(game,'home') }} – {{ gameName(game,'away') }}</button></div></template>
+          <template v-else><div class="public-pills" role="group" aria-label="Jornada"><button v-for="day in days" :key="day" type="button" :aria-pressed="selectedDay===day" @click="selectedDay=day;($event.currentTarget as HTMLElement).scrollIntoView({block:'nearest',inline:'center',behavior:'smooth'})">{{ day===0?'J1/J2':`J${day}` }}</button></div><h2>{{ dayTitle(selectedDay) }} <small>{{ dayDate(selectedDay) }}</small></h2><div v-if="!dayGames.length" class="public-hint">Aún sin partidos asignados.</div><div v-for="game in dayGames" :key="game.code" class="public-fixture-row" @click="matchRowClicked($event)&&openMatch(game.code)"><small>{{ roundTitle(game.sporting_round) }}</small><PublicTeamLink class="fixture-team" :name="gameName(game,'home')" :entry-id="gameTeam(game,'home')?.entry_id" @open="openTeamEntry"><strong>{{ gameName(game,'home') }}</strong></PublicTeamLink><button type="button" class="public-match-action" :data-match-list-id="game.code" :aria-label="`Abrir partido: ${gameName(game,'home')} contra ${gameName(game,'away')}`" @click="openMatch(game.code)"><em>{{ result(game) }}</em></button><PublicTeamLink class="fixture-team" :name="gameName(game,'away')" :entry-id="gameTeam(game,'away')?.entry_id" @open="openTeamEntry"><strong>{{ gameName(game,'away') }}</strong></PublicTeamLink></div><div v-for="nearby in nearbyDays" :key="nearby" class="public-adjacent"><button type="button" class="adjacent-day" @click="selectedDay=nearby">J{{ nearby }} · {{ dayDate(nearby) }} <Icon name="arrow" /></button><div v-for="game in allGames.filter(item=>item.jornada_no===nearby)" :key="game.code" class="adjacent-match" @click="matchRowClicked($event)&&openMatch(game.code)"><PublicTeamLink :entry-id="gameTeam(game,'home')?.entry_id" :name="gameName(game,'home')" @open="openTeamEntry">{{ gameName(game,'home') }}</PublicTeamLink><button type="button" :data-match-list-id="game.code" :aria-label="`Abrir partido: ${gameName(game,'home')} contra ${gameName(game,'away')}`" @click="openMatch(game.code)">–</button><PublicTeamLink :entry-id="gameTeam(game,'away')?.entry_id" :name="gameName(game,'away')" @open="openTeamEntry">{{ gameName(game,'away') }}</PublicTeamLink></div></div></template>
         </section>
         <section v-else-if="tab==='classification'" id="public-position-classification-panel" role="tabpanel" aria-labelledby="public-position-classification-tab">
           <div class="public-subtabs" role="group" aria-label="Etapa de clasificación"><button v-for="item in [{key:'groups',label:'Grupos'},{key:'quarterfinals',label:'Cuartos'},{key:'quadrangular',label:'Finales'},{key:'general',label:'Tabla general'}]" :key="item.key" type="button" :aria-pressed="classificationTab===item.key" @click="classificationTab=item.key">{{ item.label }}</button></div>
-          <template v-if="classificationTab==='groups'"><div class="public-subtabs minor" role="group" aria-label="Elegir grupo"><button v-for="group in ['A','B'] as const" :key="group" type="button" :aria-pressed="groupTab===group" @click="groupTab=group">Grupo {{ group }}</button></div><template v-if="competition?.competition?.official.groups"><div v-for="row in rows(groupTab==='A'?competition.competition.groupA:competition.competition.groupB)" :key="row.id" class="public-table-row"><b>{{ row.unresolved?'=':row.position }}</b><PublicImage loading="lazy" v-if="crest(byEntry.get(row.id))" :src="crest(byEntry.get(row.id))!" /><span v-else class="public-mark">{{ groupTab }}</span><strong>{{ byEntry.get(row.id)?.team_name||'Por definir' }}</strong><small>{{ row.stats?.played }} PJ</small><b>{{ row.stats?.points }}</b></div></template><template v-else><div v-for="slot in current.snapshot.slots.filter(item=>item.slot_code.startsWith(groupTab))" :key="slot.slot_code" class="public-table-row"><b>{{ slot.slot_code }}</b><PublicImage v-if="crest(slot)" :src="crest(slot)!" /><span v-else class="public-mark">{{ groupTab }}</span><strong>{{ slot.team_name||'Por sortear' }}</strong><small>— PJ</small><b>—</b></div></template></template>
-          <template v-else-if="classificationTab==='general'"><template v-if="competition?.competition?.official.groups"><div v-for="row in rows(competition.competition.general)" :key="row.id" class="public-table-row"><b>{{ row.unresolved?'=':row.position }}</b><PublicImage loading="lazy" v-if="crest(byEntry.get(row.id))" :src="crest(byEntry.get(row.id))!" /><span v-else class="public-mark">•</span><strong>{{ byEntry.get(row.id)?.team_name||'Por definir' }}</strong><small>{{ row.stats?.played }} PJ</small><b>{{ row.stats?.points }}</b></div></template><template v-else><div v-for="slot in current.snapshot.slots" :key="slot.slot_code" class="public-table-row"><b>—</b><PublicImage v-if="crest(slot)" :src="crest(slot)!" /><span v-else class="public-mark">{{ slot.slot_code[0] }}</span><strong>{{ slot.team_name||slot.slot_code+' · Por sortear' }}</strong><small>— PJ</small><b>—</b></div></template></template>
-          <template v-else-if="classificationTab==='quarterfinals'"><div v-for="game in allGames.filter(item=>item.stage==='quarterfinal')" :key="game.code" class="public-stage"><small>Llave {{ game.code.slice(2) }} · J{{ game.jornada_no }}</small><strong>{{ gameName(game,'home') }} <em>{{ result(game) }}</em> {{ gameName(game,'away') }}</strong><small v-if="results.get(game.code)?.homeGoals===results.get(game.code)?.awayGoals&&results.get(game.code)?.homePenalties!==results.get(game.code)?.awayPenalties">Penales {{ results.get(game.code)?.homePenalties }} : {{ results.get(game.code)?.awayPenalties }}</small><button v-if="matches.has(game.code)" type="button" :data-match-list-id="game.code" @click="openMatch(game.code)">Ver partido ›</button></div></template>
-          <template v-else><div v-if="competition?.competition?.final&&competition.competition.official.quadrangular"><div v-for="row in rows(competition.competition.final)" :key="row.id" class="public-table-row"><b>{{ row.unresolved?'=':row.position }}</b><PublicImage loading="lazy" v-if="crest(byEntry.get(row.id))" :src="crest(byEntry.get(row.id))!" /><span v-else class="public-mark">•</span><strong>{{ byEntry.get(row.id)?.team_name||'Por definir' }}</strong><small>{{ row.stats?.played }} PJ</small><b>{{ row.stats?.points }}</b></div></div><div v-else><div v-for="seed in [1,2,3,4]" :key="seed" class="public-table-row"><b>{{ seed }}</b><span class="public-mark">•</span><strong>Por definir</strong><small>— PJ</small><b>—</b></div></div><div v-for="game in allGames.filter(item=>item.stage==='quadrangular')" :key="game.code" class="public-stage"><small>{{ roundTitle(game.sporting_round) }} · J{{ game.jornada_no }}</small><strong>{{ gameName(game,'home') }} <em>{{ result(game) }}</em> {{ gameName(game,'away') }}</strong><button v-if="matches.has(game.code)" type="button" :data-match-list-id="game.code" @click="openMatch(game.code)">Ver partido ›</button></div><div v-if="competition?.titleExtra?.decision==='extra'" class="public-stage"><small>Partido extra</small><button v-if="competition.titleExtra.matchId" type="button" @click="openMatch(extraCode)">Ver partido ›</button><strong>{{ byEntry.get(competition.titleExtra.homeEntryId||'')?.team_name }} <em>{{ competition.titleExtra.score?`${competition.titleExtra.score.home} : ${competition.titleExtra.score.away}`:'–' }}</em> {{ byEntry.get(competition.titleExtra.awayEntryId||'')?.team_name }}</strong><small v-if="competition.titleExtra.score?.home===competition.titleExtra.score?.away&&competition.titleExtra.score?.homePenalties!==competition.titleExtra.score?.awayPenalties">Penales {{ competition.titleExtra.score?.homePenalties }} : {{ competition.titleExtra.score?.awayPenalties }}</small><strong v-if="competition?.titleExtra?.winnerEntryId">🏆 Campeón: {{ byEntry.get(competition.titleExtra.winnerEntryId)?.team_name }}</strong></div></template>
+          <template v-if="classificationTab==='groups'"><div class="public-subtabs minor" role="group" aria-label="Elegir grupo"><button v-for="group in ['A','B'] as const" :key="group" type="button" :aria-pressed="groupTab===group" @click="groupTab=group">Grupo {{ group }}</button></div><template v-if="competition?.competition?.official.groups"><PublicTeamLink v-for="row in rows(groupTab==='A'?competition.competition.groupA:competition.competition.groupB)" :key="row.id" class="public-table-row" :entry-id="row.id" :name="byEntry.get(row.id)?.team_name||'Por definir'" content-label @open="openTeamEntry"><b>{{ row.unresolved?'=':row.position }}</b><PublicImage loading="lazy" v-if="crest(byEntry.get(row.id))" :src="crest(byEntry.get(row.id))!" /><span v-else class="public-mark">{{ groupTab }}</span><strong>{{ byEntry.get(row.id)?.team_name||'Por definir' }}</strong><small>{{ row.stats?.played }} PJ</small><b>{{ row.stats?.points }}</b></PublicTeamLink></template><template v-else><PublicTeamLink v-for="slot in current.snapshot.slots.filter(item=>item.slot_code.startsWith(groupTab))" :key="slot.slot_code" class="public-table-row" :entry-id="slot.entry_id" :name="slot.team_name||'Por sortear'" content-label @open="openTeamEntry"><b>{{ slot.slot_code }}</b><PublicImage v-if="crest(slot)" :src="crest(slot)!" /><span v-else class="public-mark">{{ groupTab }}</span><strong>{{ slot.team_name||'Por sortear' }}</strong><small>— PJ</small><b>—</b></PublicTeamLink></template></template>
+          <template v-else-if="classificationTab==='general'"><template v-if="competition?.competition?.official.groups"><PublicTeamLink v-for="row in rows(competition.competition.general)" :key="row.id" class="public-table-row" :entry-id="row.id" :name="byEntry.get(row.id)?.team_name||'Por definir'" content-label @open="openTeamEntry"><b>{{ row.unresolved?'=':row.position }}</b><PublicImage loading="lazy" v-if="crest(byEntry.get(row.id))" :src="crest(byEntry.get(row.id))!" /><span v-else class="public-mark">•</span><strong>{{ byEntry.get(row.id)?.team_name||'Por definir' }}</strong><small>{{ row.stats?.played }} PJ</small><b>{{ row.stats?.points }}</b></PublicTeamLink></template><template v-else><PublicTeamLink v-for="slot in current.snapshot.slots" :key="slot.slot_code" class="public-table-row" :entry-id="slot.entry_id" :name="slot.team_name||'Por sortear'" content-label @open="openTeamEntry"><b>—</b><PublicImage v-if="crest(slot)" :src="crest(slot)!" /><span v-else class="public-mark">{{ slot.slot_code[0] }}</span><strong>{{ slot.team_name||slot.slot_code+' · Por sortear' }}</strong><small>— PJ</small><b>—</b></PublicTeamLink></template></template>
+          <template v-else-if="classificationTab==='quarterfinals'"><div v-for="game in allGames.filter(item=>item.stage==='quarterfinal')" :key="game.code" class="public-stage"><small>Llave {{ game.code.slice(2) }} · J{{ game.jornada_no }}</small><strong><PublicTeamLink :entry-id="gameTeam(game,'home')?.entry_id" :name="gameName(game,'home')" @open="openTeamEntry">{{ gameName(game,'home') }}</PublicTeamLink> <em>{{ result(game) }}</em> <PublicTeamLink :entry-id="gameTeam(game,'away')?.entry_id" :name="gameName(game,'away')" @open="openTeamEntry">{{ gameName(game,'away') }}</PublicTeamLink></strong><small v-if="results.get(game.code)?.homeGoals===results.get(game.code)?.awayGoals&&results.get(game.code)?.homePenalties!==results.get(game.code)?.awayPenalties">Penales {{ results.get(game.code)?.homePenalties }} : {{ results.get(game.code)?.awayPenalties }}</small><button v-if="matches.has(game.code)" type="button" :data-match-list-id="game.code" @click="openMatch(game.code)">Ver partido ›</button></div></template>
+          <template v-else><div v-if="competition?.competition?.final&&competition.competition.official.quadrangular"><PublicTeamLink v-for="row in rows(competition.competition.final)" :key="row.id" class="public-table-row" :entry-id="row.id" :name="byEntry.get(row.id)?.team_name||'Por definir'" content-label @open="openTeamEntry"><b>{{ row.unresolved?'=':row.position }}</b><PublicImage loading="lazy" v-if="crest(byEntry.get(row.id))" :src="crest(byEntry.get(row.id))!" /><span v-else class="public-mark">•</span><strong>{{ byEntry.get(row.id)?.team_name||'Por definir' }}</strong><small>{{ row.stats?.played }} PJ</small><b>{{ row.stats?.points }}</b></PublicTeamLink></div><div v-else><div v-for="seed in [1,2,3,4]" :key="seed" class="public-table-row"><b>{{ seed }}</b><span class="public-mark">•</span><strong>Por definir</strong><small>— PJ</small><b>—</b></div></div><div v-for="game in allGames.filter(item=>item.stage==='quadrangular')" :key="game.code" class="public-stage"><small>{{ roundTitle(game.sporting_round) }} · J{{ game.jornada_no }}</small><strong><PublicTeamLink :entry-id="gameTeam(game,'home')?.entry_id" :name="gameName(game,'home')" @open="openTeamEntry">{{ gameName(game,'home') }}</PublicTeamLink> <em>{{ result(game) }}</em> <PublicTeamLink :entry-id="gameTeam(game,'away')?.entry_id" :name="gameName(game,'away')" @open="openTeamEntry">{{ gameName(game,'away') }}</PublicTeamLink></strong><button v-if="matches.has(game.code)" type="button" :data-match-list-id="game.code" @click="openMatch(game.code)">Ver partido ›</button></div><div v-if="competition?.titleExtra?.decision==='extra'" class="public-stage"><small>Partido extra</small><button v-if="competition.titleExtra.matchId" type="button" @click="openMatch(extraCode)">Ver partido ›</button><strong><PublicTeamLink :entry-id="competition.titleExtra.homeEntryId" :name="byEntry.get(competition.titleExtra.homeEntryId||'')?.team_name||'Equipo'" @open="openTeamEntry">{{ byEntry.get(competition.titleExtra.homeEntryId||'')?.team_name }}</PublicTeamLink> <em>{{ competition.titleExtra.score?`${competition.titleExtra.score.home} : ${competition.titleExtra.score.away}`:'–' }}</em> <PublicTeamLink :entry-id="competition.titleExtra.awayEntryId" :name="byEntry.get(competition.titleExtra.awayEntryId||'')?.team_name||'Equipo'" @open="openTeamEntry">{{ byEntry.get(competition.titleExtra.awayEntryId||'')?.team_name }}</PublicTeamLink></strong><small v-if="competition.titleExtra.score?.home===competition.titleExtra.score?.away&&competition.titleExtra.score?.homePenalties!==competition.titleExtra.score?.awayPenalties">Penales {{ competition.titleExtra.score?.homePenalties }} : {{ competition.titleExtra.score?.awayPenalties }}</small><strong v-if="competition?.titleExtra?.winnerEntryId">🏆 Campeón: {{ byEntry.get(competition.titleExtra.winnerEntryId)?.team_name }}</strong></div></template>
         </section>
         <section v-else-if="tab==='scorers'" id="public-position-scorers-panel" role="tabpanel" aria-labelledby="public-position-scorers-tab">
           <div v-if="!scorers.length" class="public-hint">Aún sin goles registrados.</div>
-          <div v-for="(player,index) in scorers" :key="player.registrationId" class="public-stat-row">
+          <PublicTeamLink v-for="(player,index) in scorers" :key="player.registrationId" class="public-stat-row" :entry-id="player.entryId" :name="byEntry.get(player.entryId)?.team_name||'Equipo'" content-label @open="openTeamEntry">
             <b>{{ index+1 }}</b>
             <TeamCrest size="sm" public-draw :name="byEntry.get(player.entryId)?.team_name||'Equipo'" :team-id="byEntry.get(player.entryId)?.team_id" :organization-id="organization?.id" :color="byEntry.get(player.entryId)?.color||undefined" :has-shield="byEntry.get(player.entryId)?.has_shield" />
             <strong>{{ player.name }}<small>{{ byEntry.get(player.entryId)?.team_name }}</small></strong>
             <b>⚽ {{ player.goals }}</b>
-          </div>
+          </PublicTeamLink>
         </section>
         <section v-else-if="tab==='defense'" id="public-position-defense-panel" role="tabpanel" aria-labelledby="public-position-defense-tab">
           <div v-if="!defense.length" class="public-hint">Aún sin partidos oficiales.</div>
-          <div v-for="(team,index) in defense" :key="team.entryId" class="public-stat-row">
+          <PublicTeamLink v-for="(team,index) in defense" :key="team.entryId" class="public-stat-row" :entry-id="team.entryId" :name="byEntry.get(team.entryId)?.team_name||'Equipo'" content-label @open="openTeamEntry">
             <b>{{ index+1 }}</b>
             <TeamCrest size="sm" public-draw :name="byEntry.get(team.entryId)?.team_name||'Equipo'" :team-id="byEntry.get(team.entryId)?.team_id" :organization-id="organization?.id" :color="byEntry.get(team.entryId)?.color||undefined" :has-shield="byEntry.get(team.entryId)?.has_shield" />
             <strong>{{ byEntry.get(team.entryId)?.team_name }}<small>{{ team.played }} PJ</small></strong>
             <b>{{ team.goalsAgainst }} GC</b>
-          </div>
+          </PublicTeamLink>
         </section>
         <section v-else id="public-position-teams-panel" class="public-team-list" role="tabpanel" aria-labelledby="public-position-teams-tab"><button v-for="team in teams" :key="team.entry_id" type="button" class="public-team" :data-match-list-id="team.entry_id" @click="openTeam(team)"><PublicImage loading="lazy" v-if="crest(team)" :src="crest(team)!" /><span v-else class="public-mark">{{ team.team_name.slice(0,2).toUpperCase() }}</span><strong>{{ team.team_name }}</strong><Icon name="arrow" /></button></section>
       </main>
@@ -269,7 +327,7 @@ onUnmounted(()=>window.removeEventListener('popstate',restorePublicLocation));
       <p v-else-if="matchLoading||(competitionLoading&&!competition)" class="public-hint" role="status">Cargando ficha…</p>
       <h2 v-else>Partido por programar</h2>
     </div></section>
-    <section v-else-if="selectedTeam" class="public-detail"><button type="button" class="public-detail-close" @click="closeDetail">‹ Volver</button><div class="public-team-hero"><PublicImage v-if="crest(selectedTeam)" :src="crest(selectedTeam)!" /><span v-else class="public-mark">{{ selectedTeam.team_name.slice(0,2).toUpperCase() }}</span><h1>{{ selectedTeam.team_name }}</h1></div><PublicTeamTabs v-model="teamTab"><template #players><PublicTeamRoster v-if="organization&&current" :path="`/organizations/${organization.id}/draws/${current.category_id}/teams/${selectedTeam.entry_id}/players`" :revision="`${scope}:${resultsRevision}`" /></template><template #matches><PublicTeamMatches :matches="teamMatches" :loading="competitionLoading" :error="error" @open="openMatch($event.id)" @retry="competitionRetry++" /></template></PublicTeamTabs></section>
+    <section v-else-if="selectedTeam" class="public-detail"><button type="button" class="public-detail-close" @click="closeDetail">‹ Volver</button><div class="public-team-hero"><PublicImage v-if="crest(selectedTeam)" :src="crest(selectedTeam)!" /><span v-else class="public-mark">{{ selectedTeam.team_name.slice(0,2).toUpperCase() }}</span><h1>{{ selectedTeam.team_name }}</h1></div><PublicTeamTabs v-model="teamTab"><template #players><PublicTeamRoster v-if="organization&&current" :path="`/organizations/${organization.id}/draws/${current.category_id}/teams/${selectedTeam.entry_id}/players`" :revision="`${scope}:${resultsRevision}`" /></template><template #matches><PublicTeamMatches :matches="teamMatches" :loading="competitionLoading" :error="error" @open="openMatch($event.id)" @open-team="openTeamEntry" @retry="competitionRetry++" /></template><template #statistics><PublicTeamStats :position="teamPosition" :goals="teamGoals" :scorers="teamTopScorers" :standings-href="publicSectionHref('clasificacion')" has-scorers-table :loading="competitionLoading" :error="error" @navigate="openStatsSection" @retry="competitionRetry++" /></template></PublicTeamTabs></section>
   </div>
 </template>
 
@@ -311,4 +369,7 @@ onUnmounted(()=>window.removeEventListener('popstate',restorePublicLocation));
 .public-adjacent button{display:block;border:0;background:transparent;padding:5px 0;min-height:36px;color:inherit;font:inherit;text-align:left;cursor:pointer}
 .public-adjacent button:hover{text-decoration:underline}
 .public-adjacent .adjacent-day{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;color:#25714f;font-weight:750}
+.adjacent-match{display:grid;grid-template-columns:minmax(0,1fr) 36px minmax(0,1fr);gap:6px;align-items:center;font-size:.74rem;cursor:pointer}
+.adjacent-match>a:last-child{text-align:right}
+.adjacent-match button{text-align:center}
 </style>

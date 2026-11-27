@@ -8,6 +8,7 @@ import SportTabs from './SportTabs.vue';
 import TeamCrest from './TeamCrest.vue';
 import PublicTeamRoster from './PublicTeamRoster.vue';
 import PublicTeamTabs from './PublicTeamTabs.vue';
+import PublicTeamStats from './PublicTeamStats.vue';
 import PublicTeamMatches from './PublicTeamMatches.vue';
 import PublicTeamLink from './PublicTeamLink.vue';
 import PublicScoreGoals from './PublicScoreGoals.vue';
@@ -26,7 +27,7 @@ type FanDay=PublicFixtureDay;
 type FanMatchDetail={id:string;venue_name:string|null;result:{events:FanEvent[]}|null};
 type FanTeam={id:string;entry_id:string;name:string;color:string;has_shield:boolean;category_id:string};
 type FanBracket={phase_id:string;category_id:string;repechage?:boolean;slots:Array<{stage:number;slot:number;home:string;away:string;twoLegs?:boolean;homeScore?:number|null;awayScore?:number|null;scoreLabel?:string|null;winnerSide?:'home'|'away'|null;resolution?:'aggregate'|'match_points_penalties'|'match_points_third';matchId?:string|null;matchIds?:{first:string|null;second:string|null;third:string|null};legs?:Array<{label:string;home:number;away:number;matchId?:string|null}>;shootout?:{home:number;away:number}|null}>};
-type FanStats={available:boolean;phaseMode?:string|null;tables?:Array<{groupNo:number|null;rows:Array<{position:number;unresolved:boolean;teamName:string;played:number;wins:number;draws:number;losses:number;points:number;goalsFor:number;goalsAgainst:number;goalDifference:number}>}>;scorers?:Array<{name:string;teamName:string;goals:number}>;defense?:Array<{teamName:string;played:number;goalsAgainst:number}>;rosters?:Array<{entryId:string;players:Array<{name:string;goals:number;yellowCards:number;redCards:number}>}>};
+type FanStats={available:boolean;phaseMode?:string|null;tables?:Array<{groupNo:number|null;rows:Array<{position:number;unresolved:boolean;entryId:string;teamName:string;played:number;wins:number;draws:number;losses:number;points:number;goalsFor:number;goalsAgainst:number;goalDifference:number}>}>;scorers?:Array<{name:string;entryId?:string;teamName:string;goals:number}>;defense?:Array<{entryId:string;teamName:string;played:number;goalsFor:number;goalsAgainst:number}>;rosters?:Array<{entryId:string;players:Array<{name:string;goals:number;yellowCards:number;redCards:number}>}>};
 type CatalogItem={id:string;name:string;organization_id:string;organization_name:string};
 type FanTournament=PublicPortalTournament;
 const props=defineProps<{catalog:CatalogItem[];organization:{id:string;name:string;logo_id?:string|null}|null;selectedTournamentId:string;tournaments:FanTournament[];fixture:FanDay[];announcedFixtures:Record<string,AnnouncedFixture>;teams:FanTeam[];resultsRevision:number;loading:boolean;error:string}>();
@@ -95,7 +96,7 @@ watch([() => props.organization?.id, () => selectedMatch.value?.id, () => props.
     }
   });
 const stats = ref<FanStats|null>(null), statsLoading = ref(false), statsError = ref(false);
-const usesStats = computed(() => !selectedTeam.value && !selectedMatch.value && !selectedAnnouncedMatch.value && ['standings','scorers','defense'].includes(tab.value));
+const usesStats = computed(() => selectedTeam.value ? teamTab.value==='statistics' : !selectedMatch.value && !selectedAnnouncedMatch.value && ['standings','scorers','defense'].includes(tab.value));
 const statsRetry = ref(0);
 let shownStats = '';
 watch(() => [props.organization?.id, currentCategoryId.value, props.resultsRevision, usesStats.value, props.loading, category.value?.presentation_only, statsRetry.value] as const,
@@ -201,7 +202,40 @@ trackPublicListScroll(() => selectedMatch.value?.id || selectedAnnouncedMatch.va
 function chooseTournament(item:CatalogItem){selectorOpen.value=false;tournamentSearch.value='';if(item.id!==props.selectedTournamentId)emit('navigate',`publico/${item.organization_id}/${item.id}`);}
 async function toggleSelector(){selectorOpen.value=!selectorOpen.value;if(selectorOpen.value){await nextTick();document.getElementById('fan-tournament-search')?.focus();}}
 function team(id:string){return props.teams.find(item=>item.id===id&&item.category_id===currentCategoryId.value);}
-function byName(name:string){return categoryTeams.value.find(item=>item.name===name);}
+const teamsByEntry=computed(()=>new Map(categoryTeams.value.map(item=>[item.entry_id,item])));
+function teamMention(entryId:string|undefined){return entryId?teamsByEntry.value.get(entryId):undefined;}
+const teamTopScorers=computed(()=>(stats.value?.scorers||[]).filter(row=>row.entryId===selectedTeam.value?.entry_id).slice(0,3));
+const teamPosition=computed(()=>{
+  if(!selectedTeam.value||!tabs.value.some(item=>item.key==='standings'))return undefined;
+  for(const table of stats.value?.tables||[]){
+    const row=table.rows.find(item=>item.entryId===selectedTeam.value?.entry_id);
+    if(!row||!table.rows.some(item=>item.played>0))continue;
+    const place=`${row.position}.º${row.unresolved?' (empate)':''}`;
+    return table.groupNo===null?place:`${place} · Grupo ${table.groupNo}`;
+  }
+});
+const teamGoals=computed(()=>{
+  if(!selectedTeam.value)return undefined;
+  const record=stats.value?.defense?.find(row=>row.entryId===selectedTeam.value?.entry_id);
+  if(record)return record;
+  const total={goalsFor:0,goalsAgainst:0};
+  for(const day of days.value)for(const match of day.matches){
+    if(match.result?.status!=='official')continue;
+    if(match.home_team_id===selectedTeam.value.id){total.goalsFor+=match.result.score.home;total.goalsAgainst+=match.result.score.away;}
+    if(match.away_team_id===selectedTeam.value.id){total.goalsFor+=match.result.score.away;total.goalsAgainst+=match.result.score.home;}
+  }
+  return total;
+});
+const standingsHref=computed(()=>tabs.value.some(item=>item.key==='standings')?publicSectionHref('clasificacion'):undefined);
+function openStatsSection(section:'clasificacion'|'goleadores'){
+  const target=viewToTab[section];
+  if(!tabs.value.some(item=>item.key===target))return;
+  if(section==='clasificacion')standingsView.value='league';
+  if(tab.value===target)pushPublicNavigation(section);
+  else tab.value=target;
+  selectedTeam.value=null;
+  void nextTick(()=>window.scrollTo(0,0));
+}
 function shortDate(value:string){const [y,m,d]=value.split('-');return `${d}/${m}/${y}`;}
 function dayTitle(day:FanDay){const names=[...new Set(day.matches.map(match=>match.bracket_round))];if(names.length===1&&names[0]){const legs=[...new Set(day.matches.map(match=>match.tie_leg))];return legs.length===1&&legs[0]?`${names[0]} · ${legs[0]}`:names[0];}return names.length>1&&names.every(Boolean)?'Eliminación':`Fecha ${day.ordinal}`;}
 function matchTitle(match:FanMatch){const day=days.value.find(item=>item.matches.some(entry=>entry.id===match.id));return `${match.bracket_round||`Fecha ${day?.ordinal||''}`}${match.tie_leg?` · ${match.tie_leg}`:''}`;}
@@ -212,6 +246,7 @@ const teamMatches = computed<TeamMatch[]>(() => {
     .filter(match => match.home_team_id === selected.id || match.away_team_id === selected.id)
     .map(match => ({
       kind: 'partido' as const, id: match.id, home: match.home_name, away: match.away_name,
+      homeEntryId: team(match.home_team_id)?.entry_id, awayEntryId: team(match.away_team_id)?.entry_id,
       date: match.match_date, time: match.match_time, round: dayTitle(day), status: match.result?.status,
       score: match.result ? `${match.result.score.home} : ${match.result.score.away}` : undefined,
     })));
@@ -221,6 +256,7 @@ const teamMatches = computed<TeamMatch[]>(() => {
       kind: 'cruce' as const, id: `${round.ordinal}.${pair.homeEntryId}`,
       home: announced.value?.teams.find(item => item.entry_id === pair.homeEntryId)?.name || 'Por definir',
       away: announced.value?.teams.find(item => item.entry_id === pair.awayEntryId)?.name || 'Por definir',
+      homeEntryId: pair.homeEntryId, awayEntryId: pair.awayEntryId,
       date: round.date, round: `Jornada ${round.ordinal}`,
     })));
   return [...actual, ...planned];
@@ -238,7 +274,7 @@ function openTeam(item:FanTeam){
   teamTab.value='players';
   if(!restoringNavigation)pushPublicNavigation('equipos',{kind:'equipo',id:item.entry_id});
 }
-function openTeamEntry(entryId:string){const item=categoryTeams.value.find(team=>team.entry_id===entryId);if(item)openTeam(item);}
+function openTeamEntry(entryId:string){const item=teamsByEntry.value.get(entryId);if(item&&selectedTeam.value?.entry_id!==entryId)openTeam(item);}
 function openBracketMatch(id:string){const match=days.value.flatMap(day=>day.matches).find(item=>item.id===id);if(match)openMatch(match);}
 function openTeamMatch(row:TeamMatch){
   if(row.kind==='partido'){openBracketMatch(row.id);return;}
@@ -292,7 +328,7 @@ watch(() => [currentTournament.value?.id, tab.value, props.loading, props.error]
         <div class="fan-content"><h2 class="fan-section-label">Eventos</h2><p v-if="matchLoading && !matchDetail" class="fan-status" role="status">Cargando eventos…</p><p v-else-if="matchError" class="fan-status" role="alert">No se pudo cargar la ficha. <button type="button" class="text-action" @click="matchRetry++">Reintentar</button></p><PublicMatchTimeline v-else :events="matchDetail?.result?.events || []" :home-name="selectedMatch.home_name" :away-name="selectedMatch.away_name" /></div>
       </template>
       <template v-else-if="selectedTeam">
-        <div class="fan-detail-top"><button type="button" class="fan-close" aria-label="Cerrar equipo" @click="closeDetail"><Icon name="close" /></button><span>Equipo</span></div><div class="fan-team-hero"><TeamCrest size="lg" :name="selectedTeam.name" :team-id="selectedTeam.id" :organization-id="organization?.id" :color="selectedTeam.color" :has-shield="selectedTeam.has_shield" /><h1 :title="selectedTeam.name">{{ selectedTeam.name }}</h1></div><PublicTeamTabs v-model="teamTab"><template #players><PublicTeamRoster v-if="organization" :path="`/organizations/${organization.id}/categories/${selectedTeam.category_id}/teams/${selectedTeam.entry_id}/players`" :revision="resultsRevision" /></template><template #matches><PublicTeamMatches :matches="teamMatches" @open="openTeamMatch" /></template></PublicTeamTabs>
+        <div class="fan-detail-top"><button type="button" class="fan-close" aria-label="Cerrar equipo" @click="closeDetail"><Icon name="close" /></button><span>Equipo</span></div><div class="fan-team-hero"><TeamCrest size="lg" :name="selectedTeam.name" :team-id="selectedTeam.id" :organization-id="organization?.id" :color="selectedTeam.color" :has-shield="selectedTeam.has_shield" /><h1 :title="selectedTeam.name">{{ selectedTeam.name }}</h1></div><PublicTeamTabs v-model="teamTab"><template #players><PublicTeamRoster v-if="organization" :path="`/organizations/${organization.id}/categories/${selectedTeam.category_id}/teams/${selectedTeam.entry_id}/players`" :revision="resultsRevision" /></template><template #matches><PublicTeamMatches :matches="teamMatches" @open="openTeamMatch" @open-team="openTeamEntry" /></template><template #statistics><PublicTeamStats :position="teamPosition" :goals="teamGoals" :scorers="teamTopScorers" :standings-href="standingsHref" :has-scorers-table="tabs.some(item=>item.key==='scorers')" :loading="statsLoading" :error="statsError?'No se pudieron cargar las estadísticas.':''" @navigate="openStatsSection" @retry="statsRetry++" /></template></PublicTeamTabs>
       </template>
       <template v-else>
         <div class="fan-tabs-wrap"><SportTabs v-model="tab" :tabs="tabs.map(item=>({...item,href:publicSectionHref(tabToView[item.key])}))" id="fan-sections" /></div>
@@ -336,19 +372,19 @@ watch(() => [currentTournament.value?.id, tab.value, props.loading, props.error]
         </section>
 
         <section v-if="tab==='standings'" id="fan-sections-standings-panel" role="tabpanel" aria-labelledby="fan-sections-standings-tab" class="fan-content">
-          <div v-if="announcedMode&&announced" class="fan-table"><div class="fan-table-head"><span>Equipo</span><span>PJ</span><span>DG</span><span>Pts</span></div><div v-for="teamItem in announcedStandings" :key="teamItem.entry_id" class="fan-table-row"><span class="fan-rank">—</span><TeamCrest size="sm" :name="teamItem.name" :team-id="teamItem.team_id" :organization-id="organization?.id" :color="teamItem.color" :has-shield="teamItem.has_shield" /><strong :title="teamItem.name">{{ teamItem.name }}</strong><span>0</span><span>0</span><b>0</b></div></div>
+          <div v-if="announcedMode&&announced" class="fan-table"><div class="fan-table-head"><span>Equipo</span><span>PJ</span><span>DG</span><span>Pts</span></div><PublicTeamLink v-for="teamItem in announcedStandings" :key="teamItem.entry_id" class="fan-table-row" :entry-id="teamItem.entry_id" :name="teamItem.name" content-label @open="openTeamEntry"><span class="fan-rank">—</span><TeamCrest size="sm" :name="teamItem.name" :team-id="teamItem.team_id" :organization-id="organization?.id" :color="teamItem.color" :has-shield="teamItem.has_shield" /><strong :title="teamItem.name">{{ teamItem.name }}</strong><span>0</span><span>0</span><b>0</b></PublicTeamLink></div>
           <template v-else>
           <div v-if="leagueBracket" class="fan-subtabs" role="group" aria-label="Fases de clasificación"><button type="button" :aria-pressed="standingsView==='league'" @click="standingsView='league'">Liguilla</button><button type="button" :aria-pressed="standingsView==='bracket'" @click="standingsView='bracket'">Eliminación</button></div>
           <template v-if="!leagueBracket||standingsView==='league'">
             <p v-if="!statsLoading && !statsError && !stats?.available" class="fan-empty">Aún sin clasificación publicada.</p>
-            <div v-for="table in stats?.tables||[]" :key="String(table.groupNo)" class="fan-table"><h2 v-if="table.groupNo!==null">Grupo {{ table.groupNo }}</h2><div class="fan-table-head"><span>Equipo</span><span>PJ</span><span>DG</span><span>Pts</span></div><div v-for="row in table.rows" :key="row.teamName" class="fan-table-row"><span class="fan-rank">{{ row.unresolved?'—':row.position }}</span><TeamCrest size="sm" :name="row.teamName" :team-id="byName(row.teamName)?.id" :organization-id="organization?.id" :color="byName(row.teamName)?.color" :has-shield="byName(row.teamName)?.has_shield" /><strong :title="row.teamName">{{ row.teamName }}</strong><span>{{ row.played }}</span><span>{{ row.goalDifference }}</span><b>{{ row.points }}</b></div></div>
+            <div v-for="table in stats?.tables||[]" :key="String(table.groupNo)" class="fan-table"><h2 v-if="table.groupNo!==null">Grupo {{ table.groupNo }}</h2><div class="fan-table-head"><span>Equipo</span><span>PJ</span><span>DG</span><span>Pts</span></div><PublicTeamLink v-for="row in table.rows" :key="row.teamName" class="fan-table-row" :entry-id="teamMention(row.entryId)?.entry_id" :name="row.teamName" content-label @open="openTeamEntry"><span class="fan-rank">{{ row.unresolved?'—':row.position }}</span><TeamCrest size="sm" :name="row.teamName" :team-id="teamMention(row.entryId)?.id" :organization-id="organization?.id" :color="teamMention(row.entryId)?.color" :has-shield="teamMention(row.entryId)?.has_shield" /><strong :title="row.teamName">{{ row.teamName }}</strong><span>{{ row.played }}</span><span>{{ row.goalDifference }}</span><b>{{ row.points }}</b></PublicTeamLink></div>
           </template>
           <BracketView v-else-if="bracket" :rounds="bracketRounds" :navigation-key="currentCategoryId" :teams="categoryTeams" :organization-id="organization?.id" team-links @open-match="openBracketMatch" @open-team="openTeamEntry" />
           <p v-else-if="!bracketLoading&&!bracketFailed" class="fan-empty">Aún no hay cruces publicados.</p>
           </template>
         </section>
-        <section v-if="tab==='scorers'" id="fan-sections-scorers-panel" role="tabpanel" aria-labelledby="fan-sections-scorers-tab" class="fan-content"><p v-if="!statsLoading && !statsError && !stats?.scorers?.length" class="fan-empty">Aún no hay goleadores publicados.</p><div v-for="(player,index) in stats?.scorers||[]" :key="`${player.name}-${index}`" class="fan-scorer-row"><span class="fan-rank">{{ index+1 }}</span><TeamCrest size="sm" :name="player.teamName" :team-id="byName(player.teamName)?.id" :organization-id="organization?.id" :color="byName(player.teamName)?.color" :has-shield="byName(player.teamName)?.has_shield" /><span><strong :title="player.name">{{ player.name }}</strong><small :title="player.teamName">{{ player.teamName }}</small></span><b>{{ player.goals }}</b></div></section>
-        <section v-if="tab==='defense'" id="fan-sections-defense-panel" role="tabpanel" aria-labelledby="fan-sections-defense-tab" class="fan-content"><p v-if="!statsLoading && !statsError && !defense.length" class="fan-empty">Aún no hay partidos oficiales.</p><div v-else class="fan-defense-head"><span>Equipo</span><span>PJ</span><span>GC</span></div><div v-for="(row,index) in defense" :key="row.teamName" class="fan-defense-row"><span class="fan-rank">{{ index+1 }}</span><TeamCrest size="sm" :name="row.teamName" :team-id="byName(row.teamName)?.id" :organization-id="organization?.id" :color="byName(row.teamName)?.color" :has-shield="byName(row.teamName)?.has_shield" /><strong :title="row.teamName">{{ row.teamName }}</strong><span>{{ row.played }}</span><b>{{ row.goalsAgainst }}</b></div></section>
+        <section v-if="tab==='scorers'" id="fan-sections-scorers-panel" role="tabpanel" aria-labelledby="fan-sections-scorers-tab" class="fan-content"><p v-if="!statsLoading && !statsError && !stats?.scorers?.length" class="fan-empty">Aún no hay goleadores publicados.</p><PublicTeamLink v-for="(player,index) in stats?.scorers||[]" :key="`${player.name}-${index}`" class="fan-scorer-row" :entry-id="teamMention(player.entryId)?.entry_id" :name="player.teamName" content-label @open="openTeamEntry"><span class="fan-rank">{{ index+1 }}</span><TeamCrest size="sm" :name="player.teamName" :team-id="teamMention(player.entryId)?.id" :organization-id="organization?.id" :color="teamMention(player.entryId)?.color" :has-shield="teamMention(player.entryId)?.has_shield" /><span><strong :title="player.name">{{ player.name }}</strong><small :title="player.teamName">{{ player.teamName }}</small></span><b>{{ player.goals }}</b></PublicTeamLink></section>
+        <section v-if="tab==='defense'" id="fan-sections-defense-panel" role="tabpanel" aria-labelledby="fan-sections-defense-tab" class="fan-content"><p v-if="!statsLoading && !statsError && !defense.length" class="fan-empty">Aún no hay partidos oficiales.</p><div v-else class="fan-defense-head"><span>Equipo</span><span>PJ</span><span>GC</span></div><PublicTeamLink v-for="(row,index) in defense" :key="row.teamName" class="fan-defense-row" :entry-id="teamMention(row.entryId)?.entry_id" :name="row.teamName" content-label @open="openTeamEntry"><span class="fan-rank">{{ index+1 }}</span><TeamCrest size="sm" :name="row.teamName" :team-id="teamMention(row.entryId)?.id" :organization-id="organization?.id" :color="teamMention(row.entryId)?.color" :has-shield="teamMention(row.entryId)?.has_shield" /><strong :title="row.teamName">{{ row.teamName }}</strong><span>{{ row.played }}</span><b>{{ row.goalsAgainst }}</b></PublicTeamLink></section>
         <section v-if="tab==='teams'" id="fan-sections-teams-panel" role="tabpanel" aria-labelledby="fan-sections-teams-tab" class="fan-content"><p v-if="!categoryTeams.length" class="fan-empty">Aún no hay equipos publicados.</p><button v-for="item in categoryTeams" :key="item.entry_id" type="button" class="fan-team-row" :data-match-list-id="item.entry_id" @click="openTeam(item)"><TeamCrest :name="item.name" :team-id="item.id" :organization-id="organization?.id" :color="item.color" :has-shield="item.has_shield" /><strong :title="item.name">{{ item.name }}</strong><Icon name="arrow" /></button></section>
       </template>
     </template>

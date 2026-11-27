@@ -2,7 +2,11 @@
 import SportTabs from './SportTabs.vue';
 
 const tab = defineModel<string>({ required: true });
-const tabs = [{ key: 'players', label: 'Jugadores', icon: 'users' }, { key: 'matches', label: 'Partidos', icon: 'ball' }];
+const tabs = [
+  { key: 'players', label: 'Jugadores', icon: 'users' },
+  { key: 'matches', label: 'Partidos', icon: 'ball' },
+  { key: 'statistics', label: 'Estadísticas', icon: 'chart' },
+];
 </script>
 
 <template>
@@ -10,7 +14,8 @@ const tabs = [{ key: 'players', label: 'Jugadores', icon: 'users' }, { key: 'mat
     <SportTabs v-model="tab" :tabs="tabs" id="public-team" />
     <div :id="`public-team-${tab}-panel`" role="tabpanel" :aria-labelledby="`public-team-${tab}-tab`">
       <slot v-if="tab==='players'" name="players" />
-      <slot v-else name="matches" />
+      <slot v-else-if="tab==='matches'" name="matches" />
+      <slot v-else name="statistics" />
     </div>
   </div>
 </template>

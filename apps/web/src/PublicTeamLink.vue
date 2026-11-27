@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 import { publicNavigationUrl, plainPublicClick } from './public-navigation.ts';
 
-const props = defineProps<{ entryId?: string | null; name: string }>();
+const props = defineProps<{ entryId?: string | null; name: string; contentLabel?: boolean }>();
 const emit = defineEmits<{ open: [entryId: string] }>();
 const href = computed(() => props.entryId
   ? publicNavigationUrl(location.pathname, '', 'equipos', { kind: 'equipo', id: props.entryId }) : undefined);
@@ -14,7 +14,7 @@ function activate(event: MouseEvent) {
 </script>
 
 <template>
-  <component :is="href ? 'a' : 'span'" :href="href" :aria-label="href ? `Ver equipo ${name}` : undefined" class="public-team-link" @click="activate">
+  <component :is="href ? 'a' : 'span'" :href="href" :aria-label="href && !contentLabel ? `Ver equipo ${name}` : undefined" class="public-team-link" @click="activate">
     <slot />
   </component>
 </template>

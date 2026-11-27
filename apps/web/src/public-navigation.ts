@@ -5,6 +5,7 @@ import { closeOwnDetail, moveWithinApp } from './navigation-entry.ts';
 export type PublicDetail = { kind: 'partido' | 'equipo' | 'cruce'; id: string } | null;
 export type TeamMatch = {
   kind: 'partido' | 'cruce'; id: string; home: string; away: string;
+  homeEntryId?: string|null; awayEntryId?: string|null;
   date?: string | null; time?: string | null; round: string;
   status?: 'official' | 'provisional'; score?: string;
 };

@@ -2596,7 +2596,8 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const projection = rawProjection && await withDocumentedTiebreaks(pool,organizationId,rawProjection);
     if (!projection) return fail(404, 'CATEGORY_NOT_FOUND', 'No se encontró una categoría pública.');
     const names = await playerStatNames(pool, organizationId, projection.players.map(player => player.registrationId));
-    const visiblePlayers = projection.players.filter(player => names.get(player.registrationId)?.publicName).map(player => ({ name: names.get(player.registrationId)!.name, teamName: projection.entries.find(entry => entry.id === player.entryId)?.name || 'Equipo', goals: player.goals, penalties: player.penalties, yellowCards: player.yellowCards, redCards: player.redCards, appearances: player.appearances }));
+    const entries = new Map(projection.entries.map(entry => [entry.id, entry.name]));
+    const visiblePlayers = projection.players.filter(player => names.get(player.registrationId)?.publicName).map(player => ({ name: names.get(player.registrationId)!.name, entryId:entries.has(player.entryId)?player.entryId:undefined, teamName: entries.get(player.entryId) || 'Equipo', goals: player.goals, penalties: player.penalties, yellowCards: player.yellowCards, redCards: player.redCards, appearances: player.appearances }));
     const {rows:publicRoster}=await pool.query(`SELECT pr.id registration_id,e.id entry_id,p.given_names,p.family_names FROM player_registrations pr
       JOIN team_entries e ON e.organization_id=pr.organization_id AND e.id=pr.entry_id
       JOIN players p ON p.organization_id=pr.organization_id AND p.id=pr.player_id
@@ -2608,9 +2609,9 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     const rosters=[...new Set(publicRoster.map(row=>row.entry_id as string))].map(entryId=>({entryId,players:publicRoster.filter(row=>row.entry_id===entryId).map(row=>{const stats=playerStats.get(row.registration_id);return {name:`${row.given_names} ${row.family_names}`,goals:stats?.goals||0,yellowCards:stats?.yellowCards||0,redCards:stats?.redCards||0};})}));
     const unlistedGoals = projection.players.filter(player => !names.get(player.registrationId)?.publicName && player.goals > 0).reduce((total, player) => total + player.goals, 0);
     return { available: true, phaseMode: projection.phaseMode, officialMatches: projection.officialMatches,
-      tables: projection.tables.map(table => ({ groupNo: table.groupNo, rows: table.groups.flatMap(group => group.teamIds.map(entryId => ({ position: group.position, unresolved: group.unresolved, teamName: projection.entries.find(entry => entry.id === entryId)?.name || 'Equipo', ...table.totals.find(row => row.teamId === entryId), teamId: undefined }))) })),
+      tables: projection.tables.map(table => ({ groupNo: table.groupNo, rows: table.groups.flatMap(group => group.teamIds.map(entryId => ({ entryId, position: group.position, unresolved: group.unresolved, teamName: entries.get(entryId) || 'Equipo', ...table.totals.find(row => row.teamId === entryId), teamId: undefined }))) })),
       scorers: visiblePlayers.filter(player => player.goals > 0).sort((a, b) => b.goals - a.goals || a.name.localeCompare(b.name)),
-      defense:projection.defense.filter(row=>row.played>0).map(row=>({teamName:projection.entries.find(entry=>entry.id===row.entryId)?.name||'Equipo',played:row.played,goalsAgainst:row.goalsAgainst})).sort((a,b)=>a.goalsAgainst-b.goalsAgainst||a.teamName.localeCompare(b.teamName,'es')),
+      defense:projection.defense.filter(row=>row.played>0).map(row=>({...row,teamName:entries.get(row.entryId)||'Equipo'})).sort((a,b)=>a.goalsAgainst-b.goalsAgainst||a.teamName.localeCompare(b.teamName,'es')),
       rosters, unlistedGoals };
   });
   app.get('/api/v1/public/organizations/:id/fixture', async (request) => {

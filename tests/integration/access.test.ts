@@ -2713,6 +2713,10 @@ test('T05: captura privada congela planillas, guarda eventos una vez y deshace s
   const publicStatsPath=`/api/v1/public/organizations/${ids.a}/categories/${categoryId}/statistics`;
   const publicStats=await app.inject(publicStatsPath);assert.equal(publicStats.statusCode,200,publicStats.body);
   assert.equal(publicStats.json().tables[0].rows[0].teamName,firstStats.json().entries.find((entry:any)=>entry.id===entries[1]).name);
+  assert.equal(publicStats.json().tables[0].rows[0].entryId,entries[1]);
+  assert.deepEqual(publicStats.json().defense.map(({entryId,goalsFor,goalsAgainst}:any)=>({entryId,goalsFor,goalsAgainst})),[
+    {entryId:entries[1],goalsFor:1,goalsAgainst:0},{entryId:entries[0],goalsFor:0,goalsAgainst:1},
+  ]);
   assert.equal(JSON.stringify(publicStats.json()).includes(registrations[0]),false);
   assert.equal(JSON.stringify(publicStats.json()).includes('Jugador 0'),false);
   assert.equal(publicStats.json().rosters.every((item:any)=>item.players.length===0),true);
@@ -2767,7 +2771,12 @@ test('T05: captura privada congela planillas, guarda eventos una vez y deshace s
   const decidedTie=await request(adminA,'POST',tiePath,{groupNo:null,position:tie.position,entryOrder:[entries[1],entries[0]],reason:'Sorteo documentado por el organizador'});
   assert.equal(decidedTie.statusCode,201,decidedTie.body);
   assert.deepEqual((await request(adminA,'GET',statsPath)).json().tables[0].groups.map((group:any)=>group.teamIds[0]),[entries[1],entries[0]]);
-  assert.equal((await app.inject(publicStatsPath)).json().tables[0].rows[0].teamName,updatedStats.entries.find((entry:any)=>entry.id===entries[1]).name);
+  await pool.query(`UPDATE category_statistics SET projection=jsonb_set(projection,'{defense}',
+    (SELECT jsonb_agg(item-'goalsFor') FROM jsonb_array_elements(projection->'defense') AS rows(item)))
+    WHERE organization_id=$1 AND category_id=$2`,[ids.a,categoryId]);
+  const refreshedPublicStats=(await app.inject(publicStatsPath)).json();
+  assert.equal(refreshedPublicStats.tables[0].rows[0].entryId,entries[1]);
+  assert.ok(refreshedPublicStats.defense.every((row:any)=>row.goalsFor===1&&row.goalsAgainst===1));
   assert.equal(updatedStats.players.find((row:any)=>row.registrationId===registrations[0]).goals,1);
   assert.equal((await app.inject(publicStatsPath)).json().unlistedGoals,1);
   const publicationPath=`${root}/registrations/${registrations[0]}/publication`;
@@ -2775,7 +2784,7 @@ test('T05: captura privada congela planillas, guarda eventos una vez y deshace s
   assert.equal((await request(adminB,'POST',publicationPath,{visible:true,reason:'Intento externo'})).statusCode,403);
   assert.equal((await request(adminA,'POST',publicationPath,{visible:true,reason:'Publicación deportiva aprobada'})).statusCode,200);
   const namedStats=(await app.inject(publicStatsPath)).json();assert.equal(namedStats.scorers.length,1);assert.equal(namedStats.unlistedGoals,0);
-  assert.equal(namedStats.scorers[0].goals,1);assert.equal(JSON.stringify(namedStats).includes(registrations[0]),false);
+  assert.equal(namedStats.scorers[0].goals,1);assert.equal(namedStats.scorers[0].entryId,entries[0]);assert.equal(JSON.stringify(namedStats).includes(registrations[0]),false);
   assert.equal(namedStats.rosters.flatMap((item:any)=>item.players).some((item:any)=>item.name===namedStats.scorers[0].name&&item.goals===1),true);
   const rebuilt=await request(adminA,'POST',`${statsPath}/rebuild`,{});assert.equal(rebuilt.statusCode,200,rebuilt.body);assert.equal(rebuilt.json().same,true);
   const disciplineRoot=`${root}/categories/${categoryId}/discipline`;

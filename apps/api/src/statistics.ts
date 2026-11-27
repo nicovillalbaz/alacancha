@@ -12,7 +12,7 @@ export interface CategoryStatistics {
   officialMatches: number;
   tableMatches: number;
   tables: ReturnType<typeof deriveOfficialStatistics>['tables'];
-  defense: Array<{entryId:string;played:number;goalsAgainst:number}>;
+  defense: Array<{entryId:string;played:number;goalsAgainst:number;goalsFor:number}>;
   players: ReturnType<typeof deriveOfficialStatistics>['players'];
   sourceKey: string;
 }
@@ -59,13 +59,14 @@ export async function categoryStatistics(pool: DatabasePool, organizationId: str
   const sourceKey = createHash('sha256').update(JSON.stringify({ projectionVersion: 8, phase: phase?.id ?? null, version: rule.version, entries: entries.map(entry => [entry.id, entry.name, entry.groupNo]), approvals: matchRows.map(row => [row.id, row.approval_id]), adjustments: adjustments.map(item => [item.id,item.entry_id,item.points_delta]) })).digest('hex');
   const { rows: [cached] } = await pool.query('SELECT source_key,projection FROM category_statistics WHERE organization_id=$1 AND category_id=$2', [organizationId, categoryId]);
   const cacheKey = merges.size ? createHash('sha256').update(JSON.stringify([sourceKey,[...merges]])).digest('hex') : sourceKey;
-  if (!force && cached?.source_key === cacheKey) return cached.projection as CategoryStatistics;
+  const previous = cached?.projection as CategoryStatistics | undefined;
+  if (!force && cached?.source_key === cacheKey && previous?.defense?.every(row => Number.isInteger(row.goalsFor))) return previous;
   const derived = deriveOfficialStatistics(entries, matches, rules, pointAdjustments);
-  const defenseByEntry=new Map(entries.map(entry=>[entry.id,{entryId:entry.id,played:0,goalsAgainst:0}]));
+  const defenseByEntry=new Map(entries.map(entry=>[entry.id,{entryId:entry.id,played:0,goalsAgainst:0,goalsFor:0}]));
   for(const match of matches){
     const home=defenseByEntry.get(match.homeEntryId),away=defenseByEntry.get(match.awayEntryId);
-    if(home){home.played++;home.goalsAgainst+=match.score.away;}
-    if(away){away.played++;away.goalsAgainst+=match.score.home;}
+    if(home){home.played++;home.goalsAgainst+=match.score.away;home.goalsFor+=match.score.home;}
+    if(away){away.played++;away.goalsAgainst+=match.score.home;away.goalsFor+=match.score.away;}
   }
   const tableMatches = matches.filter(match => match.tableEligible).length;
   const projection: CategoryStatistics = { categoryId, phaseMode: phase?.mode ?? null, ruleVersion: rule.version, entries, officialMatches: matches.length, tableMatches, tables: derived.tables, defense:[...defenseByEntry.values()], players: derived.players, sourceKey };
