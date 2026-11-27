@@ -169,6 +169,31 @@ test('cerrar un detalle vuelve por historial o limpia un enlace directo',()=>{
   }finally{Object.assign(globalThis,{history:oldHistory,location:oldLocation});}
 });
 
+test('la ficha de equipo abre la sección solicitada tras terminar la vuelta de historial',()=>{
+  const original={history:globalThis.history,location:globalThis.location,window:globalThis.window};
+  const events=new EventTarget();
+  const origin='/copa-sanber?vista=valla';
+  const assign=(path:string)=>Object.assign(globalThis,{location:new URL(path,'https://example.test')});
+  let backed=false,rendered='';
+  const navigation={
+    state:{appDetail:{area:'public',origin}} as unknown,
+    back(){backed=true;},
+    replaceState(state:unknown,_title:string,path:string){this.state=state;assign(path);},
+  };
+  try{
+    assign('/copa-sanber?vista=equipos&equipo=one');
+    Object.assign(globalThis,{history:navigation,window:events});
+    pushPublicNavigation('clasificacion',null,false,()=>{rendered=readPublicNavigation(location.search).view;});
+    assert.equal(backed,true);
+    assert.equal(rendered,'');
+    navigation.state=null;
+    assign(origin);
+    events.dispatchEvent(new Event('popstate'));
+    assert.equal(rendered,'clasificacion');
+    assert.deepEqual(readPublicNavigation(location.search),{view:'clasificacion',detail:null});
+  }finally{Object.assign(globalThis,original);}
+});
+
 test('la vuelta conserva el desplazamiento en la entrada de la lista y no lo copia al detalle',()=>{
   const original={history:globalThis.history,location:globalThis.location,window:globalThis.window};
   const listing={pathname:'/copa-sanber',search:'?vista=fixture',hash:'',href:'https://alacancha.top/copa-sanber?vista=fixture'};

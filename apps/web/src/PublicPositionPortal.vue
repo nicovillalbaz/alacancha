@@ -166,16 +166,15 @@ const teamGoals=computed(()=>{
   return total;
 });
 function openStatsSection(section:'clasificacion'|'goleadores'){
-  const target=viewToTab[section];
   if(section==='clasificacion'){
     classificationTab.value=teamStanding.value?.phase||'groups';
     const group=teamStanding.value?.group||current.value?.snapshot.slots.find(slot=>slot.entry_id===selectedTeam.value?.entry_id)?.slot_code[0];
     if(group==='A'||group==='B')groupTab.value=group;
   }
-  if(tab.value===target)pushPublicNavigation(section);
-  else tab.value=target;
-  selectedTeam.value=null;
-  void nextTick(()=>window.scrollTo(0,0));
+  pushPublicNavigation(section,null,false,()=>{
+    restorePublicLocation();
+    void nextTick(()=>window.scrollTo(0,0));
+  });
 }
 function gameTeam(game:Game,side:'home'|'away'){
   const field=side==='home'?'homeEntryId':'awayEntryId';

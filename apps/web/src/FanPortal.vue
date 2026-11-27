@@ -231,10 +231,10 @@ function openStatsSection(section:'clasificacion'|'goleadores'){
   const target=viewToTab[section];
   if(!tabs.value.some(item=>item.key===target))return;
   if(section==='clasificacion')standingsView.value='league';
-  if(tab.value===target)pushPublicNavigation(section);
-  else tab.value=target;
-  selectedTeam.value=null;
-  void nextTick(()=>window.scrollTo(0,0));
+  pushPublicNavigation(section,null,false,()=>{
+    restorePublicLocation();
+    void nextTick(()=>window.scrollTo(0,0));
+  });
 }
 function shortDate(value:string){const [y,m,d]=value.split('-');return `${d}/${m}/${y}`;}
 function dayTitle(day:FanDay){const names=[...new Set(day.matches.map(match=>match.bracket_round))];if(names.length===1&&names[0]){const legs=[...new Set(day.matches.map(match=>match.tie_leg))];return legs.length===1&&legs[0]?`${names[0]} · ${legs[0]}`:names[0];}return names.length>1&&names.every(Boolean)?'Eliminación':`Fecha ${day.ordinal}`;}

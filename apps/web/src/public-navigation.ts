@@ -93,12 +93,15 @@ export function measurePublicNavigation() {
   track('event', 'page_view', {page_location: page, page_title: document.title});
 }
 
-export function pushPublicNavigation(view: string, detail: PublicDetail = null, replace = false) {
+export function pushPublicNavigation(view: string, detail: PublicDetail = null, replace = false, afterMove?: () => void) {
   const target = publicNavigationUrl(location.pathname, location.search, view, detail);
   moveWithinApp('public', target, !!detail, {
     replaceDetail: replace || !!readPublicNavigation(location.search).detail,
     beforeOpen: () => rememberListScroll(detail?.kind === 'cruce' ? undefined : detail?.id),
-    afterMove: measurePublicNavigation,
+    afterMove: () => {
+      measurePublicNavigation();
+      afterMove?.();
+    },
   });
 }
 
