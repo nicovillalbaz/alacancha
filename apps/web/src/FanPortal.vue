@@ -16,7 +16,7 @@ import AnnouncedFixtureMatches from './AnnouncedFixtureMatches.vue';
 import {closePublicDetail,pushPublicNavigation,readPublicNavigation,publicSectionHref,matchRowClicked,type TeamMatch} from './public-navigation.ts';
 import {trackPublicListScroll} from './match-list-navigation.ts';
 import {recordFanView} from './public-visits.ts';
-import {createPublicReads,type PublicFixtureDay,type PublicFixtureMatchSummary,type PublicPortalTournament} from './public-reads.ts';
+import {createPublicReads,PUBLIC_SCORER_LIMIT,type PublicFixtureDay,type PublicFixtureMatchSummary,type PublicPortalTournament} from './public-reads.ts';
 
 const BracketView=defineAsyncComponent(()=>import('./BracketView.vue'));
 const PublicMatchTimeline=defineAsyncComponent(()=>import('./PublicMatchTimeline.vue'));
@@ -96,6 +96,7 @@ watch([() => props.organization?.id, () => selectedMatch.value?.id, () => props.
     }
   });
 const stats = ref<FanStats|null>(null), statsLoading = ref(false), statsError = ref(false);
+const visibleScorers = computed(() => stats.value?.scorers?.slice(0,PUBLIC_SCORER_LIMIT) || []);
 const usesStats = computed(() => selectedTeam.value ? teamTab.value==='statistics' : !selectedMatch.value && !selectedAnnouncedMatch.value && ['standings','scorers','defense'].includes(tab.value));
 const statsRetry = ref(0);
 let shownStats = '';
@@ -383,7 +384,7 @@ watch(() => [currentTournament.value?.id, tab.value, props.loading, props.error]
           <p v-else-if="!bracketLoading&&!bracketFailed" class="fan-empty">Aún no hay cruces publicados.</p>
           </template>
         </section>
-        <section v-if="tab==='scorers'" id="fan-sections-scorers-panel" role="tabpanel" aria-labelledby="fan-sections-scorers-tab" class="fan-content"><p v-if="!statsLoading && !statsError && !stats?.scorers?.length" class="fan-empty">Aún no hay goleadores publicados.</p><PublicTeamLink v-for="(player,index) in stats?.scorers||[]" :key="`${player.name}-${index}`" class="fan-scorer-row" :entry-id="teamMention(player.entryId)?.entry_id" :name="player.teamName" content-label @open="openTeamEntry"><span class="fan-rank">{{ index+1 }}</span><TeamCrest size="sm" :name="player.teamName" :team-id="teamMention(player.entryId)?.id" :organization-id="organization?.id" :color="teamMention(player.entryId)?.color" :has-shield="teamMention(player.entryId)?.has_shield" /><span><strong :title="player.name">{{ player.name }}</strong><small :title="player.teamName">{{ player.teamName }}</small></span><b>{{ player.goals }}</b></PublicTeamLink></section>
+        <section v-if="tab==='scorers'" id="fan-sections-scorers-panel" role="tabpanel" aria-labelledby="fan-sections-scorers-tab" class="fan-content"><p v-if="!statsLoading && !statsError && !visibleScorers.length" class="fan-empty">Aún no hay goleadores publicados.</p><PublicTeamLink v-for="(player,index) in visibleScorers" :key="`${player.name}-${index}`" class="fan-scorer-row" :entry-id="teamMention(player.entryId)?.entry_id" :name="player.teamName" content-label @open="openTeamEntry"><span class="fan-rank">{{ index+1 }}</span><TeamCrest size="sm" :name="player.teamName" :team-id="teamMention(player.entryId)?.id" :organization-id="organization?.id" :color="teamMention(player.entryId)?.color" :has-shield="teamMention(player.entryId)?.has_shield" /><span><strong :title="player.name">{{ player.name }}</strong><small :title="player.teamName">{{ player.teamName }}</small></span><b>{{ player.goals }}</b></PublicTeamLink></section>
         <section v-if="tab==='defense'" id="fan-sections-defense-panel" role="tabpanel" aria-labelledby="fan-sections-defense-tab" class="fan-content"><p v-if="!statsLoading && !statsError && !defense.length" class="fan-empty">Aún no hay partidos oficiales.</p><div v-else class="fan-defense-head"><span>Equipo</span><span>PJ</span><span>GC</span></div><PublicTeamLink v-for="(row,index) in defense" :key="row.teamName" class="fan-defense-row" :entry-id="teamMention(row.entryId)?.entry_id" :name="row.teamName" content-label @open="openTeamEntry"><span class="fan-rank">{{ index+1 }}</span><TeamCrest size="sm" :name="row.teamName" :team-id="teamMention(row.entryId)?.id" :organization-id="organization?.id" :color="teamMention(row.entryId)?.color" :has-shield="teamMention(row.entryId)?.has_shield" /><strong :title="row.teamName">{{ row.teamName }}</strong><span>{{ row.played }}</span><b>{{ row.goalsAgainst }}</b></PublicTeamLink></section>
         <section v-if="tab==='teams'" id="fan-sections-teams-panel" role="tabpanel" aria-labelledby="fan-sections-teams-tab" class="fan-content"><p v-if="!categoryTeams.length" class="fan-empty">Aún no hay equipos publicados.</p><button v-for="item in categoryTeams" :key="item.entry_id" type="button" class="fan-team-row" :data-match-list-id="item.entry_id" @click="openTeam(item)"><TeamCrest :name="item.name" :team-id="item.id" :organization-id="organization?.id" :color="item.color" :has-shield="item.has_shield" /><strong :title="item.name">{{ item.name }}</strong><Icon name="arrow" /></button></section>
       </template>

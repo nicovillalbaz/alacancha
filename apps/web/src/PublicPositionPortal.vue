@@ -14,7 +14,7 @@ import TeamCrest from './TeamCrest.vue';
 import {closePublicDetail,pushPublicNavigation,readPublicNavigation,publicSectionHref,matchRowClicked,type TeamMatch} from './public-navigation.ts';
 import {trackPublicListScroll} from './match-list-navigation.ts';
 import {recordFanView} from './public-visits.ts';
-import {createPublicReads,publicPositionView,type PublicPositionView} from './public-reads.ts';
+import {createPublicReads,PUBLIC_SCORER_LIMIT,publicPositionView,type PublicPositionView} from './public-reads.ts';
 
 const PublicMatchTimeline=defineAsyncComponent(()=>import('./PublicMatchTimeline.vue'));
 
@@ -128,7 +128,8 @@ const matches=computed(()=>{
   if(extraGame.value&&titleExtra.value?.matchId)published.set(extraCode,titleExtra.value.matchId);
   return published;
 });
-const scorers=computed(()=>[...(competition.value?.players||[])].filter(player=>player.goals>0).sort((a,b)=>b.goals-a.goals||a.name.localeCompare(b.name)));
+const scorers=computed(()=>(competition.value?.players||[]).filter(player=>player.goals>0)
+  .sort((a,b)=>b.goals-a.goals||a.name.localeCompare(b.name)).slice(0,PUBLIC_SCORER_LIMIT));
 const defense=computed(()=>[...(competition.value?.defense||[])].filter(team=>team.played>0).sort((a,b)=>a.goalsAgainst-b.goalsAgainst||b.played-a.played));
 function crest(team:Team|Slot|undefined){return team?.has_shield&&team.team_id?`/api/v1/public/organizations/${props.organization?.id}/draws/teams/${team.team_id}/shield`:null;}
 function refName(code:string){const assigned=slots.value.get(code)?.team_name;if(assigned)return assigned;if(/^[1-4][AB]$/.test(code))return `${code[0]}.º Grupo ${code[1]}`;if(/^S[1-4]$/.test(code))return `${code[1]}.º entre ganadores`;return code;}

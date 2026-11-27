@@ -1,3 +1,5 @@
+export const PUBLIC_SCORER_LIMIT = 10;
+
 export interface PublicFixtureMatchSummary {
   id: string;
   category_id: string;
