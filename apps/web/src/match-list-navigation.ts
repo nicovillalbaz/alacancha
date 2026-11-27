@@ -67,7 +67,7 @@ export async function restoreListScroll(position: Scroll | undefined, stillCurre
   window.requestAnimationFrame(restore);
 }
 
-export function trackPublicListScroll(detailOpen: () => boolean) {
+export function trackPublicListScroll(detailOpen: () => string) {
   watch(detailOpen, open => {
     const url = location.href;
     void restoreListScroll(open ? { top: 0 } : savedListScroll(), () => detailOpen() === open && location.href === url);

@@ -931,15 +931,16 @@ export async function buildApp(config: Config, suppliedPool?: DatabasePool) {
     };
     if(view==='goleadores')return {available:true,players:await players()};
     const matches=state.matches.filter(match=>match.day_status==='published');
+    const titleExtra=state.titleExtra?.dayStatus==='published'||state.titleExtra?.decision==='no_extra'?state.titleExtra:null;
     if(view==='resumen')return {
       available:true,
       competition:{participants:state.competition.participants},
       results:state.results.map(({code,homeGoals,awayGoals,homePenalties,awayPenalties})=>({code,homeGoals,awayGoals,homePenalties,awayPenalties})),
       matches:matches.map(({code,match_id})=>({code,match_id})),
+      ...(titleExtra?.decision==='extra'?{titleExtra}:{}),
     };
     const standings={
-      available:true,competition:state.competition,results:state.results,matches,titleTie:state.titleTie,
-      titleExtra:state.titleExtra&&state.titleExtra.dayStatus==='published'?state.titleExtra:state.titleExtra?.decision==='no_extra'?state.titleExtra:null,
+      available:true,competition:state.competition,results:state.results,matches,titleTie:state.titleTie,titleExtra,
     };
     if(view==='clasificacion')return standings;
     return {...standings,players:await players(),defense:state.defense};

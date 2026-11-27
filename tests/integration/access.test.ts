@@ -1175,6 +1175,8 @@ test('T04/T08: el sorteo completo se publica por versión y queda visible sin se
   assert.ok(extra.json().matchId);
   assert.equal((await request(adminA,'GET',`${base}/competition`)).json().titleExtra.decision,'extra');
   assert.equal((await app.inject({method:'GET',url:`${publicPath}/${categoryId}/competition`})).json().titleExtra,null);
+  const publicSummary=`${publicPath}/${categoryId}/competition?resumen=1`;
+  assert.equal((await app.inject(publicSummary)).json().titleExtra,undefined);
   const extraMatchId=extra.json().matchId,extraApproval=randomUUID();
   await pool.query("INSERT INTO match_records(id,organization_id,match_id,status,rule_version,revision,started_by) VALUES($1,$2,$3,'official',1,1,$4)",[randomUUID(),ids.a,extraMatchId,ids.adminA]);
   const extraEvents=Array.from({length:7},(_,index)=>({id:randomUUID(),sequence:index+1,kind:'shootout_goal',teamEntryId:index<4?titlePair[0]:titlePair[1],registrationId:null,relatedRegistrationId:null,incidentNote:null,cardCode:null,windowNo:null,period:null,minute:null,voidsEventId:null,reason:null,recordedAt:new Date().toISOString()}));
@@ -1199,6 +1201,14 @@ test('T04/T08: el sorteo completo se publica por versión y queda visible sin se
   assert.match(renderFlyerSvg(quarters,'square','forest'),/Cuartos de final/);
   assert.equal((await request(adminB,'POST',flyerPath,{kind:'final',sourceId:categoryId,size:'square',pageNo:1,note:null,template:'forest'})).statusCode,403);
   assert.equal((await request(adminA,'POST',flyerPath,{kind:'champion',sourceId:categoryId,size:'square',pageNo:1,note:null,template:'forest'})).statusCode,409);
+  await pool.query(`UPDATE matchdays md SET status='published',published_at=now(),published_by=$3 FROM draft_matches dm
+    WHERE dm.organization_id=$1 AND dm.id=$2 AND md.organization_id=dm.organization_id AND md.id=dm.matchday_id`,[ids.a,extraMatchId,ids.adminA]);
+  const publicExtra=(await app.inject(publicSummary)).json().titleExtra;
+  assert.equal(publicExtra.matchId,extraMatchId);
+  assert.equal(publicExtra.homeEntryId,titlePair[0]);
+  assert.deepEqual(publicExtra.score,{home:0,away:0,homePenalties:4,awayPenalties:3});
+  const otherOrg=await app.inject(publicSummary.replace(ids.a,ids.b));
+  assert.equal(otherOrg.json().titleExtra,undefined);
 });
 
 test('T04/T05: una jornada de Copa con fecha prevista se publica y abre el acta sin hora ni sede',async()=>{

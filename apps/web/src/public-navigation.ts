@@ -3,6 +3,19 @@ import { rememberListScroll } from './match-list-navigation.ts';
 import { closeOwnDetail, moveWithinApp } from './navigation-entry.ts';
 
 export type PublicDetail = { kind: 'partido' | 'equipo' | 'cruce'; id: string } | null;
+export type TeamMatch = {
+  kind: 'partido' | 'cruce'; id: string; home: string; away: string;
+  date?: string | null; time?: string | null; round: string;
+  status?: 'official' | 'provisional'; score?: string;
+};
+
+export function plainPublicClick(event: MouseEvent) {
+  return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && !event.defaultPrevented;
+}
+
+export function matchRowClicked(event: MouseEvent) {
+  return plainPublicClick(event) && event.target instanceof Element && !event.target.closest('button, a');
+}
 
 export function readPublicNavigation(search: string) {
   const query = new URLSearchParams(search);

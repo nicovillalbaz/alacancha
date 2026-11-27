@@ -1,11 +1,15 @@
+<script lang="ts">
+import { createPublicReads } from './public-reads.ts';
+
+const read=createPublicReads();
+</script>
+
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 import type { PublicRosterPlayer } from '@torneos/shared';
 import SportEventMark from './SportEventMark.vue';
-import { createPublicReads } from './public-reads.ts';
 
 const props=defineProps<{path:string;revision:string|number}>();
-const read=createPublicReads();
 const players=ref<PublicRosterPlayer[]>([]),loading=ref(false),failed=ref(false),retry=ref(0);
 watch([()=>props.path,()=>props.revision,retry],async ([path,revision,attempt],previous,onCleanup)=>{
   let active=true;
