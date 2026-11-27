@@ -307,7 +307,7 @@ watch(() => [currentTournament.value?.id, tab.value, props.loading, props.error]
           <AnnouncedFixtureMatches :rounds="announced.rounds.filter(item=>item.ordinal===announcedRound)" :teams="announced.teams" :organization-id="organization?.id" :status-by-pair="announcedStatuses" team-links @open-match="openAnnouncedMatch" @open-team="openTeamEntry" />
           </template>
           <template v-else>
-            <BracketView v-if="bracket" :rounds="bracketRounds" :dates-by-size="playoffDatesBySize(announced.playoffDates)" :navigation-key="currentCategoryId" :teams="categoryTeams" :organization-id="organization?.id" @open-match="openBracketMatch" />
+            <BracketView v-if="bracket" :rounds="bracketRounds" :dates-by-size="playoffDatesBySize(announced.playoffDates)" :navigation-key="currentCategoryId" :teams="categoryTeams" :organization-id="organization?.id" team-links @open-match="openBracketMatch" @open-team="openTeamEntry" />
             <template v-else-if="!bracketLoading&&!bracketFailed"><p class="fan-plan-note">Cuartos: sorteo presencial · Semifinales: {{ announced.semifinalPairing==='in_person_draw'?'sorteo presencial':'cruces por confirmar' }}</p><BracketView :rounds="announcedFinals" :dates-by-size="playoffDatesBySize(announced.playoffDates)" planned /></template>
           </template>
         </section>
@@ -329,7 +329,7 @@ watch(() => [currentTournament.value?.id, tab.value, props.loading, props.error]
             <template v-if="announced&&pendingAnnouncedRounds.length"><p class="fan-plan-note fan-plan-after">Partidos pendientes de publicación</p><AnnouncedFixtureMatches :rounds="pendingAnnouncedRounds" :teams="announced.teams" :organization-id="organization?.id" team-links @open-match="openAnnouncedMatch" @open-team="openTeamEntry" /></template>
           </template>
           <template v-else>
-            <BracketView v-if="bracket" :rounds="bracketRounds" :navigation-key="currentCategoryId" :teams="categoryTeams" :organization-id="organization?.id" @open-match="openBracketMatch" />
+            <BracketView v-if="bracket" :rounds="bracketRounds" :navigation-key="currentCategoryId" :teams="categoryTeams" :organization-id="organization?.id" team-links @open-match="openBracketMatch" @open-team="openTeamEntry" />
             <p v-else-if="!bracketLoading&&!bracketFailed" class="fan-empty">Aún no hay cruces publicados.</p>
           </template>
           </template>
@@ -343,7 +343,7 @@ watch(() => [currentTournament.value?.id, tab.value, props.loading, props.error]
             <p v-if="!statsLoading && !statsError && !stats?.available" class="fan-empty">Aún sin clasificación publicada.</p>
             <div v-for="table in stats?.tables||[]" :key="String(table.groupNo)" class="fan-table"><h2 v-if="table.groupNo!==null">Grupo {{ table.groupNo }}</h2><div class="fan-table-head"><span>Equipo</span><span>PJ</span><span>DG</span><span>Pts</span></div><div v-for="row in table.rows" :key="row.teamName" class="fan-table-row"><span class="fan-rank">{{ row.unresolved?'—':row.position }}</span><TeamCrest size="sm" :name="row.teamName" :team-id="byName(row.teamName)?.id" :organization-id="organization?.id" :color="byName(row.teamName)?.color" :has-shield="byName(row.teamName)?.has_shield" /><strong :title="row.teamName">{{ row.teamName }}</strong><span>{{ row.played }}</span><span>{{ row.goalDifference }}</span><b>{{ row.points }}</b></div></div>
           </template>
-          <BracketView v-else-if="bracket" :rounds="bracketRounds" :navigation-key="currentCategoryId" :teams="categoryTeams" :organization-id="organization?.id" @open-match="openBracketMatch" />
+          <BracketView v-else-if="bracket" :rounds="bracketRounds" :navigation-key="currentCategoryId" :teams="categoryTeams" :organization-id="organization?.id" team-links @open-match="openBracketMatch" @open-team="openTeamEntry" />
           <p v-else-if="!bracketLoading&&!bracketFailed" class="fan-empty">Aún no hay cruces publicados.</p>
           </template>
         </section>

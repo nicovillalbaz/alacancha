@@ -2,13 +2,15 @@
 import {onMounted,ref,watch} from 'vue';
 import type {PlannedRound} from '@torneos/shared';
 import TeamCrest from './TeamCrest.vue';
+import PublicTeamLink from './PublicTeamLink.vue';
+import { matchRowClicked } from './public-navigation.ts';
 import {useListChoice} from './match-list-navigation.ts';
 import {announcedDate} from './announced-fixture.ts';
 type Tie=PlannedRound['ties'][number]&{homeScore?:number|null;awayScore?:number|null;scoreLabel?:string|null;winnerSide?:'home'|'away'|null;twoLegs?:boolean;resolution?:'aggregate'|'match_points_penalties'|'match_points_third';matchId?:string|null;legs?:Array<{label:string;home?:number|null;away?:number|null;matchId?:string|null}>;shootout?:{home:number;away:number}|null};
 type Round=Omit<PlannedRound,'ties'>&{ties:Tie[]};
-type Team={id:string;name:string;color:string;has_shield?:boolean};
-const props=defineProps<{rounds:Round[];planned?:boolean;teams?:Team[];organizationId?:string;navigationKey?:string;datesBySize?:Record<number,string>}>();
-const emit=defineEmits<{ 'open-match':[matchId:string] }>();
+type Team={id:string;entry_id?:string;name:string;color:string;has_shield?:boolean};
+const props=defineProps<{rounds:Round[];planned?:boolean;teams?:Team[];organizationId?:string;navigationKey?:string;datesBySize?:Record<number,string>;teamLinks?:boolean}>();
+const emit=defineEmits<{ 'open-match':[matchId:string]; 'open-team':[entryId:string] }>();
 const active=props.navigationKey?useListChoice(`bracket-stage-${props.navigationKey}`,0):ref(0);
 const horizontal=props.navigationKey?useListChoice(`bracket-scroll-${props.navigationKey}`,0):ref(0);
 const track=ref<HTMLElement|null>(null);
@@ -19,6 +21,10 @@ function openMatch(id:string|null|undefined){
   if(!id)return;
   horizontal.value=track.value?.scrollLeft??0;
   emit('open-match',id);
+}
+function openTeam(entryId:string){
+  horizontal.value=track.value?.scrollLeft??0;
+  emit('open-team',entryId);
 }
 function team(name:string){return props.teams?.find(item=>item.name===name);}
 function decided(tie:Tie,side:'home'|'away'){return tie.winnerSide?tie.winnerSide===side:tie.homeScore!==null&&tie.homeScore!==undefined&&tie.awayScore!==null&&tie.awayScore!==undefined&&(side==='home'?tie.homeScore>tie.awayScore:tie.awayScore>tie.homeScore);}
@@ -35,10 +41,10 @@ function label(name:string){const source=/^Ganador de llave (\d+)\.(\d+)$/.exec(
         <header class="bracket-stage-head"><span class="bracket-stage-index">{{ String(index+1).padStart(2,'0') }}</span><h3>{{ round.name }}</h3><time v-if="datesBySize?.[round.size]" class="bracket-legs" :datetime="datesBySize[round.size]">{{ announcedDate(datesBySize[round.size]) }}</time><span v-if="round.legs===2" class="bracket-legs">Ida y vuelta</span></header>
         <div class="bracket-ties">
           <div v-for="tie in round.ties" :key="tie.slot" class="bracket-tie" role="group" :aria-label="`${round.name}, llave ${tie.slot}: ${tie.home} contra ${tie.away}`">
-            <component :is="tie.matchId?'button':'div'" class="bracket-tie-main" :type="tie.matchId?'button':undefined" :aria-label="tie.matchId?`Ver partido: ${tie.home} contra ${tie.away}`:undefined" :data-match-list-id="tie.matchId" @click="openMatch(tie.matchId)">
-              <div class="bracket-tie-label">Llave {{ tie.slot }}<span v-if="tie.scoreLabel"> · {{ tie.scoreLabel }}</span></div><span v-if="tie.homeScore==null&&tie.awayScore==null" class="bracket-vs" aria-hidden="true">VS</span>
-              <div class="bracket-side" :class="{'is-winner':decided(tie,'home'),'is-pending':pending(tie.home)}"><TeamCrest v-if="!pending(tie.home)" size="sm" :name="tie.home" :team-id="team(tie.home)?.id" :organization-id="organizationId" :color="team(tie.home)?.color" :has-shield="team(tie.home)?.has_shield" /><span v-else class="bracket-bye">{{ tie.home==='Descanso'?'—':'?' }}</span><strong :title="tie.home">{{ label(tie.home) }}</strong><b v-if="tie.homeScore!==null&&tie.homeScore!==undefined">{{ tie.homeScore }}</b></div>
-              <div class="bracket-side" :class="{'is-winner':decided(tie,'away'),'is-pending':pending(tie.away)}"><TeamCrest v-if="!pending(tie.away)" size="sm" :name="tie.away" :team-id="team(tie.away)?.id" :organization-id="organizationId" :color="team(tie.away)?.color" :has-shield="team(tie.away)?.has_shield" /><span v-else class="bracket-bye">{{ tie.away==='Descanso'?'—':'?' }}</span><strong :title="tie.away">{{ label(tie.away) }}</strong><b v-if="tie.awayScore!==null&&tie.awayScore!==undefined">{{ tie.awayScore }}</b></div>
+            <component :is="tie.matchId&&!teamLinks?'button':'div'" class="bracket-tie-main" :class="{ 'open-match':teamLinks&&tie.matchId }" :type="tie.matchId&&!teamLinks?'button':undefined" :aria-label="tie.matchId&&!teamLinks?`Ver partido: ${tie.home} contra ${tie.away}`:undefined" :data-match-list-id="teamLinks?undefined:tie.matchId" @click="(!teamLinks||matchRowClicked($event))&&openMatch(tie.matchId)">
+              <component :is="teamLinks&&tie.matchId?'button':'div'" class="bracket-tie-label" :type="teamLinks&&tie.matchId?'button':undefined" :aria-label="teamLinks&&tie.matchId?`Ver partido: ${tie.home} contra ${tie.away}`:undefined" :data-match-list-id="teamLinks?tie.matchId:undefined" @click="teamLinks&&openMatch(tie.matchId)">Llave {{ tie.slot }}<span v-if="tie.scoreLabel"> · {{ tie.scoreLabel }}</span></component><span v-if="tie.homeScore==null&&tie.awayScore==null" class="bracket-vs" aria-hidden="true">VS</span>
+              <component :is="teamLinks?PublicTeamLink:'div'" class="bracket-side" :class="{'is-winner':decided(tie,'home'),'is-pending':pending(tie.home)}" v-bind="teamLinks?{name:tie.home,entryId:team(tie.home)?.entry_id}:{}" @open="openTeam"><TeamCrest v-if="!pending(tie.home)" size="sm" :name="tie.home" :team-id="team(tie.home)?.id" :organization-id="organizationId" :color="team(tie.home)?.color" :has-shield="team(tie.home)?.has_shield" /><span v-else class="bracket-bye">{{ tie.home==='Descanso'?'—':'?' }}</span><strong :title="tie.home">{{ label(tie.home) }}</strong><b v-if="tie.homeScore!==null&&tie.homeScore!==undefined">{{ tie.homeScore }}</b></component>
+              <component :is="teamLinks?PublicTeamLink:'div'" class="bracket-side" :class="{'is-winner':decided(tie,'away'),'is-pending':pending(tie.away)}" v-bind="teamLinks?{name:tie.away,entryId:team(tie.away)?.entry_id}:{}" @open="openTeam"><TeamCrest v-if="!pending(tie.away)" size="sm" :name="tie.away" :team-id="team(tie.away)?.id" :organization-id="organizationId" :color="team(tie.away)?.color" :has-shield="team(tie.away)?.has_shield" /><span v-else class="bracket-bye">{{ tie.away==='Descanso'?'—':'?' }}</span><strong :title="tie.away">{{ label(tie.away) }}</strong><b v-if="tie.awayScore!==null&&tie.awayScore!==undefined">{{ tie.awayScore }}</b></component>
             </component>
             <div v-if="tie.twoLegs||tie.shootout" class="bracket-detail"><component :is="leg.matchId?'button':'span'" v-for="leg in tie.legs?.filter(item=>item.label!==tie.scoreLabel)" :key="leg.label" :type="leg.matchId?'button':undefined" :aria-label="leg.matchId?`Ver ${leg.label.toLowerCase()}: ${tie.home} contra ${tie.away}`:undefined" :data-match-list-id="leg.matchId" @click="openMatch(leg.matchId)">{{ leg.label }}<template v-if="leg.home!=null&&leg.away!=null"> {{ leg.home }}:{{ leg.away }}</template></component><span v-if="tie.resolution==='aggregate'&&tie.scoreLabel==='Penales'&&tie.legs?.length===2">Global {{ (tie.legs[0].home||0)+(tie.legs[1].home||0) }}:{{ (tie.legs[0].away||0)+(tie.legs[1].away||0) }}</span><strong v-if="tie.shootout&&tie.scoreLabel!=='Penales'">Penales {{ tie.shootout.home }}:{{ tie.shootout.away }}</strong></div>
           </div>
@@ -53,4 +59,7 @@ function label(name:string){const source=/^Ganador de llave (\d+)\.(\d+)$/.exec(
 .bracket-tie-main{display:block;width:100%;border:0;background:#fff;color:inherit;text-align:left;font:inherit}.bracket-tie-main:is(button){cursor:pointer}.bracket-tie-main:is(button):hover{background:#f5faf7}.bracket-tie-main:focus-visible,.bracket-detail button:focus-visible{outline:3px solid #0cac70;outline-offset:-3px}.bracket-vs{position:absolute;right:10px;top:50%;transform:translateY(-10%);z-index:1;color:#94a7a0;font-size:.58rem;font-weight:850;letter-spacing:.08em}
 .bracket-detail{display:flex;flex-wrap:wrap;align-items:center;gap:4px 9px;padding:3px 10px;border-top:1px solid #edf1ef;color:#64746f;font-size:.66rem;font-variant-numeric:tabular-nums}.bracket-detail button{min-height:44px;padding:5px 3px;border:0;background:transparent;color:#087b50;font:inherit;font-weight:750;cursor:pointer}.bracket-detail strong{color:#0b5b3d}
 @media(max-width:699px){.bracket-track{display:block;overflow:visible;padding:12px 1px 18px}.bracket-stage{display:none;width:100%}.bracket-stage.is-active{display:block}.bracket-stage-head{display:none}.bracket-ties{display:block;min-height:0}.bracket-tie{margin-bottom:13px}.bracket-tie:after{display:none}.bracket-tie-label{padding-top:10px}.bracket-side{min-height:49px;grid-template-columns:31px minmax(0,1fr) auto}.bracket-side strong{font-size:.8rem}.bracket-vs{right:13px}}
+.bracket-tie-main.open-match{cursor:pointer}
+.bracket-tie-main.open-match:hover{background:#f5faf7}
+button.bracket-tie-label{display:block;width:100%;min-height:36px;background:transparent;border:0;text-align:left;cursor:pointer}
 </style>
